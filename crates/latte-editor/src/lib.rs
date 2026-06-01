@@ -1,5 +1,6 @@
 pub mod build;
 pub mod cmd;
+pub mod index;
 pub mod path;
 pub mod state;
 
