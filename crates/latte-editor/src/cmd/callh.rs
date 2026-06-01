@@ -17,7 +17,7 @@ pub fn cmd_call_hierarchy(
 ) -> Result<Vec<CallNode>, String> {
     let g = state.db.lock().unwrap();
     let db = g.as_ref().ok_or("workspace not open")?;
-    let callers = references(db, &symbol, 100).map_err(|e| e.to_string())?;
+    let callers = references(db, &symbol, 100).map_err(|e| e.to_string())?; // cap so a noisy symbol can't blow up the drawer
     let def = definition(db, &symbol).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for c in callers {

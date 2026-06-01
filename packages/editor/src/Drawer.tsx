@@ -7,6 +7,9 @@ export function Drawer({ symbol, onClose, onJump }: { symbol: string | null; onC
   const [nodes, setNodes] = useState<CallNode[]>([]);
   useEffect(() => {
     if (!symbol) { setNodes([]); return; }
+    // Clear stale entries from a previous symbol so the user doesn't
+    // briefly see "foo"'s callers while "bar"'s are still in flight.
+    setNodes([]);
     invoke<CallNode[]>("cmd_call_hierarchy", { symbol })
       .then(setNodes)
       .catch((err) => console.error("drawer failed:", err));
