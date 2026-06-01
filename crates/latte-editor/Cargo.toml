@@ -5,5 +5,12 @@ edition = "2021"
 
 [dependencies]
 tauri = { version = "2.0", features = [] }
+latte-graph-adapter = { path = "../latte-graph-adapter" }
+path-clean = "1"
+dunce = "1"
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
 
 [lib]

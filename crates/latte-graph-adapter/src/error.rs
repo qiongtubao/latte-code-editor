@@ -6,6 +6,8 @@ pub enum AdapterError {
     Sqlite(#[from] rusqlite::Error),
     #[error("schema version mismatch: db has {db}, expected {expected}")]
     SchemaVersion { db: String, expected: String },
+    #[error("unsafe path: {0}")]
+    UnsafePath(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
