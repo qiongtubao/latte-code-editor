@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Latte Code Editor",
+  "version": "0.0.0",
+  "identifier": "dev.latte.editor",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": { "windows": [{ "title": "Latte", "width": 1400, "height": 900 }] }
+}

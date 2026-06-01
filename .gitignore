@@ -6,3 +6,5 @@ target/
 .superpowers/
 .electron-driver/
 .omc/
+# Tauri build artifacts
+apps/desktop/src-tauri/gen/
