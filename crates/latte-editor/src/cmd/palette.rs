@@ -17,6 +17,10 @@ pub fn cmd_palette_search(state: State<AppState>, mode: String, term: String, li
 
 fn search_files(root: &std::path::Path, term: &str, limit: u32) -> std::io::Result<Vec<Hit>> {
     use ignore::WalkBuilder;
+    // Reject empty/whitespace-only terms here so the file walk doesn't
+    // match every entry (any path contains ""). The renderer normally
+    // guards on `!q`, but defending at the boundary is cheap.
+    if term.trim().is_empty() { return Ok(Vec::new()); }
     let mut out = Vec::new();
     let walker = WalkBuilder::new(root).max_depth(Some(8)).build();
     for entry in walker.flatten() {
@@ -26,7 +30,7 @@ fn search_files(root: &std::path::Path, term: &str, limit: u32) -> std::io::Resu
             let rel = p.strip_prefix(root).unwrap_or(p).to_string_lossy().to_string();
             let safe = safe_path(root, &rel).is_ok();
             if !safe { continue; }
-            out.push(Hit { kind: "file".into(), label: rel.clone(), detail: None, path: Some(rel), line: Some(0) });
+            out.push(Hit { kind: "file".into(), label: rel.clone(), detail: None, path: Some(rel), line: None });
             if out.len() as u32 >= limit { break; }
         }
     }
