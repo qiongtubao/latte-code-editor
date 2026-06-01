@@ -10,7 +10,7 @@ export function StatusBar({
       <div className="flex items-center gap-3">
         {indexing
           ? <span className="text-amber-300">indexing…</span>
-          : <span>{indexed} files indexed</span>}
+          : <span>{indexed} {indexed === 1 ? "file" : "files"} indexed</span>}
       </div>
     </div>
   );

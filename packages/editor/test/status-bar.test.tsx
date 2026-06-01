@@ -25,4 +25,11 @@ describe("StatusBar", () => {
     expect(screen.getByText("indexing…")).toBeTruthy();
     expect(screen.queryByText("42 files indexed")).toBeNull();
   });
+
+  it("pluralizes 'file' vs 'files' based on indexed count", () => {
+    const { rerender } = render(<StatusBar language="typescript" dirty={false} indexing={false} indexed={1} />);
+    expect(screen.getByText("1 file indexed")).toBeTruthy();
+    rerender(<StatusBar language="typescript" dirty={false} indexing={false} indexed={7} />);
+    expect(screen.getByText("7 files indexed")).toBeTruthy();
+  });
 });
