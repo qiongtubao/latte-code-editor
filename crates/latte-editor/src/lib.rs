@@ -27,6 +27,7 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             cmd::graph::cmd_definition,
             cmd::graph::cmd_references,
             cmd::graph::cmd_neighbors,
+            cmd::callh::cmd_call_hierarchy,
             cmd::build::cmd_build,
             cmd::fs::cmd_list_dir,
             cmd::palette::cmd_palette_search,
