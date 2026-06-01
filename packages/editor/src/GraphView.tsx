@@ -13,12 +13,17 @@ export function GraphView({ center }: { center: string }) {
     workerRef.current.onmessage = (e: MessageEvent<WorkerOut>) => {
       if (e.data.type === "tick") setPositions(e.data.positions);
     };
+    // Surface worker load/runtime errors (bad URL, import failure) instead
+    // of silently showing an empty graph.
+    workerRef.current.onerror = (e) => { console.error("graph worker error:", e); };
     return () => { workerRef.current?.terminate(); };
   }, []);
 
   useEffect(() => {
     if (!center) return;
     (async () => {
+      // Falsy `def` means "no definition found" — bail without sending the
+      // worker an empty graph.
       const def = await invoke<unknown>("cmd_definition", { symbol: center });
       if (!def) return;
       const neighbors = await invoke<GraphNeighbor[]>("cmd_neighbors", { nodeId: center, depth: 2 });
@@ -26,7 +31,11 @@ export function GraphView({ center }: { center: string }) {
       const edges: GraphEdge[] = neighbors.map((n) => ({ from: center, to: n.node_id, kind: n.edge }));
       workerRef.current?.postMessage({ type: "init", nodes, edges });
       for (let i = 0; i < 200; i++) workerRef.current?.postMessage({ type: "tick" });
-    })();
+    })().catch((err) => {
+      // Match FileTree/CommandPalette: don't let a rejected IPC leak to the
+      // global unhandledrejection handler.
+      console.error("graph view failed:", err);
+    });
   }, [center]);
 
   return (

@@ -8,6 +8,9 @@ afterEach(cleanup);
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe("GraphView", () => {
+  // The Worker polyfill in setup.ts silently no-ops postMessage, so we
+  // can only smoke-test that the component mounts and renders its svg.
+  // Position-mapping is exercised in the right-panel integration test.
   it("renders an svg", () => {
     const { container } = render(<GraphView center="foo" />);
     expect(container.querySelector("svg")).toBeTruthy();
