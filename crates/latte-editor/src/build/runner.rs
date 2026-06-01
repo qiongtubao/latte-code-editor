@@ -1,9 +1,12 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-#[derive(Debug, Deserialize)]
+// `Serialize` is required so the Tauri `cmd_build` handler can forward each
+// parsed event to the renderer via `app.emit("build:event", &ev)`.
+// `Clone` matches the Tauri `Emitter::emit` bound (`S: Serialize + Clone`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum BuildEvent {
     Start { job: String },

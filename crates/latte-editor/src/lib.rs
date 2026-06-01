@@ -1,7 +1,32 @@
-pub mod path;
 pub mod build;
+pub mod cmd;
+pub mod path;
+pub mod state;
 
-pub fn run() {
-    // Placeholder: the actual Tauri builder lives in apps/desktop/src-tauri/src/lib.rs
-    // This stub keeps the workspace compiling until editor-specific commands are wired up.
+use state::AppState;
+use tauri::Manager;
+
+/// Build a `tauri::Builder` pre-configured with the latte-editor commands
+/// and `AppState`. The Tauri context (config, capabilities) lives in the
+/// downstream crate (e.g. `apps/desktop/src-tauri`), so the caller owns
+/// `.run(generate_context!())` and any platform-specific config.
+pub fn build_builder() -> tauri::Builder<tauri::Wry> {
+    tauri::Builder::default()
+        .manage(AppState::new())
+        .setup(|app| {
+            // Default workspace = first CLI arg, else cwd.
+            let ws = std::env::args()
+                .nth(1)
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap());
+            let state = app.state::<AppState>();
+            *state.workspace.lock().unwrap() = Some(ws);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            cmd::graph::cmd_definition,
+            cmd::graph::cmd_references,
+            cmd::graph::cmd_neighbors,
+            cmd::build::cmd_build,
+        ])
 }
