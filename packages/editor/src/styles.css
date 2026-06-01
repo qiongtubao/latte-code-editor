@@ -1,0 +1,2 @@
+@import "monaco-editor/min/vs/editor/editor.main.css";
+.monaco-editor, .monaco-editor .overflow-guard { border-radius: 0; }
