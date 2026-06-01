@@ -12,6 +12,7 @@ tokio = { version = "1", features = ["process", "io-util", "macros", "rt-multi-t
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ignore = "0.4"
+notify = "6"
 
 [dev-dependencies]
 proptest = "1"
