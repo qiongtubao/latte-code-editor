@@ -1,4 +1,5 @@
 pub mod path;
+pub mod build;
 
 pub fn run() {
     // Placeholder: the actual Tauri builder lives in apps/desktop/src-tauri/src/lib.rs
