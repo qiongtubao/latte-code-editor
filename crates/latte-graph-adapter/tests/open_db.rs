@@ -1,4 +1,4 @@
-use latte_graph_adapter::{GraphDb, SCHEMA_HASH};
+use latte_graph_adapter::{AdapterError, GraphDb, SCHEMA_HASH};
 use rusqlite::Connection;
 use tempfile::tempdir;
 
@@ -28,7 +28,5 @@ fn rejects_mismatched_hash() {
     conn.execute("INSERT INTO meta VALUES ('schema_hash', 'wrong')", []).unwrap();
     drop(conn);
     let err = GraphDb::open(&path).unwrap_err();
-    matches!(err, AdapterError::SchemaHash { .. });
+    assert!(matches!(err, AdapterError::SchemaHash { .. }));
 }
-
-use latte_graph_adapter::AdapterError;
