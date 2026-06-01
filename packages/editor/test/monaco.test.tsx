@@ -1,35 +1,34 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, waitFor } from "@testing-library/react";
 
-// Capture the onDidChangeModelContent callback so we can fire it in tests.
-let changeCallback: (() => void) | null = null;
-
-// Mock monaco-editor so we don't need a real canvas/worker in jsdom.
-vi.mock("monaco-editor", () => {
-  const dispose = vi.fn();
+// Hoist the editor-instance ref so the mock factory and the tests can share it.
+const mock = vi.hoisted(() => {
+  const state: { changeCallback: (() => void) | null } = { changeCallback: null };
   const editorInstance = {
-    onDidChangeModelContent: vi.fn((cb: () => void) => { changeCallback = cb; }),
+    onDidChangeModelContent: vi.fn((cb: () => void) => { state.changeCallback = cb; }),
     onMouseDown: vi.fn(),
     getValue: vi.fn(() => "typed-value"),
     getModel: vi.fn(() => ({ getWordAtPosition: vi.fn() })),
     setValue: vi.fn(),
-    dispose,
+    dispose: vi.fn(),
   };
-  return {
-    editor: {
-      create: vi.fn(() => editorInstance),
-      setModelLanguage: vi.fn(),
-      MouseTargetType: { GUTTER_GLYPH_MARGIN: 2 },
-    },
-  };
+  return { state, editorInstance };
 });
 
-import { render } from "@testing-library/react";
+vi.mock("monaco-editor", () => ({
+  editor: {
+    create: vi.fn(() => mock.editorInstance),
+    setModelLanguage: vi.fn(),
+    MouseTargetType: { GUTTER_GLYPH_MARGIN: 2 },
+  },
+}));
+
 import { MonacoEditor } from "../src/MonacoEditor.js";
 
 describe("MonacoEditor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    changeCallback = null;
+    mock.state.changeCallback = null;
   });
 
   it("renders a div container", () => {
@@ -39,13 +38,22 @@ describe("MonacoEditor", () => {
     expect(container.querySelector("div")).toBeTruthy();
   });
 
-  it("calls onChange when the model content changes", () => {
+  it("calls onChange when the model content changes", async () => {
     const onChange = vi.fn();
     render(
       <MonacoEditor value="" language="typescript" onChange={onChange} />
     );
-    expect(changeCallback).not.toBeNull();
-    changeCallback!();
+    await waitFor(() => expect(mock.state.changeCallback).toBeTypeOf("function"));
+    mock.state.changeCallback!();
     expect(onChange).toHaveBeenCalledWith("typed-value");
+  });
+
+  it("disposes the editor on unmount", () => {
+    const { unmount } = render(
+      <MonacoEditor value="" language="typescript" onChange={() => {}} />
+    );
+    expect(mock.editorInstance.dispose).not.toHaveBeenCalled();
+    unmount();
+    expect(mock.editorInstance.dispose).toHaveBeenCalledTimes(1);
   });
 });

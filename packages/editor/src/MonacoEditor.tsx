@@ -11,6 +11,12 @@ export interface MonacoEditorProps {
 export function MonacoEditor({ value, language, onChange, onSymbolClick }: MonacoEditorProps) {
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  // Keep latest callbacks in refs so the editor's persistent listeners
+  // never call a stale closure after the parent re-renders.
+  const onChangeRef = useRef(onChange);
+  const onSymbolClickRef = useRef(onSymbolClick);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+  useEffect(() => { onSymbolClickRef.current = onSymbolClick; }, [onSymbolClick]);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -18,7 +24,7 @@ export function MonacoEditor({ value, language, onChange, onSymbolClick }: Monac
       value, language, theme: "vs-dark",
       automaticLayout: true, fontSize: 13, minimap: { enabled: false },
     });
-    ed.onDidChangeModelContent(() => onChange?.(ed.getValue()));
+    ed.onDidChangeModelContent(() => onChangeRef.current?.(ed.getValue()));
     ed.onMouseDown((e) => {
       if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
       const pos = e.target.position;
@@ -26,7 +32,7 @@ export function MonacoEditor({ value, language, onChange, onSymbolClick }: Monac
       const model = ed.getModel();
       if (!model) return;
       const word = model.getWordAtPosition(pos);
-      if (word) onSymbolClick?.(word.word);
+      if (word) onSymbolClickRef.current?.(word.word);
     });
     editorRef.current = ed;
     return () => { ed.dispose(); };
@@ -40,7 +46,9 @@ export function MonacoEditor({ value, language, onChange, onSymbolClick }: Monac
 
   useEffect(() => {
     const ed = editorRef.current;
-    if (ed) monaco.editor.setModelLanguage(ed.getModel()!, language);
+    if (!ed) return;
+    const model = ed.getModel();
+    if (model) monaco.editor.setModelLanguage(model, language);
   }, [language]);
 
   return <div ref={ref} className="h-full w-full" />;
