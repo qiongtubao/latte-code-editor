@@ -1,8 +1,44 @@
-// TEMPORARY STUB: This will be replaced entirely by Task 15 (GraphView).
-// RightPanel (T14) imports this component to wire the Outline/Graph tab
-// switch, so a placeholder is provided here to keep T14's tests green.
-// T15 owns the real design (force layout, IPC, node rendering, etc.).
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import type { GraphNode, GraphEdge, WorkerOut } from "./workers/protocol.js";
+
+interface GraphNeighbor { node_id: string; name: string; kind: string; edge: string }
 
 export function GraphView({ center }: { center: string }) {
-  return <div data-testid="graph-placeholder">graph (T15){center ? ` — ${center}` : ""}</div>;
+  const [positions, setPositions] = useState<Record<string,{x:number;y:number}>>({});
+  const workerRef = useRef<Worker | null>(null);
+
+  useEffect(() => {
+    workerRef.current = new Worker(new URL("./workers/graph.worker.ts", import.meta.url), { type: "module" });
+    workerRef.current.onmessage = (e: MessageEvent<WorkerOut>) => {
+      if (e.data.type === "tick") setPositions(e.data.positions);
+    };
+    return () => { workerRef.current?.terminate(); };
+  }, []);
+
+  useEffect(() => {
+    if (!center) return;
+    (async () => {
+      const def = await invoke<unknown>("cmd_definition", { symbol: center });
+      if (!def) return;
+      const neighbors = await invoke<GraphNeighbor[]>("cmd_neighbors", { nodeId: center, depth: 2 });
+      const nodes: GraphNode[] = [{ id: center, name: center, kind: "center" }, ...neighbors.map((n) => ({ id: n.node_id, name: n.name, kind: n.kind }))];
+      const edges: GraphEdge[] = neighbors.map((n) => ({ from: center, to: n.node_id, kind: n.edge }));
+      workerRef.current?.postMessage({ type: "init", nodes, edges });
+      for (let i = 0; i < 200; i++) workerRef.current?.postMessage({ type: "tick" });
+    })();
+  }, [center]);
+
+  return (
+    <svg viewBox="-200 -150 400 300" className="w-full h-full bg-zinc-900">
+      <g>
+        {Object.entries(positions).map(([id, p]) => (
+          <g key={id} transform={`translate(${p.x},${p.y})`}>
+            <circle r={id === center ? 7 : 4} fill={id === center ? "#60a5fa" : "#a1a1aa"} />
+            <text y={-8} textAnchor="middle" fontSize={9} fill="#d4d4d8">{id}</text>
+          </g>
+        ))}
+      </g>
+    </svg>
+  );
 }
