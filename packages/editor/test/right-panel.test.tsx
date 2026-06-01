@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { RightPanel } from "../src/RightPanel.js";
 
 afterEach(cleanup);
+beforeEach(() => { vi.clearAllMocks(); });
 
 describe("RightPanel", () => {
   it("renders the outline tab with the supplied nodes by default", () => {
