@@ -3,5 +3,5 @@ export { MonacoEditor } from "./MonacoEditor.js";
 // export { RightPanel } from "./RightPanel.js";      // T14
 // export { GraphView } from "./GraphView.js";        // T15
 // export { Drawer } from "./Drawer.js";              // T16
-// export { CommandPalette } from "./CommandPalette.js"; // T12
+export { CommandPalette } from "./CommandPalette.js";
 export { StatusBar } from "./StatusBar.js";
