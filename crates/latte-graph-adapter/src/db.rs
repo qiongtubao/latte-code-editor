@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
-pub const SCHEMA_HASH: &str = "REPLACE_WITH_HASH_FROM_BUILD_STEP";
+pub const SCHEMA_HASH: &str = include_str!("../SCHEMA_HASH.txt").trim_ascii();
 
 pub struct GraphDb { conn: Connection }
 
