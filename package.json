@@ -1,0 +1,15 @@
+{
+  "name": "latte-code-editor",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "pnpm --filter @latte/desktop dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "tauri": "pnpm --filter @latte/desktop tauri"
+  },
+  "devDependencies": {
+    "typescript": "5.4.5"
+  }
+}
