@@ -18,4 +18,5 @@ pub fn cmd_list_dir(state: State<AppState>, path: String) -> Result<Vec<FsEntry>
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FsEntry { pub name: String, pub path: String, pub is_dir: bool }

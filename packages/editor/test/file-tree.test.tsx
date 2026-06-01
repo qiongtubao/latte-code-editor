@@ -3,8 +3,8 @@ import { render, screen } from "@testing-library/react";
 import { FileTree } from "../src/FileTree.js";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue([
-    { name: "src", path: "src", is_dir: true },
-    { name: "index.ts", path: "index.ts", is_dir: false },
+    { name: "src", path: "src", isDir: true },
+    { name: "index.ts", path: "index.ts", isDir: false },
   ]),
 }));
 
