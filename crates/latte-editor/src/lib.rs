@@ -28,5 +28,6 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             cmd::graph::cmd_references,
             cmd::graph::cmd_neighbors,
             cmd::build::cmd_build,
+            cmd::fs::cmd_list_dir,
         ])
 }
