@@ -20,7 +20,7 @@ export function MonacoEditor({ value, language, onChange, onSymbolClick }: Monac
     });
     ed.onDidChangeModelContent(() => onChange?.(ed.getValue()));
     ed.onMouseDown((e) => {
-      if (e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_GLYPH_MARGIN) return;
+      if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
       const pos = e.target.position;
       if (!pos) return;
       const model = ed.getModel();

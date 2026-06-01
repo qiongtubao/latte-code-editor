@@ -15,7 +15,7 @@ vi.mock("monaco-editor", () => {
     editor: {
       create: vi.fn(() => editorInstance),
       setModelLanguage: vi.fn(),
-      MouseTargetType: { GUTTER_LINE_GLYPH_MARGIN: 4 },
+      MouseTargetType: { GUTTER_GLYPH_MARGIN: 2 },
     },
   };
 });
