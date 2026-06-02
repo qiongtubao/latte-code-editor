@@ -1,0 +1,11 @@
+--- a/packages/cli/src/commands/build.ts
++++ b/packages/cli/src/commands/build.ts
+@@
+-export async function build(workspace: string) {
+-  console.log(`building ${workspace}...`);
++export async function build(workspace: string, opts: { json?: boolean } = {}) {
++  if (opts.json) writeEvent({ type: "start", job: "build" });
++  else console.log(`building ${workspace}...`);
+   // ... existing build logic ...
++  if (opts.json) writeEvent({ type: "done", stats: { files, nodes, edges, ms } });
+ }
