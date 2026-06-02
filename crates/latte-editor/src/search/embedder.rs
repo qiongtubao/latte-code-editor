@@ -21,7 +21,19 @@ impl Embedder {
     pub fn new() -> Result<Self, String> {
         let opts = InitOptions::new(EmbeddingModel::BGESmallZHV15)
             .with_show_download_progress(false);
-        let inner = TextEmbedding::try_new(opts).map_err(|e| e.to_string())?;
+        let inner = TextEmbedding::try_new(opts).map_err(|e| {
+            // fastembed 5 with `ort-load-dynamic` fails the same way whether
+            // the model download is missing, the HF cache is un-writable, or
+            // (on Intel macOS especially) the libonnxruntime dylib isn't
+            // discoverable. Surface a single readable hint so the caller
+            // doesn't have to dig through `crates/latte-editor/Cargo.toml`.
+            format!(
+                "embedder init failed: {e}. \
+                 If you're on Intel macOS, also confirm `libonnxruntime.dylib` is \
+                 discoverable (pip install onnxruntime, build from source with \
+                 ORT_LIB_PATH, or vendor next to the binary)."
+            )
+        })?;
         Ok(Self { inner, dim: 512 })
     }
 
