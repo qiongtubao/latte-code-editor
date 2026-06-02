@@ -2,40 +2,32 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { MonacoEditor } from "@latte/editor";
 import { useGoToDef, type GoToLocation } from "@latte/editor/useGoToDef";
+import { TopBar } from "./components/TopBar.js";
+import { EmptyState } from "./components/EmptyState.js";
+import type { Sample } from "./samples.js";
+
+interface OpenFile {
+  path: string;
+  content: string;
+  language: string;
+}
 
 export default function App() {
-  const [content, setContent] = useState("// Welcome to Latte");
-  const [path, setPath] = useState("welcome.ts");
   const [workspace, setWorkspace] = useState<string | null>(null);
+  const [file, setFile] = useState<OpenFile | null>(null);
   const goto = useGoToDef();
 
-  // Fetch the current workspace on mount so the `useEffect` below can
-  // depend on it and re-inject user CSS/JS hooks when the workspace
-  // changes. T25 restores the last-opened workspace in `setup()`, so by
-  // the time the renderer mounts, `state.workspace` is populated.
   useEffect(() => {
     invoke<string | null>("cmd_get_workspace").then(setWorkspace).catch((err: unknown) => {
       console.error("cmd_get_workspace failed:", err);
     });
   }, []);
 
-  // T26: inject the workspace's user CSS/JS hooks (if any) into the
-  // document. Re-runs whenever the workspace path changes so that
-  // switching workspaces replaces (not accumulates) the injected tags.
-  //
-  // SECURITY: `user.js` is read from the workspace's .latte/hooks/ dir
-  // and injected into the document. This is `eval`-equivalent and will
-  // run any code the workspace owner put there. Only open workspaces
-  // you trust. (See plan §T26 for the design rationale.)
-  //
-  // TODO: watch .latte/hooks/{user.css,user.js} for live reload.
+  // T26 user hook injection (unchanged from previous App.tsx)
   useEffect(() => {
     if (workspace === null) return;
     const styleEl = document.createElement("style");
     const scriptEl = document.createElement("script");
-    // Track elements in refs via locals for cleanup; the next effect
-    // run (on workspace change) will remove them before injecting the
-    // new ones, preventing accumulation.
     let mounted = true;
     invoke<{ css: string | null; js: string | null }>("cmd_user_hook")
       .then((h) => {
@@ -61,29 +53,31 @@ export default function App() {
 
   return (
     <div data-testid="app-shell" className="h-screen flex flex-col">
-      <MonacoEditor
-        value={content}
-        language="typescript"
-        onChange={setContent}
-        onSymbolClick={(sym) => {
-          // Don't propagate the rejection — Monaco won't await, and an
-          // unhandled rejection here would surface as a console error
-          // with no recovery path. Log it so the failure is at least
-          // visible.
-          void goto
-            .onSymbolClick(sym)
-            .then((loc: GoToLocation | null) => {
-              if (loc) {
-                setPath(loc.file);
-                // TODO: read file content via invoke('read_file', { path: loc.file })
-              }
-            })
-            .catch((err: unknown) => {
-              console.error("go-to-definition failed:", err);
-            });
-        }}
-      />
-      <div data-testid="status-bar" className="h-6 px-3 flex items-center text-[11px] bg-zinc-800">{path} {goto.busy && "· jumping…"}</div>
+      <TopBar workspace={workspace} onWorkspace={setWorkspace} />
+      <div className="flex-1 min-h-0">
+        {file ? (
+          <MonacoEditor
+            value={file.content}
+            language={file.language}
+            onChange={(v) => setFile({ ...file, content: v })}
+            onSymbolClick={(sym) => {
+              void goto
+                .onSymbolClick(sym)
+                .then((loc: GoToLocation | null) => {
+                  if (loc) setFile({ path: loc.file, content: "// TODO: load from disk", language: "typescript" });
+                })
+                .catch((err: unknown) => {
+                  console.error("go-to-definition failed:", err);
+                });
+            }}
+          />
+        ) : (
+          <EmptyState onOpen={(s: Sample) => setFile({ path: s.path, content: s.content, language: s.language })} />
+        )}
+      </div>
+      <div data-testid="status-bar" className="h-6 px-3 flex items-center text-[11px] bg-zinc-800">
+        {file?.path ?? workspace ?? "latte"} {goto.busy && "· jumping…"}
+      </div>
     </div>
   );
 }
