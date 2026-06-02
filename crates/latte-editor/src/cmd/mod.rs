@@ -5,3 +5,5 @@ pub mod graph;
 pub mod palette;
 pub mod search;
 pub mod session;
+pub mod userhook;
+pub mod workspace;

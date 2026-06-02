@@ -46,5 +46,7 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             cmd::search::cmd_semantic_search,
             cmd::session::cmd_get_last_workspace,
             cmd::session::cmd_set_last_workspace,
+            cmd::userhook::cmd_user_hook,
+            cmd::workspace::cmd_get_workspace,
         ])
 }
