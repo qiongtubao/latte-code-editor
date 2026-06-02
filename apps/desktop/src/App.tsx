@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { MonacoEditor } from "@latte/editor";
 import { useGoToDef, type GoToLocation } from "@latte/editor/useGoToDef";
 import { TopBar } from "./components/TopBar.js";
@@ -21,6 +22,22 @@ export default function App() {
     invoke<string | null>("cmd_get_workspace").then(setWorkspace).catch((err: unknown) => {
       console.error("cmd_get_workspace failed:", err);
     });
+  }, []);
+
+  // Keep React state in sync when the workspace changes from the Rust side
+  // (e.g. OS-level drag-drop in `lib.rs`, or a `cmd_set_workspace` invoked
+  // by something other than the TopBar button). The payload is ignored;
+  // we re-fetch from `cmd_get_workspace` so we always render the canonical
+  // value rather than trusting the event payload.
+  useEffect(() => {
+    const unlistenPromise = listen<string>("workspace-changed", () => {
+      invoke<string | null>("cmd_get_workspace")
+        .then(setWorkspace)
+        .catch((err: unknown) => console.error("cmd_get_workspace failed:", err));
+    });
+    return () => {
+      unlistenPromise.then((u) => u()).catch(() => {});
+    };
   }, []);
 
   // T26 user hook injection (unchanged from previous App.tsx)

@@ -40,13 +40,12 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
                 if let Some(first) = paths.first() {
                     if first.is_dir() {
+                        // Route through the same helper the IPC command uses
+                        // so drag-drop also persists the session file and
+                        // emits `workspace-changed` to the renderer.
                         let state = window.state::<AppState>();
-                        if let Ok(canonical) = std::fs::canonicalize(first) {
-                            *state.workspace.lock().unwrap() = Some(canonical.clone());
-                            let _ = crate::cmd::session::cmd_set_last_workspace(
-                                canonical.to_string_lossy().to_string(),
-                            );
-                        }
+                        let app = window.app_handle();
+                        let _ = crate::cmd::picker::apply_workspace(app, &state, first);
                     }
                 }
             }
