@@ -31,6 +31,36 @@ notify = "6"
 # so this could be flipped to `ort-download-binaries` there.
 fastembed = { version = "5", default-features = false, features = ["ort-load-dynamic", "online"] }
 
+# T21: vector store for semantic-search embeddings + per-symbol span metadata.
+#
+# - `rusqlite` with `bundled` so we ship our own SQLite (we control the ABI
+#   and don't depend on a system libsqlite3).
+# - `parking_lot::Mutex` is non-poisoning and faster than `std::sync::Mutex`;
+#   we use it for the `EmbeddingStore` connection lock.
+#
+# DEVIATION from the T21 plan: the plan listed `sqlite-vss` as a Cargo dep,
+# but the `sqlite-vss` crate is an FFI binding to the vss0 C extension that
+# (a) only ships prebuilt static libs for macOS x86_64 / aarch64 and Linux
+# x86_64, and (b) has a `build.rs` that *requires* either the
+# `download-libs` feature (network-fetched static `.a`s linked into the
+# binary) or a `LIB_SQLITE_VSS` env var pointing at a prebuilt copy. Either
+# path would force a 100+ MB static-link step and a platform pin in CI.
+#
+# We do NOT need the `sqlite-vss` Rust crate to compile this module: the
+# plan code uses raw SQL (`CREATE VIRTUAL TABLE ... USING vss0(...)`) and
+# embeds raw f32 byte vectors via `rusqlite::params!`. The `vss0` extension
+# itself is loaded into the connection at RUNTIME by the T22 caller via
+# `Connection::load_extension` (after `enable_load_extension(true)`), with
+# the vss0 dylib/so discoverable on the loader path. See `search/store.rs`
+# for the full contract.
+#
+# Net effect: T22 can pick its own vss0 delivery path (vendored dylib,
+# `sqlite-vss = { version = "0.1.2", features = ["download-libs"] }`, or
+# system-installed `libsqlite_vector0` / `vss0`) without us having
+# pre-pinned a heavy build-time dep here.
+rusqlite = { version = "0.31", features = ["bundled"] }
+parking_lot = "0.12"
+
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"
