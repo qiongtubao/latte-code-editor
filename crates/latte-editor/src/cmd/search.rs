@@ -52,9 +52,10 @@ pub async fn cmd_semantic_search(
     // The first call pays the ~seconds-long init cost; subsequent calls
     // are fast. The cache is keyed on the AppState instance, so the
     // lifetime is tied to the app process — fine for a single-workspace
-    // desktop editor. We hold the lock across init only (not across the
-    // slow `embed` call that follows), so a second concurrent caller
-    // will see the populated cache when it acquires the lock.
+    // desktop editor. Note: we hold `state.semantic` across the slow
+    // `embed` call too (see below), so only one semantic command runs
+    // at a time. Acceptable for now because typical user flow is one
+    // palette search at a time.
     {
         let mut guard = state.semantic.lock().unwrap();
         if guard.is_none() {
@@ -83,7 +84,10 @@ pub async fn cmd_semantic_search(
         let cache = guard.as_ref().ok_or("semantic cache vanished")?;
         cache.store.search(&q_vec, k)?
     };
-    let vec_ids: Vec<u64> = vec_hits.iter().map(|(id, _)| *id as u64).collect();
+    let mut vec_ids: Vec<u64> = Vec::with_capacity(vec_hits.len());
+    for (id, _score) in &vec_hits {
+        vec_ids.push(u64::try_from(*id).map_err(|e| format!("rowid out of range: {e}"))?);
+    }
 
     // ripgrep text search (best-effort, empty if rg is missing).
     let text_ids = rg_search(&workspace, &query, k)?;
@@ -97,17 +101,19 @@ pub async fn cmd_semantic_search(
     let conn = cache.store.conn();
     let mut out = Vec::new();
     for (id, score) in fused.into_iter().take(k) {
+        let id_i64 = i64::try_from(id).map_err(|e| format!("rowid out of range: {e}"))?;
         let row: Result<(String, String, i64), _> = conn
             .query_row(
                 "SELECT name, file, line FROM vec_meta WHERE rowid = ?1",
-                [id as i64],
+                [id_i64],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             );
         if let Ok((name, file, line)) = row {
+            let line_u32 = u32::try_from(line).map_err(|e| format!("line out of range: {e}"))?;
             out.push(SemanticHit {
                 name,
                 file,
-                line: line as u32,
+                line: line_u32,
                 score,
             });
         }
@@ -135,15 +141,25 @@ fn rg_search(ws: &std::path::Path, q: &str, k: usize) -> Result<Vec<u64>, String
         .arg(ws)
         .output();
     let mut ids = Vec::new();
-    if let Ok(o) = out {
-        for line in String::from_utf8_lossy(&o.stdout).lines() {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                if v["type"] == "match" {
-                    if let Some(path) = v["data"]["path"]["text"].as_str() {
-                        ids.push(stable_hash(path));
+    match out {
+        Ok(o) => {
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                    if v["type"] == "match" {
+                        if let Some(path) = v["data"]["path"]["text"].as_str() {
+                            ids.push(stable_hash(path));
+                        }
                     }
                 }
             }
+        }
+        Err(e) => {
+            // Best-effort: surface a one-liner so the user knows the
+            // text leg is broken and vector-only results are being shown.
+            eprintln!(
+                "semantic search: rg not found, falling back to vector-only \
+                 results; install ripgrep to enable text fusion ({e})"
+            );
         }
     }
     Ok(ids)
@@ -189,5 +205,16 @@ mod tests {
     fn stable_hash_handles_empty() {
         // FNV-1a of empty string is the offset basis.
         assert_eq!(stable_hash(""), 0xcbf29ce484222325);
+    }
+
+    #[test]
+    fn stable_hash_known_answers() {
+        // Reference vectors from the FNV-1a 64-bit spec
+        // (http://www.isthe.com/chongo/tech/comp/fnv/).
+        // A wrong prime with the right offset basis would still pass the
+        // determinism test above, so we pin a couple of well-known
+        // vectors to catch that class of bug.
+        assert_eq!(stable_hash("a"), 0xaf63dc4c8601ec8c);
+        assert_eq!(stable_hash("foobar"), 0x85944171f73967e8);
     }
 }

@@ -104,12 +104,19 @@ describe("CommandPalette", () => {
 });
 
 describe("CommandPalette (semantic)", () => {
-  it("uses semantic search when toggled", async () => {
+  it("uses semantic search when toggled and query starts with '@'", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const mock = invoke as unknown as ReturnType<typeof vi.fn>;
-    mock.mockResolvedValueOnce([{ name: "login", file: "a.ts", line: 1, score: 0.9 }]);
-    const { rerender } = render(<CommandPalette onPick={() => {}} />);
-    rerender(<CommandPalette onPick={() => {}} semantic />);
-    // just ensure no crash; full flow tested manually
+    mock.mockResolvedValue([
+      { name: "login", file: "a.ts", line: 1, score: 0.9 },
+    ]);
+    render(<CommandPalette onPick={() => {}} semantic />);
+    fireEvent.change(screen.getByPlaceholderText(/type to search/), {
+      target: { value: "@login" },
+    });
+    await waitFor(() => expect(mock).toHaveBeenCalled());
+    const call = mock.mock.calls.find((c) => c[0] === "cmd_semantic_search");
+    expect(call).toBeDefined();
+    expect(call![1]).toEqual({ query: "login", k: 20 });
   });
 });

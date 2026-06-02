@@ -52,6 +52,9 @@ pub fn ensure_vss0_loaded(conn: &Connection) -> Result<(), String> {
         "./libvss0.so",
         "./vss0.so",
         "libsqlite_vector0",
+        // Windows: project scope is macOS/Linux. If a Windows contributor
+        // adds `vss0.dll` here, the FFI is the same — only the candidate
+        // name differs.
     ];
 
     let mut last_err: Option<String> = None;
@@ -63,11 +66,14 @@ pub fn ensure_vss0_loaded(conn: &Connection) -> Result<(), String> {
         if is_path_only(cand) && !std::path::Path::new(cand).exists() {
             continue;
         }
-        // Call `load_extension(name)` as a SQL function. We don't
-        // care about the return value (it's the entry point's return
-        // code), only the absence of an error.
-        let stmt = conn.prepare(&format!("SELECT load_extension('{cand}')"));
-        match stmt.and_then(|mut s| s.query([]).map(|_| ())) {
+        // Call `load_extension(?)` as a SQL function with a bound param
+        // instead of string interpolation. We don't care about the
+        // return value (it's the entry point's return code), only the
+        // absence of an error.
+        let mut stmt = conn
+            .prepare("SELECT load_extension(?)")
+            .map_err(|e| format!("{cand}: prepare failed: {e}"))?;
+        match stmt.query(rusqlite::params![cand]).map(|_| ()) {
             Ok(()) => return Ok(()),
             Err(e) => last_err = Some(format!("{cand}: {e}")),
         }

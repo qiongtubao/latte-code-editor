@@ -8,3 +8,6 @@ target/
 .omc/
 # Tauri build artifacts
 apps/desktop/src-tauri/gen/
+# fastembed model cache (downloaded on first semantic-search use)
+.fastembed_cache/
+**/.fastembed_cache/
