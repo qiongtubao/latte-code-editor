@@ -57,18 +57,22 @@ impl EmbeddingStore {
         embedding: &[f32],
         meta: (&str, &str, &str, u32, u32),
     ) -> Result<(), String> {
-        // `mut` is unused today (`Connection::execute` takes `&self`); kept
-        // to match the T21 plan verbatim. Will be needed if we switch to
-        // a `&mut Connection` API (e.g. explicit transactions) later.
-        #[allow(unused_mut)]
+        if embedding.len() != self.dim {
+            return Err(format!(
+                "embedding length {} != store dim {}",
+                embedding.len(),
+                self.dim
+            ));
+        }
         let mut c = self.conn.lock();
         let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
-        c.execute(
+        let tx = c.transaction().map_err(|e| e.to_string())?;
+        tx.execute(
             "INSERT OR REPLACE INTO vec_embeddings(rowid, embedding) VALUES (?1, ?2)",
             rusqlite::params![rowid, bytes],
         )
         .map_err(|e| e.to_string())?;
-        c.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO vec_meta VALUES (?1,?2,?3,?4,?5,?6)",
             rusqlite::params![
                 rowid,
@@ -80,12 +84,16 @@ impl EmbeddingStore {
             ],
         )
         .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub fn search(&self, query_emb: &[f32], k: usize) -> Result<Vec<(i64, f32)>, String> {
         let c = self.conn.lock();
         let bytes: Vec<u8> = query_emb.iter().flat_map(|f| f.to_le_bytes()).collect();
+        let k_i64: i64 = k
+            .try_into()
+            .map_err(|_| format!("k out of i64 range: {}", k))?;
         let mut stmt = c
             .prepare(
                 "SELECT rowid, distance FROM vec_embeddings \
@@ -93,11 +101,11 @@ impl EmbeddingStore {
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(rusqlite::params![bytes, k as i64], |r| {
+            .query_map(rusqlite::params![bytes, k_i64], |r| {
                 Ok((r.get(0)?, r.get(1)?))
             })
             .map_err(|e| e.to_string())?;
-        Ok(rows.filter_map(Result::ok).collect())
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
     }
 
     pub fn dim(&self) -> usize {
