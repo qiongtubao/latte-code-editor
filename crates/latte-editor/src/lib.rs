@@ -16,13 +16,23 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
         .manage(AppState::new())
         .setup(|app| {
-            // Default workspace = first CLI arg, else cwd.
-            let ws = std::env::args()
-                .nth(1)
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::env::current_dir().unwrap());
+            // T25: restore the last-open workspace from the session file
+            // (written by `cmd_set_last_workspace` on the previous run).
+            // If we have a persisted path, prefer it. Otherwise fall back
+            // to the historical default: first CLI arg, else cwd.
             let state = app.state::<AppState>();
-            *state.workspace.lock().unwrap() = Some(ws);
+            crate::cmd::session::restore_into(&state);
+            {
+                let mut ws = state.workspace.lock().unwrap();
+                if ws.is_none() {
+                    *ws = Some(
+                        std::env::args()
+                            .nth(1)
+                            .map(std::path::PathBuf::from)
+                            .unwrap_or_else(|| std::env::current_dir().unwrap()),
+                    );
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -34,5 +44,7 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             cmd::fs::cmd_list_dir,
             cmd::palette::cmd_palette_search,
             cmd::search::cmd_semantic_search,
+            cmd::session::cmd_get_last_workspace,
+            cmd::session::cmd_set_last_workspace,
         ])
 }

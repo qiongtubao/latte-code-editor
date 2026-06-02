@@ -60,6 +60,11 @@ fastembed = { version = "5", default-features = false, features = ["ort-load-dyn
 # pre-pinned a heavy build-time dep here.
 rusqlite = { version = "0.31", features = ["bundled"] }
 parking_lot = "0.12"
+# T25: crash recovery — read/write last-open workspace path under the
+# platform config dir (`$XDG_CONFIG_HOME` on Linux, `~/Library/Application Support`
+# on macOS, `%APPDATA%` on Windows). `dirs` 5.x is the actively maintained
+# successor to the `dirs` 4.x line and supports the same `config_dir()` API.
+dirs = "5"
 
 [dev-dependencies]
 proptest = "1"
