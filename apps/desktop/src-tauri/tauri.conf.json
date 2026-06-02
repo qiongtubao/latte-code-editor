@@ -9,5 +9,8 @@
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
-  "app": { "windows": [{ "title": "Latte", "width": 1400, "height": 900 }] }
+  "app": {
+    "windows": [{ "title": "Latte", "width": 1400, "height": 900 }],
+    "security": { "capabilities": ["default"] }
+  }
 }
