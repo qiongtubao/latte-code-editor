@@ -8,7 +8,7 @@ export default function App() {
   const goto = useGoToDef();
 
   return (
-    <div className="h-screen flex flex-col">
+    <div data-testid="app-shell" className="h-screen flex flex-col">
       <MonacoEditor
         value={content}
         language="typescript"
@@ -31,7 +31,7 @@ export default function App() {
             });
         }}
       />
-      <div className="h-6 px-3 flex items-center text-[11px] bg-zinc-800">{path} {goto.busy && "· jumping…"}</div>
+      <div data-testid="status-bar" className="h-6 px-3 flex items-center text-[11px] bg-zinc-800">{path} {goto.busy && "· jumping…"}</div>
     </div>
   );
 }

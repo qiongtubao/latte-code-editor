@@ -1,10 +1,15 @@
 import { defineConfig, devices } from "@playwright/test";
-// Project-level Playwright config. A mirror of this file also lives at
-// the repo root (`playwright.config.ts`) so that `pnpm exec playwright
-// test` from the repo root discovers the visual tests; the two are
-// kept in sync manually.
+// Root-level Playwright config. The project-specific config (browser,
+// viewport, etc.) lives in `tests/visual/playwright.config.ts`. This
+// root config exists so that `pnpm exec playwright test` from the repo
+// root discovers the visual tests AND runs them with the system Chrome
+// (the same browser the user sees in production), since Playwright's
+// downloaded Chromium isn't available in this offline environment.
+//
+// The two configs are kept in sync manually — if you change one,
+// mirror the change in the other.
 export default defineConfig({
-  testDir: ".",
+  testDir: "tests/visual",
   testMatch: "**/*.spec.ts",
   use: {
     deviceScaleFactor: 1,

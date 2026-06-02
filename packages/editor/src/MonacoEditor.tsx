@@ -51,5 +51,13 @@ export function MonacoEditor({ value, language, onChange, onSymbolClick }: Monac
     if (model) monaco.editor.setModelLanguage(model, language);
   }, [language]);
 
-  return <div ref={ref} className="h-full w-full" />;
+  // Use inline `style` (not Tailwind `flex-1 w-full min-h-0`): the
+  // desktop Tailwind config only scans `apps/desktop/src`, so the
+  // utility classes that would be generated for those classNames are
+  // missing — and silently falling back to defaults. Inline styles
+  // are guaranteed to apply regardless of the consumer's Tailwind
+  // config. In a `flex flex-col` parent, `flex: 1 1 0%; min-height:
+  // 0;` claims the remaining space and lets the inner Monaco div
+  // shrink below its content size if needed.
+  return <div ref={ref} style={{ flex: "1 1 0%", minHeight: 0, width: "100%" }} />;
 }
