@@ -65,6 +65,9 @@ parking_lot = "0.12"
 # on macOS, `%APPDATA%` on Windows). `dirs` 5.x is the actively maintained
 # successor to the `dirs` 4.x line and supports the same `config_dir()` API.
 dirs = "5"
+# T26+: native folder picker for the "Open Folder" flow. `build_builder` registers
+# the plugin (`tauri_plugin_dialog::init()`) so downstream crates don't need to.
+tauri-plugin-dialog = "2"
 
 [dev-dependencies]
 proptest = "1"

@@ -6,7 +6,7 @@ pub mod search;
 pub mod state;
 
 use state::AppState;
-use tauri::Manager;
+use tauri::{DragDropEvent, Manager, WindowEvent};
 
 /// Build a `tauri::Builder` pre-configured with the latte-editor commands
 /// and `AppState`. The Tauri context (config, capabilities) lives in the
@@ -14,6 +14,7 @@ use tauri::Manager;
 /// `.run(generate_context!())` and any platform-specific config.
 pub fn build_builder() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .setup(|app| {
             // T25: restore the last-open workspace from the session file
@@ -35,6 +36,21 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             }
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
+                if let Some(first) = paths.first() {
+                    if first.is_dir() {
+                        let state = window.state::<AppState>();
+                        if let Ok(canonical) = std::fs::canonicalize(first) {
+                            *state.workspace.lock().unwrap() = Some(canonical.clone());
+                            let _ = crate::cmd::session::cmd_set_last_workspace(
+                                canonical.to_string_lossy().to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             cmd::graph::cmd_definition,
             cmd::graph::cmd_references,
@@ -48,5 +64,7 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             cmd::session::cmd_set_last_workspace,
             cmd::userhook::cmd_user_hook,
             cmd::workspace::cmd_get_workspace,
+            cmd::picker::cmd_pick_folder,
+            cmd::picker::cmd_set_workspace,
         ])
 }

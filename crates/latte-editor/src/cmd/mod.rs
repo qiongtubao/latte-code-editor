@@ -3,6 +3,7 @@ pub mod callh;
 pub mod fs;
 pub mod graph;
 pub mod palette;
+pub mod picker;
 pub mod search;
 pub mod session;
 pub mod userhook;
