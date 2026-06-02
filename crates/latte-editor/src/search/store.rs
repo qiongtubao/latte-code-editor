@@ -36,6 +36,11 @@ pub struct EmbeddingStore {
 impl EmbeddingStore {
     pub fn open(path: &Path, dim: usize) -> Result<Self, String> {
         let conn = Connection::open(path).map_err(|e| e.to_string())?;
+        // DEVIATION from T21: per the B1 fix, eagerly load vss0 here so any
+        // caller (T22, future indexer, tests) cannot accidentally hit the
+        // "vss0 not loaded" runtime error. The store.rs doc comment above
+        // still documents the three delivery options for vss0.
+        crate::search::loader::ensure_vss0_loaded(&conn)?;
         conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vss0(embedding)",
         )
@@ -110,6 +115,19 @@ impl EmbeddingStore {
 
     pub fn dim(&self) -> usize {
         self.dim
+    }
+
+    /// Borrow the underlying SQLite connection for ad-hoc reads
+    /// (e.g. hydrating `vec_meta` rows after an RRF fuse). The caller
+    /// MUST treat the returned `MutexGuard` as a short-lived borrow —
+    /// holding it across an `upsert` or another `search` call on the
+    /// same `EmbeddingStore` will deadlock.
+    ///
+    /// Added in T22 so the semantic-search command can hydrate hits
+    /// from the cached store instead of opening a second `Connection`
+    /// to the same file (see B7 deviation in `cmd/search.rs`).
+    pub fn conn(&self) -> parking_lot::MutexGuard<'_, rusqlite::Connection> {
+        self.conn.lock()
     }
 }
 

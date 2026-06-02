@@ -10,7 +10,7 @@ export const CLOSE_HIT: PaletteHit = { kind: "file", label: "__close__" };
 
 const SEARCH_DEBOUNCE_MS = 120;
 
-export function CommandPalette({ onPick }: { onPick: (h: PaletteHit) => void }) {
+export function CommandPalette({ onPick, semantic = false }: { onPick: (h: PaletteHit) => void; semantic?: boolean }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<PaletteHit[]>([]);
   const [active, setActive] = useState(0);
@@ -26,12 +26,15 @@ export function CommandPalette({ onPick }: { onPick: (h: PaletteHit) => void }) 
     const t = setTimeout(() => {
       const mode = q.startsWith(">") ? "cmd" : q.startsWith("@") ? "symbol" : "file";
       const term = q.replace(/^[>@]/, "");
-      invoke<PaletteHit[]>("palette_search", { mode, term, limit: 20 })
-        .then(r => { setHits(r); setActive(0); })
+      const promise = semantic && mode === "symbol"
+        ? invoke<Array<{ name: string; file: string; line: number; score: number }>>("cmd_semantic_search", { query: term, k: 20 })
+            .then((arr): PaletteHit[] => arr.map(h => ({ kind: "semantic", label: h.name, detail: `${h.file}:${h.line}`, path: h.file, line: h.line })))
+        : invoke<PaletteHit[]>("palette_search", { mode, term, limit: 20 });
+      promise.then(r => { setHits(r); setActive(0); })
         .catch(() => setHits([]));
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, semantic]);
 
   // Clamp `active` if `hits` shrinks below the current selection.
   const safeActive = Math.min(active, Math.max(0, hits.length - 1));

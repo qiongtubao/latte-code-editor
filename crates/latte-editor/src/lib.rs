@@ -33,5 +33,6 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             cmd::build::cmd_build,
             cmd::fs::cmd_list_dir,
             cmd::palette::cmd_palette_search,
+            cmd::search::cmd_semantic_search,
         ])
 }
