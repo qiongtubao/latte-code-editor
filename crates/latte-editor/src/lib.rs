@@ -2,6 +2,7 @@ pub mod build;
 pub mod cmd;
 pub mod index;
 pub mod path;
+pub mod search;
 pub mod state;
 
 use state::AppState;

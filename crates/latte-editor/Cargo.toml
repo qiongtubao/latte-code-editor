@@ -13,6 +13,23 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ignore = "0.4"
 notify = "6"
+# Semantic search embeddings for T20/T21.
+# fastembed 5.x bundles ORT; we opt out of the default feature set to avoid
+# pulling image-models and use the `online` feature so the model is fetched
+# from HF Hub on first use. CPU-only inference (no CUDA/DirectML/etc).
+#
+# We use `ort-load-dynamic` (not `ort-download-binaries`) because ort 2.0
+# does not ship prebuilt ONNX Runtime binaries for `x86_64-apple-darwin`
+# (Intel Mac). `ort-load-dynamic` makes ort-sys skip the download + link
+# steps and instead load the shared library at runtime via libloading.
+# At runtime, fastembed expects the ONNX Runtime dylib to be discoverable
+# either by:
+#   - `pip install onnxruntime` (Python wheel ships the dylib), or
+#   - Building ONNX Runtime from source and pointing `ORT_LIB_PATH` at it, or
+#   - Vendoring the dylib next to the binary at distribution time.
+# On Apple Silicon and Linux/Windows x86_64 the prebuilts are available,
+# so this could be flipped to `ort-download-binaries` there.
+fastembed = { version = "5", default-features = false, features = ["ort-load-dynamic", "online"] }
 
 [dev-dependencies]
 proptest = "1"
