@@ -10,6 +10,7 @@
     "tauri": "pnpm --filter @latte/desktop tauri"
   },
   "devDependencies": {
+    "@playwright/test": "1.45.0",
     "typescript": "5.4.5"
   }
 }
