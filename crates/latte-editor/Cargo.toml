@@ -68,9 +68,13 @@ dirs = "5"
 # T26+: native folder picker for the "Open Folder" flow. `build_builder` registers
 # the plugin (`tauri_plugin_dialog::init()`) so downstream crates don't need to.
 tauri-plugin-dialog = "2"
+# Round 2 (save mechanism): atomic file writes via NamedTempFile::new_in(parent_dir)
+# + persist(target). Moved from [dev-dependencies] to here so cmd_write_file can
+# use it at runtime. Still available to dev-builds as a transitive dep, so the
+# existing #[cfg(test)] callers compile unchanged.
+tempfile = "3"
 
 [dev-dependencies]
 proptest = "1"
-tempfile = "3"
 
 [lib]

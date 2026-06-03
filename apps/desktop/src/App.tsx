@@ -1,25 +1,32 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { MonacoEditor } from "@latte/editor";
+import { MonacoEditor, type MonacoEditorHandle } from "@latte/editor";
 import { useGoToDef, type GoToLocation } from "@latte/editor/useGoToDef";
 import { TopBar } from "./components/TopBar.js";
 import { EmptyState } from "./components/EmptyState.js";
 import { FileTree } from "./components/FileTree.js";
 import { languageFromPath } from "./components/languageFromPath.js";
+import { useSave, type OpenFile } from "./hooks/useSave.js";
 import type { Sample } from "./samples.js";
-
-interface OpenFile {
-  path: string;
-  name: string;
-  content: string;
-  language: string;
-}
 
 export default function App() {
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [file, setFile] = useState<OpenFile | null>(null);
   const goto = useGoToDef();
+  // Imperative handle from <MonacoEditor>. Passed into useSave so
+  // handleSave can call `syncSavedContent` synchronously on success
+  // (C2 fix: avoids a one-frame ● flicker in the status bar).
+  const monacoRef = useRef<MonacoEditorHandle | null>(null);
+  const {
+    dirty,
+    setDirty,
+    saveStatus,
+    editorBanner,
+    setEditorBanner,
+    requestFileSwitch,
+    handleSave,
+  } = useSave({ file, setFile, monacoRef });
 
   useEffect(() => {
     invoke<string | null>("cmd_get_workspace").then(setWorkspace).catch((err: unknown) => {
@@ -34,14 +41,18 @@ export default function App() {
   // value rather than trusting the event payload.
   useEffect(() => {
     const unlistenPromise = listen<string>("workspace-changed", () => {
-      invoke<string | null>("cmd_get_workspace")
-        .then(setWorkspace)
-        .catch((err: unknown) => console.error("cmd_get_workspace failed:", err));
+      // requestFileSwitch is stable (useSave keeps `dirty` in a ref),
+      // so this effect's deps don't churn on every keystroke.
+      requestFileSwitch(() => {
+        invoke<string | null>("cmd_get_workspace")
+          .then(setWorkspace)
+          .catch((err: unknown) => console.error("cmd_get_workspace failed:", err));
+      });
     });
     return () => {
       unlistenPromise.then((u) => u()).catch(() => {});
     };
-  }, []);
+  }, [requestFileSwitch]);
 
   // T26 user hook injection (unchanged from previous App.tsx)
   useEffect(() => {
@@ -74,22 +85,26 @@ export default function App() {
   // Open a file from the tree: read it from disk via the Rust side and
   // install it as the active editor buffer. The `name` is sent alongside
   // `path` so the editor can display a clean title in the status bar.
-  const onFileOpen = async (path: string, name: string) => {
-    try {
-      const content = await invoke<string>("cmd_read_file", { path });
-      setFile({ path, name, content, language: languageFromPath(path) });
-    } catch (err) {
-      console.error("cmd_read_file failed:", err);
-      // Surface the error in the editor pane by loading the message as
-      // the file content. Keeps the user in the app instead of dropping
-      // them back to the empty state on a read failure.
-      setFile({
-        path,
-        name,
-        content: `// failed to read ${path}\n// ${String(err)}`,
-        language: "plaintext",
+  // The whole thing is wrapped in `requestFileSwitch` so an unsaved
+  // edit prompts before clobbering the current buffer; a failed read
+  // (binary file, permissions, etc.) just surfaces the editor banner
+  // and leaves the previously-open file alone.
+  const onFileOpen = (path: string, name: string) => {
+    invoke<string>("cmd_read_file", { path })
+      .then((content) => {
+        requestFileSwitch(() => {
+          setFile({
+            path,
+            name,
+            content,
+            language: languageFromPath(path),
+            savedContent: content,
+          });
+        });
+      })
+      .catch((err: unknown) => {
+        setEditorBanner(`read failed: ${path} — ${String(err)}`);
       });
-    }
   };
 
   return (
@@ -100,17 +115,44 @@ export default function App() {
           <FileTree workspace={workspace} onFileOpen={onFileOpen} />
         )}
         <div className="flex-1 min-w-0 flex flex-col">
+          {editorBanner !== null && (
+            <div
+              data-testid="editor-banner"
+              role="alert"
+              className="px-3 py-1 bg-red-900/60 text-red-100 text-xs border-b border-red-800 whitespace-pre-wrap break-words"
+            >
+              {editorBanner}
+            </div>
+          )}
           {file ? (
             <MonacoEditor
+              ref={monacoRef}
               value={file.content}
               language={file.language}
               path={file.path}
+              savedContent={file.savedContent}
               onChange={(v) => setFile({ ...file, content: v })}
+              onSave={handleSave}
+              onDirtyChange={setDirty}
               onSymbolClick={(sym) => {
                 void goto
                   .onSymbolClick(sym)
                   .then((loc: GoToLocation | null) => {
-                    if (loc) setFile({ path: loc.file, name: loc.file.split("/").pop() ?? loc.file, content: "// TODO: load from disk", language: "typescript" });
+                    if (!loc) return;
+                    requestFileSwitch(() => {
+                      const name = loc.file.split("/").pop() ?? loc.file;
+                      // Placeholder content until the V2 round adds
+                      // a real read+load; savedContent matches content
+                      // so the editor starts clean and doesn't show ●.
+                      const placeholder = "// TODO: load from disk";
+                      setFile({
+                        path: loc.file,
+                        name,
+                        content: placeholder,
+                        language: "typescript",
+                        savedContent: placeholder,
+                      });
+                    });
                   })
                   .catch((err: unknown) => {
                     console.error("go-to-definition failed:", err);
@@ -125,12 +167,30 @@ export default function App() {
               Select a file from the tree
             </div>
           ) : (
-            <EmptyState onOpen={(s: Sample) => setFile({ path: s.path, name: s.name, content: s.content, language: s.language })} />
+            <EmptyState
+              onOpen={(s: Sample) =>
+                requestFileSwitch(() =>
+                  setFile({
+                    path: s.path,
+                    name: s.name,
+                    content: s.content,
+                    language: s.language,
+                    savedContent: s.content,
+                  }),
+                )
+              }
+            />
           )}
         </div>
       </div>
-      <div data-testid="status-bar" className="h-6 px-3 flex items-center text-[11px] bg-zinc-800">
-        {file?.path ?? workspace ?? "latte"} {goto.busy && "· jumping…"}
+      <div data-testid="status-bar" className="h-6 px-3 flex items-center justify-between text-[11px] bg-zinc-800">
+        <span>
+          {file?.path ?? workspace ?? "latte"}
+          {dirty && saveStatus === "idle" && " · ●"}
+          {saveStatus === "saving" && " · saving…"}
+          {saveStatus === "saved" && " · saved ✓"}
+          {goto.busy && " · jumping…"}
+        </span>
       </div>
     </div>
   );

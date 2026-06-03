@@ -58,6 +58,7 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             cmd::build::cmd_build,
             cmd::fs::cmd_list_dir,
             cmd::fs::cmd_read_file,
+            cmd::fs::cmd_write_file,
             cmd::fs::cmd_create_file,
             cmd::fs::cmd_create_dir,
             cmd::fs::cmd_delete_entry,

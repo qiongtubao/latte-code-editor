@@ -1,4 +1,5 @@
 export { MonacoEditor } from "./MonacoEditor.js";
+export type { MonacoEditorHandle } from "./MonacoEditor.js";
 // export { FileTree } from "./FileTree.js";          // T10
 // export { RightPanel } from "./RightPanel.js";      // T14
 export { GraphView } from "./GraphView.js";

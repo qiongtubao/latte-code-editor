@@ -99,6 +99,84 @@ pub fn cmd_read_file(state: State<AppState>, path: String) -> Result<String, Str
     fs::read_to_string(&abs).map_err(|e| e.to_string())
 }
 
+/// Write `content` to `path` (workspace-relative), atomically.
+///
+/// Validation matches `cmd_create_file`: rejects root markers, paths
+/// inside `HIDDEN_DIR_NAMES` (the tree never shows those — allowing
+/// writes there would create a "tree says absent, disk says present"
+/// split), missing parent directories, and hidden names as the final
+/// segment. Content is normalised to LF-only on the way out.
+///
+/// Atomicity is provided by writing into a `NamedTempFile` in the same
+/// directory as the target and `persist`-ing it (POSIX `rename(2)` on
+/// the same filesystem; on Windows it uses `MoveFileExW` with
+/// `MOVEFILE_REPLACE_EXISTING`, which is non-atomic and can briefly
+/// fail with `ERROR_ACCESS_DENIED` if an antivirus or indexing service
+/// holds a handle on the target). We retry once after a 50ms sleep to
+/// cover the transient case; a second failure surfaces the error to
+/// the renderer.
+#[tauri::command]
+pub fn cmd_write_file(
+    state: State<AppState>,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    cmd_write_file_inner(
+        state.workspace.lock().unwrap().clone().ok_or("workspace not open")?,
+        &path,
+        &content,
+    )
+}
+
+/// Inner write logic, extracted so unit tests can drive it without
+/// constructing a Tauri `State`. Same validation contract as
+/// `cmd_write_file`.
+pub(crate) fn cmd_write_file_inner(
+    ws: PathBuf,
+    path: &str,
+    content: &str,
+) -> Result<(), String> {
+    if is_root_marker(path) {
+        return Err("path must not be empty (workspace root)".into());
+    }
+    let abs = safe_path(&ws, path).map_err(|e| e.to_string())?;
+    if path_has_hidden_segment(&abs) {
+        return Err(format!("refusing to write inside hidden directory: {path}"));
+    }
+    let parent = abs
+        .parent()
+        .ok_or_else(|| format!("no parent for: {path}"))?;
+    if !parent.is_dir() {
+        return Err(format!("parent directory does not exist: {path}"));
+    }
+    if last_segment_is_hidden(&abs) {
+        return Err(format!(
+            "name '{}' is in the hidden list and cannot be created",
+            abs.file_name().unwrap().to_string_lossy()
+        ));
+    }
+    // Normalise line endings to LF. We don't try to preserve CRLF here
+    // (J3): the renderer reads in whatever shape, but writes out LF.
+    let normalized = content.replace("\r\n", "\n");
+    // `tempfile::NamedTempFile::new_in(parent_dir)` puts the temp
+    // file on the same filesystem as the target, which is required
+    // for `persist` to be a true atomic rename on POSIX.
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("tempfile create failed: {e}"))?;
+    use std::io::Write;
+    tmp.write_all(normalized.as_bytes())
+        .map_err(|e| format!("tempfile write failed: {e}"))?;
+    // Try persist once. If it fails (Windows AV/index race), sleep
+    // briefly and retry — the `PersistError` exposes the original
+    // `NamedTempFile` so we get a second chance with the same temp.
+    if let Err(e) = tmp.persist(&abs) {
+        let tmp = e.file;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        tmp.persist(&abs).map_err(|e| format!("persist failed: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Create an empty file at `path` (workspace-relative). Rejects:
 ///   - root markers (no name after the workspace)
 ///   - targets that already exist (no clobber)
@@ -223,6 +301,78 @@ pub struct FsEntry { pub name: String, pub path: String, pub is_dir: bool }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// U1: writing to a normal workspace-relative path persists the
+    /// content and leaves no stray `tmp.*` files behind.
+    #[test]
+    fn write_file_writes_to_workspace_relative_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+        // Pre-create a sub-directory so the target has a parent that
+        // already exists on disk.
+        fs::create_dir(ws.join("sub")).unwrap();
+
+        let result = cmd_write_file_inner(ws.clone(), "sub/hello.txt", "hello world");
+        assert!(result.is_ok(), "write failed: {result:?}");
+
+        // File exists with the expected content.
+        let on_disk = ws.join("sub/hello.txt");
+        assert!(on_disk.is_file());
+        assert_eq!(fs::read_to_string(&on_disk).unwrap(), "hello world");
+
+        // The parent directory should contain *only* the target — no
+        // leftover NamedTempFile from the atomic-write dance.
+        let siblings: Vec<String> = fs::read_dir(ws.join("sub"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(siblings, vec!["hello.txt".to_string()]);
+    }
+
+    /// U2: writing inside a `HIDDEN_DIR_NAMES` directory is rejected
+    /// before any disk mutation.
+    #[test]
+    fn write_file_rejects_hidden_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+        let hidden = ws.join("node_modules");
+        fs::create_dir(&hidden).unwrap();
+
+        let result = cmd_write_file_inner(ws.clone(), "node_modules/x.ts", "x");
+        assert!(result.is_err(), "expected error, got {result:?}");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("hidden"),
+            "error should mention 'hidden', got: {err}"
+        );
+        // The directory on disk must be untouched.
+        assert!(hidden.is_dir());
+        assert_eq!(
+            fs::read_dir(&hidden).unwrap().count(),
+            0,
+            "hidden dir should be empty"
+        );
+    }
+
+    /// U3: writing to a path whose parent directory does not exist
+    /// is rejected (we never auto-mkdir; the create-file flow is the
+    /// supported way to add new entries).
+    #[test]
+    fn write_file_rejects_missing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+
+        let result = cmd_write_file_inner(ws.clone(), "nonexistent/foo.txt", "x");
+        assert!(result.is_err(), "expected error, got {result:?}");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("parent"),
+            "error should mention 'parent', got: {err}"
+        );
+        // The missing directory must NOT have been created as a side
+        // effect of the failed write.
+        assert!(!ws.join("nonexistent").exists());
+    }
 
     /// U4: a symlink that *points at a directory* must be reported as
     /// `is_dir: true` — otherwise the FileTree would render it as a
