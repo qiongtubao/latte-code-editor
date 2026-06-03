@@ -41,6 +41,12 @@ fn last_segment_is_hidden(abs: &Path) -> bool {
 #[tauri::command]
 pub fn cmd_list_dir(state: State<AppState>, path: Option<String>) -> Result<Vec<FsEntry>, String> {
     let ws = state.workspace.lock().unwrap().clone().ok_or("workspace not open")?;
+    cmd_list_dir_inner(ws, path)
+}
+
+// Extracted so the logic is testable without a Tauri `State` (mirrors the
+// `cmd_write_file_inner` / `set_workspace_inner` pattern).
+pub(crate) fn cmd_list_dir_inner(ws: PathBuf, path: Option<String>) -> Result<Vec<FsEntry>, String> {
     // `None` (or an empty string) means "list the workspace root".
     let p = match path.as_deref() {
         Some(s) if !s.is_empty() => safe_path(&ws, s).map_err(|e| e.to_string())?,
@@ -49,8 +55,15 @@ pub fn cmd_list_dir(state: State<AppState>, path: Option<String>) -> Result<Vec<
     let mut out = Vec::new();
     for entry in fs::read_dir(&p).map_err(|e| e.to_string())? {
         let e = entry.map_err(|e| e.to_string())?;
-        let meta = e.metadata().map_err(|e| e.to_string())?;
         let abs = e.path();
+        // `DirEntry::metadata` is equivalent to `lstat` on Unix (does NOT
+        // follow symlinks), so a symlink pointing at a directory would be
+        // reported as `is_dir() == false` and the FileTree would treat it
+        // as a file — clicking it would then EISDIR inside `cmd_read_file`.
+        // `Path::metadata` follows symlinks, matching the semantics of
+        // `cmd_read_file` / `cmd_write_file` / `cmd_delete_entry` (which
+        // all resolve the path and let the OS follow links on open).
+        let meta = fs::metadata(&abs).map_err(|e| e.to_string())?;
         let name_os = e.file_name();
         let name = name_os.to_string_lossy().to_string();
         // Filter hidden directories server-side. Files are not filtered by
@@ -203,6 +216,50 @@ pub async fn cmd_confirm_delete(app: AppHandle, path: String) -> Result<bool, St
     .map_err(|e| format!("dialog task failed: {e}"))
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FsEntry { pub name: String, pub path: String, pub is_dir: bool }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// U4: a symlink that *points at a directory* must be reported as
+    /// `is_dir: true` — otherwise the FileTree would render it as a
+    /// file row and clicking it would EISDIR inside `cmd_read_file`.
+    /// Regression for: using `DirEntry::metadata` (lstat) instead of
+    /// `fs::metadata` (stat) in the listing loop.
+    #[cfg(unix)]
+    #[test]
+    fn list_dir_follows_symlink_to_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+        // Real target dir lives *outside* the workspace so we can prove
+        // the listing follows the symlink (vs. just seeing a literal
+        // directory inside the workspace).
+        let real = tempfile::tempdir().unwrap();
+        let real_dir = real.path().to_path_buf();
+        std::fs::create_dir(real_dir.join("inside")).unwrap();
+        // `gtid_link -> <real_dir>` — name doesn't matter; we just need
+        // one symlink to a directory.
+        std::os::unix::fs::symlink(&real_dir, ws.join("gtid_link")).unwrap();
+        // Sanity: a real file inside the workspace to make sure we
+        // didn't break the normal path.
+        std::fs::write(ws.join("hello.txt"), "hi").unwrap();
+
+        let entries = cmd_list_dir_inner(ws.clone(), None).expect("list root");
+        let by_name: std::collections::HashMap<&str, &FsEntry> =
+            entries.iter().map(|e| (e.name.as_str(), e)).collect();
+
+        // The symlink is reported as a directory with a workspace-relative
+        // path (no leading slash, no abs path leaking).
+        let link_entry = by_name.get("gtid_link").expect("symlink entry missing");
+        assert!(link_entry.is_dir, "symlink→dir must be is_dir=true, got {link_entry:?}");
+        assert_eq!(link_entry.path, "gtid_link");
+
+        // The normal file still works.
+        let file_entry = by_name.get("hello.txt").expect("file entry missing");
+        assert!(!file_entry.is_dir);
+        assert_eq!(file_entry.path, "hello.txt");
+    }
+}
