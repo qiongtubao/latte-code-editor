@@ -7,7 +7,7 @@ import { EmptyState } from "./components/EmptyState.js";
 import { FileTree } from "./components/FileTree.js";
 import { languageFromPath } from "./components/languageFromPath.js";
 import { useSave, type OpenFile } from "./hooks/useSave.js";
-import { useSymbolNavigation, type CallNode } from "./hooks/useSymbolNavigation.js";
+import { useSymbolNavigation } from "./hooks/useSymbolNavigation.js";
 import type { Sample } from "./samples.js";
 
 export default function App() {
@@ -182,7 +182,7 @@ export default function App() {
             <Drawer
               symbol={nav.drawerSymbol}
               onClose={nav.closeDrawer}
-              onJump={nav.onJump as (n: CallNode) => void}
+              onJump={nav.onJump}
             />
           )}
         </div>

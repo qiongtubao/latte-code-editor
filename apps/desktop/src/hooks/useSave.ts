@@ -27,13 +27,6 @@ export interface OpenFile {
   content: string;
   savedContent: string;
   language: string;
-  /**
-   * Set when the file was opened from outside the workspace (e.g.
-   * via go-to-definition landing on a `.d.ts` inside `node_modules`).
-   * The status bar surfaces this as `· read-only` and `useSave.handleSave`
-   * short-circuits with a banner instead of writing to disk.
-   */
-  isReadOnly?: boolean;
 }
 
 export interface UseSaveArgs {

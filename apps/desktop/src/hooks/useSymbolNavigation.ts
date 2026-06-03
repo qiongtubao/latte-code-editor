@@ -1,19 +1,16 @@
 import { useCallback, useState } from "react";
 import type { RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import type { CallNode } from "@latte/editor";
 import { languageFromPath } from "../components/languageFromPath.js";
 
 /**
- * Mirrors `Drawer.tsx`'s `CallNode` so the hook can type its
- * `onJump` argument without reaching into the editor package.
- * Kept in sync with `Drawer.tsx` — if you change one, change both.
+ * `CallNode` is imported from `@latte/editor`; source of truth is
+ * `Drawer.tsx`. The hook types its `onJump` argument with the same
+ * shape so the editor package and the desktop host stay structurally
+ * aligned.
  */
-export interface CallNode {
-  name: string;
-  file: string;
-  line: number;
-  role: "caller" | "callee";
-}
+export type { CallNode };
 
 export interface NavigationFile {
   path: string;
@@ -78,15 +75,12 @@ export function useSymbolNavigation({
       }
       void invoke<string>("cmd_read_file", { path: node.file })
         .then((content) => {
-          const isReadOnly =
-            workspace !== null && !node.file.startsWith(workspace + "/");
           setFile({
             path: node.file,
             name: node.file.split("/").pop() ?? node.file,
             content,
             language: languageFromPath(node.file),
             savedContent: content,
-            isReadOnly,
           });
           monacoRef.current?.revealLine(node.line);
         })

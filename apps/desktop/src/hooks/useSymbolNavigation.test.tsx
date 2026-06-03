@@ -95,7 +95,6 @@ describe("useSymbolNavigation", () => {
     expect(bag.setFile).toHaveBeenCalledWith(expect.objectContaining({
       path: "b.ts",
       content: "the content",
-      isReadOnly: expect.any(Boolean),
     }));
     expect(bag.revealLineSpy).toHaveBeenCalledWith(42);
     // Order: cmd_read_file before setFile before revealLine
