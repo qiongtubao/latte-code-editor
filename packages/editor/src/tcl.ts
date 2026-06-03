@@ -8,26 +8,31 @@ import type * as monaco from "monaco-editor";
 
 let registered = false;
 
+const KEYWORDS = [
+  "after", "append", "apply", "array", "binary", "break", "catch",
+  "cd", "chan", "clock", "close", "concat", "continue", "encoding",
+  "eof", "error", "eval", "exec", "exit", "expr", "fblocked",
+  "fconfigure", "fcopy", "file", "fileevent", "flush", "for",
+  "foreach", "format", "gets", "glob", "global", "history", "if",
+  "incr", "info", "interp", "join", "lappend", "lassign", "lindex",
+  "linsert", "list", "llength", "load", "lrange", "lrepeat",
+  "lreplace", "lreverse", "lsearch", "lset", "lsort", "namespace",
+  "open", "package", "pid", "proc", "puts", "pwd", "read", "regexp",
+  "regsub", "rename", "return", "scan", "seek", "set", "socket",
+  "source", "split", "string", "subst", "switch", "tailcall", "tell",
+  "throw", "time", "trace", "try", "unknown", "unload", "unset",
+  "update", "uplevel", "upvar", "variable", "vwait", "while",
+  "yield", "yieldto",
+];
+
+// Built once from KEYWORDS so the array stays the single source of truth.
+const KEYWORD_PATTERN = new RegExp(`\\b(?:${KEYWORDS.join("|")})\\b`);
+
 const MONARCH_RULES: monaco.languages.IMonarchLanguage = {
   defaultToken: "",
   tokenPostfix: ".tcl",
 
-  keywords: [
-    "after", "append", "apply", "array", "binary", "break", "catch",
-    "cd", "chan", "clock", "close", "concat", "continue", "encoding",
-    "eof", "error", "eval", "exec", "exit", "expr", "fblocked",
-    "fconfigure", "fcopy", "file", "fileevent", "flush", "for",
-    "foreach", "format", "gets", "glob", "global", "history", "if",
-    "incr", "info", "interp", "join", "lappend", "lassign", "lindex",
-    "linsert", "list", "llength", "load", "lrange", "lrepeat",
-    "lreplace", "lreverse", "lsearch", "lset", "lsort", "namespace",
-    "open", "package", "pid", "proc", "puts", "pwd", "read", "regexp",
-    "regsub", "rename", "return", "scan", "seek", "set", "socket",
-    "source", "split", "string", "subst", "switch", "tailcall", "tell",
-    "throw", "time", "trace", "try", "unknown", "unload", "unset",
-    "update", "uplevel", "upvar", "variable", "vwait", "while",
-    "yield", "yieldto",
-  ],
+  keywords: KEYWORDS,
 
   brackets: [
     { open: "[", close: "]", token: "delimiter.square" },
@@ -40,10 +45,10 @@ const MONARCH_RULES: monaco.languages.IMonarchLanguage = {
       [/#.*$/, "comment"],
       [/"/, "string", "@string_double"],
       [/\{/, "string.curly", "@string_curly"],
-      [/[\[\](){};]/, "@brackets"],
+      [/[\[\]{}()]/, "@brackets"],
       [/\$[a-zA-Z_]\w*/, "variable"],
       [/\$\{[^}]*\}/, "variable"],
-      [/\b(proc|if|elseif|else|for|foreach|while|switch|return|break|continue|set|unset|global|upvar|namespace|variable|try|finally|throw|yield|tailcall|apply|catch|expr|puts|list|string|regexp|regsub|subst)\b/, "keyword"],
+      [KEYWORD_PATTERN, "keyword"],
       [/-?\d+\.\d+([eE][\-+]?\d+)?/, "number.float"],
       [/-?\d+/, "number"],
       [/[a-zA-Z_][\w-]*(?=\s*\()/, "entity.name.function"],
