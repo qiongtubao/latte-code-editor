@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use crate::state::AppState;
-use crate::path::safe_path;
+use crate::path::{safe_path, safe_read_path};
 
 /// Directory names that are always hidden from the file tree, server-side.
 /// Keeps the IPC payload small and the renderer logic trivial.
@@ -89,9 +89,12 @@ pub(crate) fn cmd_list_dir_inner(ws: PathBuf, path: Option<String>) -> Result<Ve
 }
 
 #[tauri::command]
-pub fn cmd_read_file(state: State<AppState>, path: String) -> Result<String, String> {
-    let ws = state.workspace.lock().unwrap().clone().ok_or("workspace not open")?;
-    let abs = safe_path(&ws, &path).map_err(|e| e.to_string())?;
+pub fn cmd_read_file(_state: State<AppState>, path: String) -> Result<String, String> {
+    // We use `safe_read_path`, not `safe_path`, because go-to from the
+    // editor may land on a file outside the workspace (e.g. a `.d.ts`
+    // declaration in `node_modules/`). Writes still go through
+    // `safe_path`, so this loosens reads only.
+    let abs = safe_read_path(&path).map_err(|e| e.to_string())?;
     let meta = fs::metadata(&abs).map_err(|e| e.to_string())?;
     if meta.len() > MAX_READ_BYTES {
         return Err(format!("file too large: {} bytes", meta.len()));
