@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { requestFileSwitch as requestFileSwitchShared } from "./useUnsavedGuard.js";
 
 /**
  * Structural shape of the MonacoEditor imperative handle. Defined
@@ -140,36 +141,7 @@ export function useSave({ file, setFile, monacoRef }: UseSaveArgs): UseSaveRetur
   useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
 
   const requestFileSwitch = useCallback((swap: () => void) => {
-    if (!dirtyRef.current) {
-      swap();
-      return;
-    }
-    // V.2 实测发现 `tauri-plugin-dialog@2.7.1` 的 Rust 端 IPC handler
-    // 只剩 `open` / `save` / `message` 三个 — `ask` / `confirm` 命令
-    // 已被合并到 `message`(schema 里的 `allow-ask` 标了 DEPRECATED),
-    // 所以 `@tauri-apps/plugin-dialog@2.0.0` 的 `ask()` 调
-    // `plugin:dialog|ask` 会被拒为 "Command not found"。直接打
-    // `plugin:dialog|message` 走原生命令面板,async 不阻塞,macOS 是
-    // AppKit 风格;`OkCancelCustom("Discard","Cancel")` 走自定义按钮
-    // 标签,`MessageDialogResult` 序列化成字符串。
-    //
-    // **结果值的形状是 `buttons` 决定的**(踩过坑):
-    //   - `OkCancel`(无自定义)→ `"Ok"` / `"Cancel"`
-    //   - `OkCancelCustom("Discard","Cancel")`→ `"Discard"` / `"Cancel"`
-    //     (走 `rfd::MessageDialogResult::Custom(label)`,序列化成 inner
-    //     字符串)
-    //   - `YesNo` → `"Yes"` / `"No"`
-    //   - 用户按 ESC / 关窗 → 总是 `"Cancel"`
-    // 所以"用户接受了破坏性操作"用 `!== "Cancel"` 判断最稳 — 覆盖
-    // 所有按钮配置 + 关闭对话框的情况。
-    void invoke<string>("plugin:dialog|message", {
-      title: "Unsaved changes",
-      message: "Discard unsaved changes?",
-      kind: "warning",
-      buttons: { OkCancelCustom: ["Discard", "Cancel"] },
-    }).then((result) => {
-      if (result !== "Cancel") swap();
-    });
+    requestFileSwitchShared(dirtyRef.current, swap);
   }, []);
 
   const handleSave = useCallback(async () => {
