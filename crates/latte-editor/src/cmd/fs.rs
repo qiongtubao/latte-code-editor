@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use crate::state::AppState;
-use crate::path::{safe_path, safe_read_path};
+use crate::path::safe_path;
 
 /// Directory names that are always hidden from the file tree, server-side.
 /// Keeps the IPC payload small and the renderer logic trivial.
@@ -89,12 +89,27 @@ pub(crate) fn cmd_list_dir_inner(ws: PathBuf, path: Option<String>) -> Result<Ve
 }
 
 #[tauri::command]
-pub fn cmd_read_file(_state: State<AppState>, path: String) -> Result<String, String> {
-    // We use `safe_read_path`, not `safe_path`, because go-to from the
-    // editor may land on a file outside the workspace (e.g. a `.d.ts`
-    // declaration in `node_modules/`). Writes still go through
-    // `safe_path`, so this loosens reads only.
-    let abs = safe_read_path(&path).map_err(|e| e.to_string())?;
+pub fn cmd_read_file(state: State<AppState>, path: String) -> Result<String, String> {
+    let ws = state.workspace.lock().unwrap().clone().ok_or("workspace not open")?;
+    cmd_read_file_inner(ws, &path)
+}
+
+/// Read the file at `path`. Two paths:
+///   - **Relative path**: resolved against the workspace (use `safe_path`).
+///     This is the common case — open from FileTree, symbol-click on an
+///     in-workspace definition, etc. The workspace-rooted resolution means
+///     we don't depend on the Tauri child process's CWD (which under
+///     `pnpm tauri dev` is `apps/desktop/`, not the workspace).
+///   - **Absolute path**: trusted (canonicalized to resolve symlinks).
+///     Used by cross-workspace go-to — e.g. a `.d.ts` declaration in
+///     `node_modules/`. The renderer's `isReadOnly` computation already
+///     distinguishes this case so the user sees a read-only status.
+pub(crate) fn cmd_read_file_inner(ws: PathBuf, path: &str) -> Result<String, String> {
+    let abs = if Path::new(path).is_absolute() {
+        dunce::canonicalize(path).map_err(|e| format!("canonicalize failed: {e}"))?
+    } else {
+        safe_path(&ws, path).map_err(|e| e.to_string())?
+    };
     let meta = fs::metadata(&abs).map_err(|e| e.to_string())?;
     if meta.len() > MAX_READ_BYTES {
         return Err(format!("file too large: {} bytes", meta.len()));
@@ -414,5 +429,31 @@ mod tests {
         let file_entry = by_name.get("hello.txt").expect("file entry missing");
         assert!(!file_entry.is_dir);
         assert_eq!(file_entry.path, "hello.txt");
+    }
+
+    /// U5: a relative path is resolved against the workspace, not the cwd.
+    /// Regression for: `cmd_read_file` using `safe_read_path` (which canonicalizes
+    /// against cwd). When `pnpm tauri dev` runs the Tauri child with cwd
+    /// `apps/desktop/`, cwd-relative resolution fails for any in-workspace path.
+    #[test]
+    fn read_file_resolves_workspace_relative_path() {
+        // Build a fake workspace with a file inside it, but use a different
+        // directory as the cwd. safe_path should still find the file.
+        let ws = tempfile::tempdir().unwrap();
+        let sub = ws.path().join("packages");
+        fs::create_dir(&sub).unwrap();
+        let f = sub.join("cli").join("index.ts");
+        fs::create_dir(f.parent().unwrap()).unwrap();
+        fs::write(&f, "console.log('hi')").unwrap();
+
+        // cwd somewhere unrelated
+        let other = tempfile::tempdir().unwrap();
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&other).unwrap();
+        let result = cmd_read_file_inner(ws.path().to_path_buf(), "packages/cli/index.ts");
+        std::env::set_current_dir(original).unwrap();
+
+        assert!(result.is_ok(), "expected ok, got: {result:?}");
+        assert_eq!(result.unwrap(), "console.log('hi')");
     }
 }
