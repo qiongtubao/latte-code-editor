@@ -75,8 +75,13 @@ export interface UseSaveReturn {
    * `cmd_write_file`, updates `savedContent` on success, and shows
    * `saving…`/`saved ✓` in the status bar. Bound in `MonacoEditor`
    * via `ed.addCommand(CtrlCmd | KeyS, ...)`.
+   *
+   * Pass `{ isReadOnly: true }` to short-circuit with a banner
+   * instead of writing — used when the active buffer is from
+   * outside the workspace (e.g. opened by go-to-definition) and
+   * should not be silently persisted.
    */
-  handleSave: () => Promise<void>;
+  handleSave: (opts?: { isReadOnly?: boolean }) => Promise<void>;
 }
 
 export function useSave({ file, setFile, monacoRef }: UseSaveArgs): UseSaveReturn {
@@ -144,9 +149,13 @@ export function useSave({ file, setFile, monacoRef }: UseSaveArgs): UseSaveRetur
     requestFileSwitchShared(dirtyRef.current, swap);
   }, []);
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (opts?: { isReadOnly?: boolean }) => {
     const f = fileRef.current;
     if (f === null) return;
+    if (opts?.isReadOnly === true) {
+      showEditorBanner(`read-only — cannot save: ${f.path}`);
+      return;
+    }
     setSaveStatus("saving");
     try {
       await invoke("cmd_write_file", { path: f.path, content: f.content });

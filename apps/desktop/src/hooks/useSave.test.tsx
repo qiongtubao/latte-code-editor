@@ -214,4 +214,20 @@ describe("useSave", () => {
     act(() => { bag.setFile(null); });
     expect(bag.hookResult!.dirty).toBe(false);
   });
+
+  it("handleSave on isReadOnly: early return with banner, no cmd_write_file", async () => {
+    mockInvoke.mockClear();
+    const bag = renderUseSave(
+      makeFile({ content: "new", savedContent: "old" }),
+    );
+    act(() => { bag.hookResult!.setDirty(true); });
+
+    await act(async () => {
+      await bag.hookResult!.handleSave({ isReadOnly: true });
+    });
+
+    expect(mockInvoke).not.toHaveBeenCalledWith("cmd_write_file", expect.anything());
+    expect(bag.hookResult!.editorBanner).toMatch(/read-only.*cannot save/);
+    expect(bag.hookResult!.saveStatus).toBe("idle");
+  });
 });
