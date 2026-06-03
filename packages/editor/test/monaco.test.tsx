@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor, act } from "@testing-library/react";
+import * as React from "react";
 
 // Hoist the editor-instance ref so the mock factory and the tests can share it.
 const mock = vi.hoisted(() => {
@@ -13,6 +14,8 @@ const mock = vi.hoisted(() => {
     getValue: vi.fn(() => "typed-value"),
     getModel: vi.fn(() => ({ getWordAtPosition: vi.fn() })),
     setValue: vi.fn(),
+    revealLineInCenterIfOutsideViewport: vi.fn(),
+    updateOptions: vi.fn(),
     addCommand: vi.fn((_keybinding: number, handler: () => void) => {
       state.saveCommand = handler;
       return "save-cmd-id";
@@ -37,7 +40,7 @@ vi.mock("monaco-editor", () => ({
   KeyCode: { KeyS: 49 },
 }));
 
-import { MonacoEditor } from "../src/MonacoEditor.js";
+import { MonacoEditor, type MonacoEditorHandle } from "../src/MonacoEditor.js";
 
 describe("MonacoEditor", () => {
   beforeEach(() => {
@@ -117,5 +120,80 @@ describe("MonacoEditor", () => {
     expect(mock.state.saveCommand).toBeTypeOf("function");
     mock.state.saveCommand!();
     expect(onSave).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MonacoEditor.revealLine", () => {
+  beforeEach(() => {
+    mock.editorInstance.revealLineInCenterIfOutsideViewport.mockClear();
+    mock.editorInstance.updateOptions.mockClear();
+  });
+
+  it("scrolls to the requested line on the next value tick, then clears pending", () => {
+    const ref = React.createRef<MonacoEditorHandle>();
+    const { rerender } = render(
+      <MonacoEditor
+        ref={ref}
+        value="a"
+        language="plaintext"
+        path="a.txt"
+        savedContent="a"
+        onChange={() => {}}
+        onSave={() => {}}
+      />,
+    );
+
+    act(() => { ref.current?.revealLine(42); });
+    // The reveal hasn't fired yet — the effect waits for the next [value, ...] tick.
+    expect(mock.editorInstance.revealLineInCenterIfOutsideViewport).not.toHaveBeenCalled();
+
+    rerender(
+      <MonacoEditor
+        ref={ref}
+        value="b"          // value changed
+        language="plaintext"
+        path="a.txt"
+        savedContent="a"
+        onChange={() => {}}
+        onSave={() => {}}
+      />,
+    );
+    // The effect ran; revealLineInCenterIfOutsideViewport called once with 42.
+    expect(mock.editorInstance.revealLineInCenterIfOutsideViewport).toHaveBeenCalledTimes(1);
+    expect(mock.editorInstance.revealLineInCenterIfOutsideViewport).toHaveBeenCalledWith(42);
+
+    // Re-render again with the same value (e.g. user types and onChange
+    // bubbles back) — pending was cleared, no extra reveal.
+    rerender(
+      <MonacoEditor
+        ref={ref}
+        value="b"
+        language="plaintext"
+        path="a.txt"
+        savedContent="a"
+        onChange={() => {}}
+        onSave={() => {}}
+      />,
+    );
+    expect(mock.editorInstance.revealLineInCenterIfOutsideViewport).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MonacoEditor.readOnly", () => {
+  it("forwards readOnly to editor.updateOptions", () => {
+    const ref = React.createRef<MonacoEditorHandle>();
+    render(
+      <MonacoEditor
+        ref={ref}
+        value="x"
+        language="plaintext"
+        path="x.txt"
+        savedContent="x"
+        onChange={() => {}}
+        onSave={() => {}}
+        readOnly
+      />,
+    );
+    expect(mock.editorInstance.updateOptions).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true }));
   });
 });

@@ -15,6 +15,16 @@ import { registerTcl } from "./tcl.js";
  */
 export interface MonacoEditorHandle {
   syncSavedContent: (content: string) => void;
+  /**
+   * Defer a scroll-to-line until the next value tick. Sets a pending
+   * line number; the effect on `[value, pendingRevealRef.current]`
+   * consumes it AFTER the next `setValue` has loaded the file content.
+   * This is required for the symbol-navigation flow: the line number
+   * refers to the just-opened file's coordinates, and we must load the
+   * file into the model *before* we try to scroll to a line in it.
+   * The pending ref is cleared after the call.
+   */
+  revealLine: (line: number) => void;
 }
 
 export interface MonacoEditorProps {
@@ -47,11 +57,18 @@ export interface MonacoEditorProps {
    */
   onDirtyChange?: (dirty: boolean) => void;
   onSymbolClick?: (symbol: string) => void;
+  /**
+   * When true, the editor is set to read-only mode via
+   * `editor.updateOptions({ readOnly: true })`. A dedicated effect on
+   * `[readOnly]` keeps the imperative update in sync if the prop flips
+   * after mount.
+   */
+  readOnly?: boolean;
 }
 
 export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
   function MonacoEditor(
-    { value, language, path, savedContent, onChange, onSave, onDirtyChange, onSymbolClick },
+    { value, language, path, savedContent, onChange, onSave, onDirtyChange, onSymbolClick, readOnly },
     ref,
   ) {
     const divRef = useRef<HTMLDivElement>(null);
@@ -76,6 +93,13 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
     // edits (path unchanged) skip the `setValue` call entirely so the
     // cursor survives every keystroke. `null` means "never loaded".
     const lastLoadedPath = useRef<string | null>(null);
+    // Pending line to scroll to. The `revealLine` handle stashes the
+    // line number here, and the effect on `[value, pendingRevealRef.current]`
+    // drains it on the next value tick — i.e. *after* the file content
+    // has been loaded via `setValue` (see the [path, value] effect).
+    // Without the deferral, scrolling would target a line in the
+    // previous (or empty) model.
+    const pendingRevealRef = useRef<number | null>(null);
 
     useImperativeHandle(
       ref,
@@ -88,6 +112,11 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
           // next [savedContent] effect will pick it up.
           const ed = editorRef.current;
           if (ed) onDirtyChangeRef.current?.(ed.getValue() !== content);
+        },
+        revealLine(line) {
+          // Stash only; the [value, pendingRevealRef.current] effect
+          // below performs the actual scroll on the next value tick.
+          pendingRevealRef.current = line;
         },
       }),
       [],
@@ -160,6 +189,27 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
       const ed = editorRef.current;
       if (ed) onDirtyChangeRef.current?.(ed.getValue() !== savedContent);
     }, [savedContent]);
+
+    // Drain the pending reveal line. Tracked on `value` (so we scroll
+    // AFTER the [path, value] effect has called `setValue` and the new
+    // file content is in the model) and on the ref's `.current` (so
+    // calling `revealLine(n)` re-fires the effect). The ref is cleared
+    // BEFORE the scroll so a subsequent re-render with the same value
+    // (e.g. user-typed text) doesn't trigger a second reveal.
+    useEffect(() => {
+      const line = pendingRevealRef.current;
+      if (line === null) return;
+      pendingRevealRef.current = null;
+      editorRef.current?.revealLineInCenterIfOutsideViewport(line);
+    }, [value, pendingRevealRef.current]);
+
+    // Keep Monaco's read-only option in sync with the `readOnly` prop.
+    // Separate effect (not bundled into the mount one) so the imperative
+    // `updateOptions` call fires whenever the prop flips, not just at
+    // initial mount.
+    useEffect(() => {
+      editorRef.current?.updateOptions({ readOnly: readOnly === true });
+    }, [readOnly]);
 
     // Use inline `style` (not Tailwind `flex-1 w-full min-h-0`): the
     // desktop Tailwind config only scans `apps/desktop/src`, so the
