@@ -52,6 +52,9 @@ export function languageFromPath(path: string): string {
     case "html":
     case "htm":
       return "html";
+    case "tcl":
+    case "tk":
+      return "tcl";
     default:
       return "plaintext";
   }
