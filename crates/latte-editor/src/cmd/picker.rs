@@ -9,15 +9,28 @@ pub struct WorkspaceChange {
     pub current: String,
 }
 
+/// Open a native folder picker.
+///
+/// `async` + `spawn_blocking` is load-bearing on macOS: a sync Tauri
+/// command runs inside the WKWebView url-scheme handler's main-thread
+/// stack, so calling `blocking_pick_folder` there would re-enter the
+/// main thread (via `run_on_main_thread`) to construct an `NSOpenPanel`
+/// — but the main thread is still inside the URL-scheme callback, so
+/// the dialog can never be presented and after the WKWebView timeout
+/// `+[NSOpenPanel openPanel]` returns NULL, which `objc2` turns into
+/// a `panic_cannot_unwind` and the process aborts. `async fn` makes
+/// Tauri spawn the future and immediately return from the url-scheme
+/// handler, freeing the main thread to run the dialog at the next
+/// event-loop tick.
 #[tauri::command]
-pub fn cmd_pick_folder(app: tauri::AppHandle) -> Option<String> {
-    // `blocking_pick_folder` is fine inside a Tauri command: commands run
-    // on Tauri's IPC worker pool, so the WebView stays responsive while
-    // the OS dialog is open. Returns `None` if the user cancels.
-    let picked = app.dialog().file().blocking_pick_folder()?;
-    // `FilePath` resolves to an OS path; we don't currently use the
-    // in-VFS variant (it requires `tauri::scope::FileScope`).
-    Some(picked.to_string())
+pub async fn cmd_pick_folder(app: tauri::AppHandle) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog().file().blocking_pick_folder()
+    })
+    .await
+    .ok()
+    .flatten()
+    .map(|p| p.to_string())
 }
 
 #[tauri::command]
