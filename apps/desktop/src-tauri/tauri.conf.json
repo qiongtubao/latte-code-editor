@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "Latte", "width": 1400, "height": 900 }],
+    "windows": [{ "title": "Latte", "width": 1400, "height": 900, "devtools": true }],
     "security": { "capabilities": ["default"] }
   }
 }

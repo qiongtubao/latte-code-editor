@@ -5,10 +5,13 @@ import { MonacoEditor } from "@latte/editor";
 import { useGoToDef, type GoToLocation } from "@latte/editor/useGoToDef";
 import { TopBar } from "./components/TopBar.js";
 import { EmptyState } from "./components/EmptyState.js";
+import { FileTree } from "./components/FileTree.js";
+import { languageFromPath } from "./components/languageFromPath.js";
 import type { Sample } from "./samples.js";
 
 interface OpenFile {
   path: string;
+  name: string;
   content: string;
   language: string;
 }
@@ -68,29 +71,62 @@ export default function App() {
     };
   }, [workspace]);
 
+  // Open a file from the tree: read it from disk via the Rust side and
+  // install it as the active editor buffer. The `name` is sent alongside
+  // `path` so the editor can display a clean title in the status bar.
+  const onFileOpen = async (path: string, name: string) => {
+    try {
+      const content = await invoke<string>("cmd_read_file", { path });
+      setFile({ path, name, content, language: languageFromPath(path) });
+    } catch (err) {
+      console.error("cmd_read_file failed:", err);
+      // Surface the error in the editor pane by loading the message as
+      // the file content. Keeps the user in the app instead of dropping
+      // them back to the empty state on a read failure.
+      setFile({
+        path,
+        name,
+        content: `// failed to read ${path}\n// ${String(err)}`,
+        language: "plaintext",
+      });
+    }
+  };
+
   return (
     <div data-testid="app-shell" className="h-screen flex flex-col">
       <TopBar workspace={workspace} onWorkspace={setWorkspace} />
-      <div className="flex-1 min-h-0">
-        {file ? (
-          <MonacoEditor
-            value={file.content}
-            language={file.language}
-            onChange={(v) => setFile({ ...file, content: v })}
-            onSymbolClick={(sym) => {
-              void goto
-                .onSymbolClick(sym)
-                .then((loc: GoToLocation | null) => {
-                  if (loc) setFile({ path: loc.file, content: "// TODO: load from disk", language: "typescript" });
-                })
-                .catch((err: unknown) => {
-                  console.error("go-to-definition failed:", err);
-                });
-            }}
-          />
-        ) : (
-          <EmptyState onOpen={(s: Sample) => setFile({ path: s.path, content: s.content, language: s.language })} />
+      <div className="flex-1 min-h-0 flex">
+        {workspace !== null && (
+          <FileTree workspace={workspace} onFileOpen={onFileOpen} />
         )}
+        <div className="flex-1 min-w-0 flex flex-col">
+          {file ? (
+            <MonacoEditor
+              value={file.content}
+              language={file.language}
+              onChange={(v) => setFile({ ...file, content: v })}
+              onSymbolClick={(sym) => {
+                void goto
+                  .onSymbolClick(sym)
+                  .then((loc: GoToLocation | null) => {
+                    if (loc) setFile({ path: loc.file, name: loc.file.split("/").pop() ?? loc.file, content: "// TODO: load from disk", language: "typescript" });
+                  })
+                  .catch((err: unknown) => {
+                    console.error("go-to-definition failed:", err);
+                  });
+              }}
+            />
+          ) : workspace !== null ? (
+            <div
+              data-testid="editor-placeholder"
+              className="h-full flex items-center justify-center text-sm text-zinc-500 bg-zinc-900"
+            >
+              Select a file from the tree
+            </div>
+          ) : (
+            <EmptyState onOpen={(s: Sample) => setFile({ path: s.path, name: s.name, content: s.content, language: s.language })} />
+          )}
+        </div>
       </div>
       <div data-testid="status-bar" className="h-6 px-3 flex items-center text-[11px] bg-zinc-800">
         {file?.path ?? workspace ?? "latte"} {goto.busy && "· jumping…"}
