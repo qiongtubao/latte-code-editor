@@ -57,6 +57,7 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
             cmd::callh::cmd_call_hierarchy,
             cmd::build::cmd_build,
             cmd::fs::cmd_list_dir,
+            cmd::fs::cmd_read_file,
             cmd::palette::cmd_palette_search,
             cmd::search::cmd_semantic_search,
             cmd::session::cmd_get_last_workspace,
