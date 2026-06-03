@@ -22,7 +22,8 @@ export function Drawer({ symbol, onClose, onJump }: { symbol: string | null; onC
         <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">✕</button>
       </header>
       {nodes.map((n, i) => (
-        <div key={i} className="px-2 py-0.5 hover:bg-zinc-800 cursor-pointer"
+        <div key={i} data-testid="drawer-row"
+             className="px-2 py-0.5 hover:bg-zinc-800 cursor-pointer"
              onClick={() => onJump(n)}>
           {n.role === "caller" ? "↑" : "↓"} <span className="text-amber-300">{n.role}</span> {n.name} ({n.file}:{n.line})
         </div>

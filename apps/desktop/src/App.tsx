@@ -1,19 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { MonacoEditor, type MonacoEditorHandle } from "@latte/editor";
-import { useGoToDef, type GoToLocation } from "@latte/editor/useGoToDef";
+import { Drawer, MonacoEditor, type MonacoEditorHandle } from "@latte/editor";
 import { TopBar } from "./components/TopBar.js";
 import { EmptyState } from "./components/EmptyState.js";
 import { FileTree } from "./components/FileTree.js";
 import { languageFromPath } from "./components/languageFromPath.js";
 import { useSave, type OpenFile } from "./hooks/useSave.js";
+import { useSymbolNavigation, type CallNode } from "./hooks/useSymbolNavigation.js";
 import type { Sample } from "./samples.js";
 
 export default function App() {
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [file, setFile] = useState<OpenFile | null>(null);
-  const goto = useGoToDef();
   // Imperative handle from <MonacoEditor>. Passed into useSave so
   // handleSave can call `syncSavedContent` synchronously on success
   // (C2 fix: avoids a one-frame ● flicker in the status bar).
@@ -27,6 +26,26 @@ export default function App() {
     requestFileSwitch,
     handleSave,
   } = useSave({ file, setFile, monacoRef });
+
+  // The Drawer replaces the old go-to-definition wiring: clicking a
+  // symbol in the editor opens the Drawer; clicking a row in the
+  // Drawer jumps (with `revealLine`) and sets `isReadOnly` for files
+  // outside the workspace.
+  const nav = useSymbolNavigation({
+    file,
+    setFile,
+    monacoRef,
+    workspace,
+    requestFileSwitch,
+    setEditorBanner,
+  });
+
+  // A file is read-only if it's open AND its path is not under the
+  // workspace root. `node_modules/*.d.ts` and any external jump
+  // target qualify. Used by the editor prop AND the save guard AND
+  // the status bar text — keep all three driven by this one value.
+  const isReadOnly =
+    file !== null && workspace !== null && !file.path.startsWith(workspace + "/");
 
   useEffect(() => {
     invoke<string | null>("cmd_get_workspace").then(setWorkspace).catch((err: unknown) => {
@@ -132,32 +151,10 @@ export default function App() {
               path={file.path}
               savedContent={file.savedContent}
               onChange={(v) => setFile({ ...file, content: v })}
-              onSave={handleSave}
+              onSave={() => handleSave({ isReadOnly })}
               onDirtyChange={setDirty}
-              onSymbolClick={(sym) => {
-                void goto
-                  .onSymbolClick(sym)
-                  .then((loc: GoToLocation | null) => {
-                    if (!loc) return;
-                    requestFileSwitch(() => {
-                      const name = loc.file.split("/").pop() ?? loc.file;
-                      // Placeholder content until the V2 round adds
-                      // a real read+load; savedContent matches content
-                      // so the editor starts clean and doesn't show ●.
-                      const placeholder = "// TODO: load from disk";
-                      setFile({
-                        path: loc.file,
-                        name,
-                        content: placeholder,
-                        language: "typescript",
-                        savedContent: placeholder,
-                      });
-                    });
-                  })
-                  .catch((err: unknown) => {
-                    console.error("go-to-definition failed:", err);
-                  });
-              }}
+              readOnly={isReadOnly}
+              onSymbolClick={(sym) => nav.onSymbolClick(sym)}
             />
           ) : workspace !== null ? (
             <div
@@ -181,15 +178,22 @@ export default function App() {
               }
             />
           )}
+          {nav.drawerSymbol !== null && (
+            <Drawer
+              symbol={nav.drawerSymbol}
+              onClose={nav.closeDrawer}
+              onJump={nav.onJump as (n: CallNode) => void}
+            />
+          )}
         </div>
       </div>
       <div data-testid="status-bar" className="h-6 px-3 flex items-center justify-between text-[11px] bg-zinc-800">
         <span>
           {file?.path ?? workspace ?? "latte"}
-          {dirty && saveStatus === "idle" && " · ●"}
+          {isReadOnly && " · read-only"}
+          {dirty && !isReadOnly && saveStatus === "idle" && " · ●"}
           {saveStatus === "saving" && " · saving…"}
           {saveStatus === "saved" && " · saved ✓"}
-          {goto.busy && " · jumping…"}
         </span>
       </div>
     </div>

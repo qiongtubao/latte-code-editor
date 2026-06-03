@@ -58,6 +58,22 @@ vi.mock("@latte/editor", () => ({
       "data-saved-content": props.savedContent as string,
     });
   }),
+  // Minimal Drawer stub: re-uses the real <section data-testid="drawer">
+  // shape so the new out-of-workspace test can query the rows. We don't
+  // pull in the real module because it invokes `cmd_call_hierarchy` on
+  // mount — the test would have to thread that mock through anyway, and
+  // a tiny in-test stub is simpler than partial-mocking `importOriginal`.
+  Drawer: (props: { symbol: string | null; onClose: () => void; onJump: (n: unknown) => void }) => {
+    if (props.symbol === null) return null;
+    return React.createElement(
+      "section",
+      { "data-testid": "drawer" },
+      React.createElement("div", {
+        "data-testid": "drawer-row",
+        onClick: () => props.onJump({ name: "f", file: "/usr/local/lib/typescript.d.ts", line: 1, role: "callee" }),
+      }),
+    );
+  },
 }));
 
 import { invoke } from "@tauri-apps/api/core";
@@ -214,5 +230,68 @@ describe("App save mechanism integration", () => {
     const newCalls = mockInvoke.mock.calls.slice(callsBefore);
     const calledGetWorkspace = newCalls.some(([c]) => c === "cmd_get_workspace");
     expect(calledGetWorkspace).toBe(false);
+  });
+
+  it("out-of-workspace go-to: opens the file read-only with readOnly prop set", async () => {
+    // Override the default mock: the default returns `null` for
+    // `cmd_call_hierarchy`, which would leave the Drawer empty. We
+    // also need a known read for the .d.ts path the Drawer row
+    // references.
+    mockInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      const path = (args as { path?: string } | undefined)?.path;
+      switch (cmd) {
+        case "cmd_get_workspace": return "/ws";
+        case "cmd_user_hook": return { css: null, js: null };
+        case "cmd_list_dir": return [
+          { name: "a.ts", path: "a.ts", isDir: false },
+        ];
+        case "cmd_read_file": {
+          if (path === "a.ts") return "content of a";
+          if (path === "/usr/local/lib/typescript.d.ts") return "declare const x: number;";
+          return "default";
+        }
+        case "cmd_definition": return null;
+        case "cmd_call_hierarchy": return [
+          { name: "f", file: "/usr/local/lib/typescript.d.ts", line: 1, role: "callee" },
+        ];
+        case "plugin:dialog|message": return "Cancel";
+        default: return null;
+      }
+    });
+
+    const { findByTestId, getByTestId } = render(<App />);
+    await findByTestId("tree-row-a.ts");
+    fireEvent.click(getByTestId("tree-row-a.ts"));
+    await findByTestId("mock-monaco");
+
+    // Click a symbol in the editor — Drawer opens with the hierarchy.
+    act(() => {
+      (mockMonacoProps.current!.onSymbolClick as (s: string) => void)("f");
+    });
+    await waitFor(() => {
+      expect(getByTestId("drawer")).toBeTruthy();
+    });
+
+    // Click the callee row in the Drawer — file opens, readOnly is true.
+    const row = await waitFor(() => {
+      const drawer = getByTestId("drawer");
+      const rows = drawer.querySelectorAll("[data-testid='drawer-row']");
+      if (rows.length === 0) throw new Error("no rows yet");
+      return rows[0];
+    });
+    fireEvent.click(row);
+
+    // The MonacoEditor's mockImperativeHandle is the same across renders
+    // (we don't re-create it). The simplest signal that the out-of-workspace
+    // jump landed: the editor received a new `value` matching the .d.ts
+    // content. The `readOnly` prop itself is asserted via the status bar
+    // text below.
+    await waitFor(() => {
+      expect(getByTestId("mock-monaco").getAttribute("data-value"))
+        .toBe("declare const x: number;");
+    });
+    // Status bar surfaces `· read-only` when the active file's path is
+    // outside the workspace.
+    expect(getByTestId("status-bar").textContent).toMatch(/read-only/);
   });
 });
