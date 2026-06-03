@@ -28,6 +28,11 @@ vi.mock("monaco-editor", () => ({
     setModelLanguage: vi.fn(),
     MouseTargetType: { GUTTER_GLYPH_MARGIN: 2 },
   },
+  languages: {
+    register: vi.fn(),
+    setMonarchTokensProvider: vi.fn(),
+    setLanguageConfiguration: vi.fn(),
+  },
   KeyMod: { CtrlCmd: 1 << 11 },
   KeyCode: { KeyS: 49 },
 }));

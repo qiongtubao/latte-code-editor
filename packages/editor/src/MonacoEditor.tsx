@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as monaco from "monaco-editor";
+import { registerTcl } from "./tcl.js";
 
 /**
  * Imperative handle exposed by `MonacoEditor` via `forwardRef`. The
@@ -121,6 +122,9 @@ export const MonacoEditor = forwardRef<MonacoEditorHandle, MonacoEditorProps>(
         onSaveRef.current();
       });
       editorRef.current = ed;
+      // Idempotent: `tcl.ts` guards with a module-level `registered`
+      // flag, so mounting multiple MonacoEditor instances is safe.
+      registerTcl(monaco);
       // Record the initial load so the [path, value] effect below
       // doesn't redundantly re-setValue the same content on mount.
       lastLoadedPath.current = path;
