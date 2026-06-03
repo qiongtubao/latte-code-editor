@@ -1,5 +1,6 @@
 pub mod build;
 pub mod callh;
+pub mod db_init;
 pub mod fs;
 pub mod graph;
 pub mod palette;

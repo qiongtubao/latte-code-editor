@@ -34,6 +34,30 @@ pub fn build_builder() -> tauri::Builder<tauri::Wry> {
                     );
                 }
             }
+            // Initialize the graph index for the restored/fallback
+            // workspace. We go straight to `ensure_db` here (rather than
+            // going through `apply_workspace`) because the renderer isn't
+            // ready yet to receive a `workspace-changed` event, and there's
+            // no AppHandle emit that would be useful at setup time.
+            //
+            // Non-fatal on I/O error: we have no IPC channel to surface
+            // setup-time errors to the user. If `ensure_db` fails here,
+            // the user can still open files; symbol queries will surface
+            // a real "graph index not initialized" error when they try.
+            {
+                let ws = state.workspace.lock().unwrap().clone();
+                if let Some(ws) = ws {
+                    match crate::cmd::db_init::ensure_db(&ws) {
+                        Ok(db) => {
+                            *state.db.lock().unwrap() = Some(db);
+                        }
+                        Err(e) => eprintln!(
+                            "[latte] graph index init failed for {}: {e}",
+                            ws.display()
+                        ),
+                    }
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

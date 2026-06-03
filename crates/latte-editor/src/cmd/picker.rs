@@ -69,6 +69,19 @@ pub fn apply_workspace(
     let path_str = canonical.to_string_lossy().to_string();
     // Mirror to the session file so the next launch restores it.
     crate::cmd::session::cmd_set_last_workspace(path_str.clone())?;
+    // Initialize the graph index (creates .latte/graph.db if missing).
+    // Replaces any prior state.db; the old GraphDb's Connection closes
+    // on Drop, so swapping is safe without explicit teardown.
+    // We fail the workspace change on I/O error: the whole point of
+    // this hook is to make `state.db` populated, so a write failure
+    // here means the user has hit a real disk problem and should know
+    // rather than clicking a symbol and seeing a confusing later error.
+    let db = crate::cmd::db_init::ensure_db(&canonical)
+        .map_err(|e| format!("graph index init failed: {e}"))?;
+    {
+        let mut slot = state.db.lock().unwrap();
+        *slot = Some(db);
+    }
     // Notify the renderer so React state stays in sync with the Rust side.
     // `emit` errors are intentionally swallowed: a failed event means the
     // renderer will re-fetch on the next IPC call anyway, and we don't want
