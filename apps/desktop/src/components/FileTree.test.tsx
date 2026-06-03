@@ -330,4 +330,93 @@ describe("FileTree", () => {
       expect(queryByTestId("tree-row-sub/x.ts")).toBeNull();
     });
   });
+
+  it("renders a virtual workspace root row using the last path segment as its name", async () => {
+    const onFileOpen = vi.fn();
+    mockInvoke.mockResolvedValueOnce([] as FsEntry[]);
+
+    const { getByTestId } = render(
+      <FileTree workspace="/path/to/my-project" onFileOpen={onFileOpen} />,
+    );
+
+    await waitFor(() => {
+      expect(getByTestId("tree-row-root")).toBeTruthy();
+    });
+    // The name in the row should be the basename of the workspace path.
+    expect(getByTestId("tree-row-root").textContent).toContain("my-project");
+  });
+
+  it("falls back to 'workspace' as the root name when the workspace path has no usable segment", async () => {
+    const onFileOpen = vi.fn();
+    mockInvoke.mockResolvedValueOnce([] as FsEntry[]);
+
+    // Path consisting only of slashes — deriveWorkspaceName should
+    // walk past the empty segments and fall back to the literal
+    // "workspace" string.
+    const { getByTestId } = render(
+      <FileTree workspace="//" onFileOpen={onFileOpen} />,
+    );
+
+    await waitFor(() => {
+      expect(getByTestId("tree-row-root")).toBeTruthy();
+    });
+    expect(getByTestId("tree-row-root").textContent).toContain("workspace");
+  });
+
+  it("root context menu has New File / New Folder but no Delete item", async () => {
+    const onFileOpen = vi.fn();
+    mockInvoke.mockResolvedValueOnce([] as FsEntry[]);
+
+    const { getByTestId, queryByTestId } = render(
+      <FileTree workspace="/ws" onFileOpen={onFileOpen} />,
+    );
+
+    await waitFor(() => {
+      expect(getByTestId("tree-row-root")).toBeTruthy();
+    });
+    rightClick(getByTestId("tree-row-root"));
+
+    await waitFor(() => {
+      expect(getByTestId("file-tree-contextmenu")).toBeTruthy();
+    });
+    expect(getByTestId("ctx-item-new-file")).toBeTruthy();
+    expect(getByTestId("ctx-item-new-dir")).toBeTruthy();
+    // Root must NOT offer Delete — `cmd_delete_entry` would reject it
+    // anyway, so the UI shouldn't even surface the option.
+    expect(queryByTestId("ctx-item-delete")).toBeNull();
+  });
+
+  it("creating a file from the root context menu uses the bare name as the workspace-relative path", async () => {
+    const onFileOpen = vi.fn();
+    // 1) initial root listing
+    mockInvoke.mockResolvedValueOnce([] as FsEntry[]);
+    // 2) refresh of root after creation
+    mockInvoke.mockResolvedValueOnce([] as FsEntry[]);
+
+    const { getByTestId } = render(
+      <FileTree workspace="/ws" onFileOpen={onFileOpen} />,
+    );
+
+    await waitFor(() => {
+      expect(getByTestId("tree-row-root")).toBeTruthy();
+    });
+    rightClick(getByTestId("tree-row-root"));
+    fireEvent.click(getByTestId("ctx-item-new-file"));
+
+    const input = getByTestId("prompt-modal-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "hello.ts" } });
+    fireEvent.click(getByTestId("prompt-modal-submit"));
+
+    // parentPathOf("") returns "" so the joined path is just the
+    // name — no leading slash, no "root/" prefix.
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith("cmd_create_file", {
+        path: "hello.ts",
+      });
+    });
+    // And the parent refresh should target the root (path: null).
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith("cmd_list_dir", { path: null });
+    });
+  });
 });

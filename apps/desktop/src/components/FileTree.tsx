@@ -53,6 +53,21 @@ function clampPosition(x: number, y: number, w: number, h: number): { x: number;
 }
 
 /**
+ * Last path segment of `workspace`, used as the display name of the
+ * virtual root row. Falls back to the full path (then "workspace") so
+ * a bare "/" or empty workspace still renders something meaningful.
+ *
+ * Splits on both `/` and `\\` so Windows-style paths (e.g. when the
+ * app is launched from `pnpm tauri dev` on Windows) get a sensible
+ * segment. On macOS/Linux this is just the last `/`-delimited token.
+ */
+function deriveWorkspaceName(workspace: string): string {
+  const segs = workspace.split(/[\\/]+/).filter((s) => s.length > 0);
+  if (segs.length === 0) return "workspace";
+  return segs[segs.length - 1] ?? "workspace";
+}
+
+/**
  * Recursive file tree sidebar.
  *
  * - Hides nothing itself: the parent layout is responsible for not rendering
@@ -99,11 +114,15 @@ export function FileTree({ workspace, onFileOpen }: FileTreeProps) {
     }
   }, []);
 
-  // On workspace change: clear everything and fetch the root.
+  // On workspace change: clear everything and fetch the root. We also
+  // seed `expanded` with `""` so the virtual workspace root row
+  // (added in the render below) is open by default — matches VSCode /
+  // Sublime / JetBrains behaviour where the workspace folder is
+  // expanded on open and its children are immediately visible.
   useEffect(() => {
     if (workspace === null) return;
     setChildrenByPath({});
-    setExpanded(new Set());
+    setExpanded(new Set([""]));
     setLoading(new Set());
     setContextMenu(null);
     setModal(null);
@@ -236,6 +255,16 @@ export function FileTree({ workspace, onFileOpen }: FileTreeProps) {
 
   if (workspace === null) return null;
 
+  // The workspace itself is rendered as the top-level row, with its
+  // own path of `""` (the sentinel that `cmd_list_dir` and the create
+  // commands already use for "the workspace root"). The child entries
+  // of the root are `childrenByPath[""]`; once the root is expanded
+  // (auto-expanded on workspace load — see the effect above) the
+  // existing `TreeNode` recursion handles them at depth 1.
+  const workspaceName = deriveWorkspaceName(workspace);
+  const rootEntry: FsEntry = { name: workspaceName, path: "", isDir: true };
+  const isRootContext = contextMenu !== null && contextMenu.entry.path === "";
+
   return (
     <div className="relative flex">
       <div
@@ -254,7 +283,7 @@ export function FileTree({ workspace, onFileOpen }: FileTreeProps) {
         <ul className="py-1">
           <TreeNode
             depth={0}
-            entries={childrenByPath[""] ?? []}
+            entries={[rootEntry]}
             expanded={expanded}
             loading={loading}
             onToggle={onToggle}
@@ -296,13 +325,16 @@ export function FileTree({ workspace, onFileOpen }: FileTreeProps) {
                   New Folder
                 </button>
               </li>
-              <li aria-hidden="true" className="my-1 border-t border-zinc-700" />
+              {!isRootContext && (
+                <li aria-hidden="true" className="my-1 border-t border-zinc-700" />
+              )}
             </>
           )}
-          <li>
-            <button
-              type="button"
-              data-testid="ctx-item-delete"
+          {!isRootContext && (
+            <li>
+              <button
+                type="button"
+                data-testid="ctx-item-delete"
               role="menuitem"
               className="w-full text-left px-3 py-1 hover:bg-red-700/60 text-red-200"
               onClick={() => void handleDelete(contextMenu.entry)}
@@ -310,6 +342,7 @@ export function FileTree({ workspace, onFileOpen }: FileTreeProps) {
               Delete
             </button>
           </li>
+          )}
         </ul>
       )}
 
@@ -359,7 +392,7 @@ function TreeNode({
         return (
           <li key={entry.path}>
             <div
-              data-testid={`tree-row-${entry.path}`}
+              data-testid={entry.path === "" ? "tree-row-root" : `tree-row-${entry.path}`}
               className="flex items-center gap-1 px-1 py-0.5 hover:bg-zinc-800 cursor-pointer select-none"
               style={{ paddingLeft: 4 + depth * 12 }}
               onClick={() => {

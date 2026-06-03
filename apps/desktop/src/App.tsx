@@ -104,6 +104,7 @@ export default function App() {
             <MonacoEditor
               value={file.content}
               language={file.language}
+              path={file.path}
               onChange={(v) => setFile({ ...file, content: v })}
               onSymbolClick={(sym) => {
                 void goto
