@@ -28,6 +28,7 @@ pub struct OpenFolderResult {
     pub graph_node_count: usize,
 }
 
+
 #[derive(Serialize)]
 pub struct FileResult {
     pub path: String,

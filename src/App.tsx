@@ -122,6 +122,10 @@ function App() {
           onClose={() => setDefPopup(null)}
         />
       )}
+
+      {/* Body: sidebar + main content (flex-row) */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar (left) */}
         {sidebarOpen && (
           <div className="w-60 flex-shrink-0 border-r border-gray-700 overflow-hidden flex flex-col">
             <Sidebar
@@ -133,10 +137,7 @@ function App() {
           </div>
         )}
 
-
-      {/* Body: sidebar + main content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Main content: tab bar + outline + editor/graph */}
+        {/* Main content (right) */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Tab bar (only in editor/split modes) */}
           {(activePanel === "editor" || activePanel === "split") && <TabBar />}
@@ -148,27 +149,27 @@ function App() {
                 <OutlinePanel />
               </div>
             )}
-              {(activePanel === "editor" || activePanel === "split") && (
-                <div
-                  className={`overflow-hidden ${
-                    activePanel === "split" ? "w-1/2 border-r border-gray-700" : "flex-1"
-                  }`}
-                >
-                  <EditorPanel onCtrlClick={(word, x, y) => setDefPopup({ word, x, y })} />
-                </div>
-              )}
-              {(activePanel === "graph" || activePanel === "split") && (
-                <div
-                  className={`overflow-hidden ${
-                    activePanel === "split" ? "w-1/2" : "flex-1"
-                  }`}
-                >
-                  <GraphPanel />
-                </div>
-              )}
-            </div>
+            {(activePanel === "editor" || activePanel === "split") && (
+              <div
+                className={`overflow-hidden ${
+                  activePanel === "split" ? "w-1/2 border-r border-gray-700" : "flex-1"
+                }`}
+              >
+                <EditorPanel onCtrlClick={(word, x, y) => setDefPopup({ word, x, y })} />
+              </div>
+            )}
+            {(activePanel === "graph" || activePanel === "split") && (
+              <div
+                className={`overflow-hidden ${
+                  activePanel === "split" ? "w-1/2" : "flex-1"
+                }`}
+              >
+                <GraphPanel />
+              </div>
+            )}
           </div>
         </div>
+      </div>
 
       <StatusBar />
     </div>
