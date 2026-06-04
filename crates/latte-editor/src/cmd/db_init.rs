@@ -26,6 +26,42 @@ pub(crate) fn ensure_db(ws: &Path) -> Result<GraphDb, String> {
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("create graph.db: {e}"))?;
         conn.execute(
+            "CREATE TABLE nodes (
+                id    TEXT PRIMARY KEY,
+                name  TEXT NOT NULL,
+                file  TEXT,
+                line  INTEGER,
+                col   INTEGER,
+                kind  TEXT
+            )",
+            [],
+        )
+        .map_err(|e| format!("create nodes table: {e}"))?;
+        conn.execute(
+            "CREATE TABLE edges (
+                from_node TEXT NOT NULL,
+                to_node   TEXT NOT NULL,
+                kind      TEXT
+            )",
+            [],
+        )
+        .map_err(|e| format!("create edges table: {e}"))?;
+        conn.execute(
+            "CREATE INDEX idx_nodes_name ON nodes(name)",
+            [],
+        )
+        .map_err(|e| format!("create idx_nodes_name: {e}"))?;
+        conn.execute(
+            "CREATE INDEX idx_edges_from ON edges(from_node)",
+            [],
+        )
+        .map_err(|e| format!("create idx_edges_from: {e}"))?;
+        conn.execute(
+            "CREATE INDEX idx_edges_to ON edges(to_node)",
+            [],
+        )
+        .map_err(|e| format!("create idx_edges_to: {e}"))?;
+        conn.execute(
             "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)",
             [],
         )
@@ -70,6 +106,23 @@ mod tests {
             })
             .expect("schema_version row should be present");
         assert_eq!(version, "1");
+
+        // The graph data tables must also exist and be empty: the CLI
+        // build is a stub, so the real index never populates them, but
+        // the symbol queries in `latte-graph-adapter` need them to be
+        // present (otherwise `definition`/`references`/`neighbors`
+        // error with "no such table: nodes" on a fresh workspace).
+        let nodes_count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM nodes", [], |r| r.get(0))
+            .expect("nodes table should exist");
+        assert_eq!(nodes_count, 0);
+
+        let edges_count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM edges", [], |r| r.get(0))
+            .expect("edges table should exist");
+        assert_eq!(edges_count, 0);
     }
 
     /// U2: calling `ensure_db` twice on the same workspace must succeed
@@ -144,5 +197,41 @@ mod tests {
         let _: i64 = conn
             .query_row("SELECT 1", [], |r| r.get(0))
             .expect("manual connection should be usable");
+    }
+
+    /// U5: an empty graph (CLI build is still a stub) must support a
+    /// `definition` query without erroring. `ensure_db` is responsible
+    /// for creating the `nodes` table up front, so the query returns
+    /// `Ok(None)` instead of `Err("no such table: nodes")`.
+    #[test]
+    fn ensure_db_supports_definition_query_on_empty_graph() {
+        let dir = tempdir().unwrap();
+        let db = ensure_db(dir.path()).expect("ensure_db should succeed");
+
+        let result = latte_graph_adapter::definition(&db, "anything");
+        assert!(
+            result.is_ok(),
+            "definition query should succeed on an empty graph; got: {result:?}"
+        );
+        assert!(
+            matches!(result.unwrap(), None),
+            "definition should be None for an unknown symbol on an empty graph"
+        );
+    }
+
+    /// U6: same contract for `references`. The query joins `nodes` and
+    /// `edges`, so both tables must exist. On an empty graph the
+    /// result is `Ok(vec![])`, not an error.
+    #[test]
+    fn ensure_db_supports_references_query_on_empty_graph() {
+        let dir = tempdir().unwrap();
+        let db = ensure_db(dir.path()).expect("ensure_db should succeed");
+
+        let result = latte_graph_adapter::references(&db, "anything", 100);
+        assert!(
+            result.is_ok(),
+            "references query should succeed on an empty graph; got: {result:?}"
+        );
+        assert!(result.unwrap().is_empty());
     }
 }
