@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #1e1e1e;
+  color: #d4d4d4;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* CodeMirror overrides for dark theme */
+.cm-editor {
+  height: 100%;
+  background: #1e1e1e;
+  color: #d4d4d4;
+}
+
+.cm-editor .cm-gutters {
+  background: #1e1e1e;
+  color: #858585;
+  border-right: 1px solid #333;
+}
+
+.cm-editor .cm-activeLineGutter {
+  background: #282828;
+}
+
+.cm-editor .cm-activeLine {
+  background: #282828;
+}
+
+.cm-editor .cm-cursor {
+  border-left-color: #aeafad;
+}
+
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground {
+  background: #264f78;
+}
+
+.cm-editor .cm-matchingBracket,
+.cm-editor .cm-nonmatchingBracket {
+  background: #343434;
+  outline: 1px solid #515151;
+}
+
+.cm-editor .cm-scroller {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 14px;
+  line-height: 1.6;
+}
