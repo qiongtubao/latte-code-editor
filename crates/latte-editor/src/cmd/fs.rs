@@ -432,9 +432,8 @@ mod tests {
     }
 
     /// U5: a relative path is resolved against the workspace, not the cwd.
-    /// Regression for: `cmd_read_file` using `safe_read_path` (which canonicalizes
-    /// against cwd). When `pnpm tauri dev` runs the Tauri child with cwd
-    /// `apps/desktop/`, cwd-relative resolution fails for any in-workspace path.
+    /// When `pnpm tauri dev` runs the Tauri child with cwd `apps/desktop/`,
+    /// cwd-relative resolution would fail for any in-workspace path.
     #[test]
     fn read_file_resolves_workspace_relative_path() {
         // Build a fake workspace with a file inside it, but use a different
