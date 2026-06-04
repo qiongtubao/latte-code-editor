@@ -52,3 +52,15 @@ export async function listDirectory(path: string): Promise<FsEntry[]> {
 export async function buildCodeGraph(): Promise<BuildResult> {
   return invoke<BuildResult>("build_code_graph");
 }
+
+export async function createFile(path: string): Promise<void> {
+  return invoke<void>("create_file", { path });
+}
+
+export async function createFolder(path: string): Promise<void> {
+  return invoke<void>("create_folder", { path });
+}
+
+export async function deleteEntry(path: string): Promise<void> {
+  return invoke<void>("delete_entry", { path });
+}

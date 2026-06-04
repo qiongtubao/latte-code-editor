@@ -94,6 +94,38 @@ pub async fn list_directory(
     list_dir_inner(Path::new(&path))
 }
 
+#[tauri::command]
+pub async fn create_file(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create parent directory: {}", e))?;
+    }
+    std::fs::write(p, "")
+        .map_err(|e| format!("Cannot create file: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn create_folder(path: String) -> Result<(), String> {
+    std::fs::create_dir_all(std::path::Path::new(&path))
+        .map_err(|e| format!("Cannot create folder: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_entry(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if p.is_dir() {
+        std::fs::remove_dir(p)
+            .map_err(|e| format!("Cannot remove directory: {}", e))?;
+    } else {
+        std::fs::remove_file(p)
+            .map_err(|e| format!("Cannot remove file: {}", e))?;
+    }
+    Ok(())
+}
+
 fn list_dir_inner(path: &Path) -> Result<Vec<FsEntry>, String> {
     let mut entries: Vec<FsEntry> = Vec::new();
 
