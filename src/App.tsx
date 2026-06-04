@@ -4,6 +4,7 @@ import { GraphPanel } from "./components/GraphPanel";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { OutlinePanel } from "./components/OutlinePanel";
+import type { FsEntry } from "./api/commands";
 import { StatusBar } from "./components/StatusBar";
 import { DefinitionPopup } from "./components/DefinitionPopup";
 import { openFile } from "./api/commands";
@@ -18,6 +19,8 @@ function App() {
   const { openFileOrSwitch } = useEditorStore();
   const { cursorWord } = useEditorStore();
   const [defPopup, setDefPopup] = useState<{ word: string; x: number; y: number } | null>(null);
+  const [folderRoot, setFolderRoot] = useState<string | null>(null);
+  const [folderEntries, setFolderEntries] = useState<FsEntry[]>([]);
   const { filePath } = useEditorStore();
   const { graphData } = useGraphStore();
 
@@ -119,16 +122,20 @@ function App() {
           onClose={() => setDefPopup(null)}
         />
       )}
-
-      {/* Body: sidebar + main content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
         {sidebarOpen && (
           <div className="w-60 flex-shrink-0 border-r border-gray-700 overflow-hidden flex flex-col">
-            <Sidebar onFileOpen={handleFileOpen} />
+            <Sidebar
+              folderRoot={folderRoot}
+              folderEntries={folderEntries}
+              onFolderChange={(root, entries) => { setFolderRoot(root); setFolderEntries(entries); }}
+              onFileOpen={handleFileOpen}
+            />
           </div>
         )}
 
+
+      {/* Body: sidebar + main content */}
+      <div className="flex-1 flex overflow-hidden">
         {/* Main content: tab bar + outline + editor/graph */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Tab bar (only in editor/split modes) */}

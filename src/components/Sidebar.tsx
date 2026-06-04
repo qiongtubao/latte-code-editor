@@ -6,12 +6,13 @@ import type { FsEntry } from "../api/commands";
 import { useGraphStore } from "../hooks/useGraphStore";
 
 interface SidebarProps {
+  folderRoot: string | null;
+  folderEntries: FsEntry[];
+  onFolderChange: (root: string, entries: FsEntry[]) => void;
   onFileOpen: (path: string) => void;
 }
 
-export function Sidebar({ onFileOpen }: SidebarProps) {
-  const [root, setRoot] = useState<string | null>(null);
-  const [entries, setEntries] = useState<FsEntry[]>([]);
+export function Sidebar({ folderRoot, folderEntries, onFolderChange, onFileOpen }: SidebarProps) {
   const [building, setBuilding] = useState(false);
   const requestReload = useGraphStore((s) => s.requestReload);
 
@@ -24,8 +25,7 @@ export function Sidebar({ onFileOpen }: SidebarProps) {
     if (typeof selected === "string") {
       try {
         const result = await openFolder(selected);
-        setRoot(result.root);
-        setEntries(result.entries);
+        onFolderChange(result.root, result.entries);
         requestReload();
 
         // Auto-build graph if not present
@@ -45,7 +45,7 @@ export function Sidebar({ onFileOpen }: SidebarProps) {
         console.error("Failed to open folder:", e);
       }
     }
-  }, [requestReload]);
+  }, [onFolderChange, requestReload]);
 
   // Listen for "open-folder" custom event from App.tsx Ctrl+K Ctrl+O
   useEffect(() => {
@@ -54,7 +54,7 @@ export function Sidebar({ onFileOpen }: SidebarProps) {
     return () => window.removeEventListener("open-folder", handler);
   }, [handleOpenFolder]);
 
-  if (!root) {
+  if (!folderRoot) {
     return (
       <div
         className="flex flex-col h-full items-center justify-center text-xs"
@@ -80,7 +80,7 @@ export function Sidebar({ onFileOpen }: SidebarProps) {
         </div>
       )}
       <div className="flex-1 overflow-hidden">
-        <FileTree root={root} entries={entries} onFileOpen={onFileOpen} />
+        <FileTree root={folderRoot} entries={folderEntries} onFileOpen={onFileOpen} />
       </div>
     </div>
   );
