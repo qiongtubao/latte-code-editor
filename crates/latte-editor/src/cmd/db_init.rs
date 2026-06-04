@@ -22,57 +22,60 @@ pub(crate) fn ensure_db(ws: &Path) -> Result<GraphDb, String> {
     let dir = ws.join(".latte");
     fs::create_dir_all(&dir).map_err(|e| format!("create .latte/: {e}"))?;
     let db_path = dir.join("graph.db");
-    if !db_path.exists() {
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("create graph.db: {e}"))?;
-        conn.execute(
-            "CREATE TABLE nodes (
-                id    TEXT PRIMARY KEY,
-                name  TEXT NOT NULL,
-                file  TEXT,
-                line  INTEGER,
-                col   INTEGER,
-                kind  TEXT
-            )",
-            [],
-        )
-        .map_err(|e| format!("create nodes table: {e}"))?;
-        conn.execute(
-            "CREATE TABLE edges (
-                from_node TEXT NOT NULL,
-                to_node   TEXT NOT NULL,
-                kind      TEXT
-            )",
-            [],
-        )
-        .map_err(|e| format!("create edges table: {e}"))?;
-        conn.execute(
-            "CREATE INDEX idx_nodes_name ON nodes(name)",
-            [],
-        )
-        .map_err(|e| format!("create idx_nodes_name: {e}"))?;
-        conn.execute(
-            "CREATE INDEX idx_edges_from ON edges(from_node)",
-            [],
-        )
-        .map_err(|e| format!("create idx_edges_from: {e}"))?;
-        conn.execute(
-            "CREATE INDEX idx_edges_to ON edges(to_node)",
-            [],
-        )
-        .map_err(|e| format!("create idx_edges_to: {e}"))?;
-        conn.execute(
-            "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)",
-            [],
-        )
-        .map_err(|e| format!("create metadata table: {e}"))?;
-        conn.execute(
-            "INSERT INTO metadata VALUES ('schema_version', ?1)",
-            ["1"],
-        )
-        .map_err(|e| format!("insert schema_version: {e}"))?;
-        // `conn` drops here, which commits and releases the file lock.
-    }
+    // Run DDL every time, with IF NOT EXISTS. On a fresh DB this creates
+    // everything from scratch. On an existing DB this migrates forward by
+    // adding any tables/indexes that the previous version of ensure_db
+    // didn't know about. The INSERT OR IGNORE on schema_version keeps us
+    // from clobbering a future real version number.
+    let conn = Connection::open(&db_path)
+        .map_err(|e| format!("open graph.db: {e}"))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS nodes (
+            id    TEXT PRIMARY KEY,
+            name  TEXT NOT NULL,
+            file  TEXT,
+            line  INTEGER,
+            col   INTEGER,
+            kind  TEXT
+        )",
+        [],
+    )
+    .map_err(|e| format!("create nodes table: {e}"))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS edges (
+            from_node TEXT NOT NULL,
+            to_node   TEXT NOT NULL,
+            kind      TEXT
+        )",
+        [],
+    )
+    .map_err(|e| format!("create edges table: {e}"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name)",
+        [],
+    )
+    .map_err(|e| format!("create idx_nodes_name: {e}"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_node)",
+        [],
+    )
+    .map_err(|e| format!("create idx_edges_from: {e}"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_node)",
+        [],
+    )
+    .map_err(|e| format!("create idx_edges_to: {e}"))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT)",
+        [],
+    )
+    .map_err(|e| format!("create metadata table: {e}"))?;
+    conn.execute(
+        "INSERT OR IGNORE INTO metadata VALUES ('schema_version', ?1)",
+        ["1"],
+    )
+    .map_err(|e| format!("insert schema_version: {e}"))?;
+    // `conn` drops here, which commits and releases the file lock.
     GraphDb::open(&db_path).map_err(|e| e.to_string())
 }
 
@@ -233,5 +236,70 @@ mod tests {
             "references query should succeed on an empty graph; got: {result:?}"
         );
         assert!(result.unwrap().is_empty());
+    }
+
+    /// U7: a graph.db that was created by an OLDER version of `ensure_db`
+    /// (which only created the `metadata` table) must be migrated forward
+    /// on the next call. Otherwise the user sees `no such table: edges`
+    /// until they manually `rm .latte/graph.db`. We migrate by running the
+    /// DDL with `IF NOT EXISTS` on every call, so missing tables/indexes
+    /// get added without touching data that already exists.
+    #[test]
+    fn ensure_db_migrates_existing_graph_db_with_old_schema() {
+        let dir = tempdir().unwrap();
+        let latte_dir = dir.path().join(".latte");
+        fs::create_dir_all(&latte_dir).unwrap();
+        let db_path = latte_dir.join("graph.db");
+
+        // Simulate an old `ensure_db`: only the `metadata` table exists.
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute(
+                "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO metadata VALUES ('schema_version', '1')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Now run the new `ensure_db`. It should add `nodes` and `edges`
+        // (and the indexes) without touching the existing `metadata` row.
+        let db = ensure_db(dir.path()).expect("ensure_db should succeed");
+
+        // The new tables must exist and be empty.
+        let nodes_count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM nodes", [], |r| r.get(0))
+            .expect("nodes table should exist after migration");
+        assert_eq!(nodes_count, 0);
+
+        let edges_count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM edges", [], |r| r.get(0))
+            .expect("edges table should exist after migration");
+        assert_eq!(edges_count, 0);
+
+        // The pre-existing schema_version row must NOT have been clobbered.
+        // (INSERT OR IGNORE preserves it; a naive INSERT would still work for
+        // version='1', but the contract we're locking in is "don't touch
+        // existing metadata".)
+        let version: String = db
+            .conn()
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'schema_version'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("schema_version should still be present");
+        assert_eq!(version, "1");
+
+        // And the same query the Drawer uses must succeed.
+        let refs = latte_graph_adapter::references(&db, "anything", 100)
+            .expect("references query should succeed on migrated DB");
+        assert!(refs.is_empty());
     }
 }
