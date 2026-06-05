@@ -89,25 +89,23 @@ fn build_lang_patterns() -> Vec<LangPatterns> {
             ],
             import_extract: |c| c.get(1).map(|m| m.as_str().to_string()).unwrap_or_default(),
         },
-        // C/C++
         LangPatterns {
             extensions: vec!["c", "h", "cpp", "cxx", "cc", "hpp", "hxx"],
             definitions: vec![
-                (r(r"(?:class|struct)\s+(\w+)"), "class"),
+                (r(r"(?:class|struct|union)\s+(\w+)"), "class"),
+                (r(r"typedef\s+(?:struct|union|enum)\s*(?:\w+\s*)?\{[^}]*\}\s*(\w+)"), "class"),
                 (r(r"(?:enum\s+)(?:class\s+)?(\w+)"), "enum"),
                 (r(r"(?:virtual\s+)?(?:inline\s+)?(?:static\s+)?(?:const\s+)?[\w:*&]+\s+(\w+)\s*\("), "function"),
                 (r(r"#define\s+(\w+)"), "constant"),
                 (r(r"(?:typedef|using)\s+[\w:]+\s+(\w+)"), "type_alias"),
             ],
             imports: vec![
-                r(r#"#include\s*[<"]([^>"])[">]"#),
+                r(r#"#include\s*[<"]([^>"]+)[">]"#),
             ],
             import_extract: |c| c.get(1).map(|m| m.as_str().to_string()).unwrap_or_default(),
         },
     ]
 }
-
-/// Scan a directory and build a code graph
 pub fn build_graph(project_root: &Path, progress: Arc<AtomicUsize>) -> Result<BuildStats, String> {
     let patterns = build_lang_patterns();
     let graph_dir = project_root.join(".codegraph");
