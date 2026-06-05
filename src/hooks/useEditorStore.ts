@@ -23,6 +23,8 @@ interface EditorStore {
   filePath: string | null;
 
   /** Current word at cursor (for go-to-definition) */
+  /** Line to jump to after file opens */
+  targetLine: number | null;
   cursorWord: string;
   /** Open or switch to a file */
   openFileOrSwitch: (file: FileResult) => void;
@@ -33,6 +35,7 @@ interface EditorStore {
   setCursorWord: (word: string) => void;
   switchTab: (index: number) => void;
   /** Close tab by index */
+  setTargetLine: (line: number | null) => void;
   closeTab: (index: number) => void;
   reset: () => void;
 }
@@ -69,6 +72,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   filePath: null,
 
   cursorWord: "",
+  targetLine: null,
   openFileOrSwitch: (file) => {
     const { tabs } = get();
     const existing = tabs.findIndex((t) => t.result.path === file.path);
@@ -126,11 +130,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         ? { ...t, result: { ...t.result, is_modified: modified } }
         : t,
     );
-
     set({ tabs: newTabs, modified });
   },
 
   setCursorWord: (word) => set({ cursorWord: word }),
+
+  setTargetLine: (line) => set({ targetLine: line }),
 
   switchTab: (index) => {
     const { tabs } = get();

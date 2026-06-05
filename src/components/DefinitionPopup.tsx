@@ -56,6 +56,7 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
   const handleJump = useCallback(async (node: GraphData["nodes"][0]) => {
     try {
       const result = await openFile(node.file_path);
+      useEditorStore.getState().setTargetLine(node.start_line);
       useEditorStore.getState().openFileOrSwitch(result);
       onClose();
     } catch (e) {

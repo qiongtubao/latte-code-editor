@@ -109,6 +109,28 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
       });
     }
   }, [content]);
+  // Scroll to target line when set
+  useEffect(() => {
+    const view = viewRef.current;
+    const line = useEditorStore.getState().targetLine;
+    if (!view || !line || line <= 0) return;
+
+    const timer = setTimeout(() => {
+      try {
+        const doc = view.state.doc;
+        const pos = doc.line(Math.min(line, doc.lines));
+        view.dispatch({
+          selection: { anchor: pos.from },
+          scrollIntoView: true,
+        });
+      } catch {
+        // line might be out of range
+      }
+      useEditorStore.getState().setTargetLine(null);
+    }, 50);
+
+    return () => clearTimeout(timer);
+  });
 
   return (
     <div

@@ -58,14 +58,16 @@ export function OutlinePanel() {
 
   const handleSymbolClick = useCallback(
     async (node: (typeof symbols)[0]) => {
-      // Open the file which will auto-scroll to the node's start_line
-      const result = await openFile(node.file_path);
-      // TODO: scroll to line node.start_line after CM6 is initialized
-      useEditorStore.getState().openFileOrSwitch(result);
+      try {
+        const result = await openFile(node.file_path);
+        useEditorStore.getState().setTargetLine(node.start_line);
+        useEditorStore.getState().openFileOrSwitch(result);
+      } catch (e) {
+        console.error("Cannot open file:", e);
+      }
     },
     [],
   );
-
   // Hide entirely when nothing to show
   if (!filePath || symbols.length === 0) {
     return null;
