@@ -45,6 +45,33 @@ export async function openFolder(path: string): Promise<OpenFolderResult> {
   return invoke<OpenFolderResult>("open_folder", { path });
 }
 
+export interface SearchMatch {
+  file_path: string;
+  line_number: number;
+  line_content: string;
+}
+export async function searchInFiles(
+  query: string,
+  includeGlob?: string,
+  excludeGlob?: string,
+): Promise<SearchMatch[]> {
+  return invoke<SearchMatch[]>("search_in_files", { query, includeGlob, excludeGlob });
+}
+
+export interface ReplaceFileResult {
+  file_path: string;
+  count: number;
+}
+
+export async function replaceInFiles(
+  query: string,
+  replacement: string,
+  includeGlob?: string,
+  excludeGlob?: string,
+): Promise<ReplaceFileResult[]> {
+  return invoke<ReplaceFileResult[]>("replace_in_files", { query, replacement, includeGlob, excludeGlob });
+}
+
 export async function listDirectory(path: string): Promise<FsEntry[]> {
   return invoke<FsEntry[]>("list_directory", { path });
 }

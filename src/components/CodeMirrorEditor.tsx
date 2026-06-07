@@ -118,11 +118,13 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
     const timer = setTimeout(() => {
       try {
         const doc = view.state.doc;
-        const pos = doc.line(Math.min(line, doc.lines));
+        const targetLine = Math.min(line, doc.lines);
+        const pos = doc.line(targetLine);
         view.dispatch({
           selection: { anchor: pos.from },
-          scrollIntoView: true,
+          effects: EditorView.scrollIntoView(pos.from, { y: 'center' }),
         });
+        view.focus();
       } catch {
         // line might be out of range
       }

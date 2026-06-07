@@ -21,12 +21,12 @@ pub struct SubgraphResponse {
     pub data: codegraph::GraphData,
 }
 
-/// Resolve the project root and find .codegraph/ directory.
+/// Resolve the project root and find .latte/ directory.
 /// First checks EditorState.project_root, then falls back to current_dir.
 fn find_graph_dir(state: &EditorState) -> Result<PathBuf, String> {
     // Try project_root first (set by open_folder)
     if let Some(root) = &state.project_root {
-        let graph_dir = root.join(".codegraph");
+        let graph_dir = root.join(".latte");
         if graph_dir.exists() {
             return Ok(graph_dir);
         }
@@ -34,12 +34,12 @@ fn find_graph_dir(state: &EditorState) -> Result<PathBuf, String> {
 
     // Fallback to current working directory
     if let Ok(cwd) = std::env::current_dir() {
-        let graph_dir = cwd.join(".codegraph");
+        let graph_dir = cwd.join(".latte");
         if graph_dir.exists() {
             return Ok(graph_dir);
         }
     }
-    Err("No .codegraph/ directory found. Open a folder that contains code graph data, or run the graph build tool first.".to_string())
+    Err("No .latte/ directory found. Open a folder that contains code graph data, or run the graph build tool first.".to_string())
 }
 
 #[tauri::command]

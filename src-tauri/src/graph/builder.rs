@@ -317,7 +317,7 @@ pub fn build_graph(project_root: &Path, progress: Arc<AtomicUsize>) -> Result<Bu
 /// Recursively collect source files, skipping hidden dirs and node_modules/target
 fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>, patterns: &[LangPatterns]) {
     let skip_dirs: [&str; 6] = [
-        ".git", ".codegraph", ".editor", "node_modules", "target", "dist",
+        ".git", ".latte", ".editor", "node_modules", "target", "dist",
     ];
 
     let Ok(entries) = std::fs::read_dir(dir) else { return };

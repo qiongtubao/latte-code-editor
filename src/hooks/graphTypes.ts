@@ -1,4 +1,5 @@
 // Shared types for graph visualization
+
 export interface GraphNode {
   id: string;
   kind: string;
@@ -12,7 +13,7 @@ export interface GraphNode {
 }
 
 export interface GraphEdge {
-  id: number;
+  id: string;
   source: string;
   target: string;
   kind: string;
@@ -50,23 +51,33 @@ export interface SimResult {
   edges: SimEdge[];
 }
 
+/** Display mode for the graph panel */
+export type GraphDisplayMode = "main" | "focus" | "full";
+
 // Node kind to numeric group for coloring
+const KIND_GROUP: Record<string, number> = {
+  file: 0,
+  function: 1,
+  method: 1,
+  constructor: 1,
+  class: 2,
+  struct: 2,
+  interface: 2,
+  trait: 2,
+  type_alias: 3,
+  enum: 3,
+  import: 4,
+  export: 4,
+  constant: 5,
+  variable: 5,
+  property: 5,
+  field: 5,
+  parameter: 5,
+  test: 6,
+  route: 7,
+  component: 7,
+};
+
 export function nodeKindToGroup(kind: string): number {
-  switch (kind) {
-    case "file": return 0;
-    case "function":
-    case "method": return 1;
-    case "class":
-    case "interface":
-    case "struct": return 2;
-    case "type":
-    case "type_alias":
-    case "enum": return 3;
-    case "import":
-    case "export": return 4;
-    case "constant":
-    case "variable": return 5;
-    case "test": return 6;
-    default: return 7;
-  }
+  return KIND_GROUP[kind] ?? 7;
 }

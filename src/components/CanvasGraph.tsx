@@ -11,10 +11,7 @@ interface CanvasGraphProps {
   highlightedNodeIds: Set<string>;
   onNodeClick: (nodeId: string) => void;
   onNodeHover: (nodeId: string | null) => void;
-  /**
-   * Inject a custom renderer. Defaults to Canvas2DRenderer.
-   * Swap for WebGPURenderer when available.
-   */
+  onNodeContextMenu?: (nodeId: string, x: number, y: number) => void;
   renderer?: GraphRenderer;
 }
 
@@ -26,6 +23,7 @@ export function CanvasGraph({
   highlightedNodeIds,
   onNodeClick,
   onNodeHover,
+  onNodeContextMenu,
   renderer: externalRenderer,
 }: CanvasGraphProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -110,9 +108,13 @@ export function CanvasGraph({
   );
 
   // Mouse handlers
+  const mouseDownPos = useRef({ x: 0, y: 0 });
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    // Left button only starts drag
+    if (e.button !== 0) return;
     isDragging.current = true;
     lastMouse.current = { x: e.clientX, y: e.clientY };
+    mouseDownPos.current = { x: e.clientX, y: e.clientY };
   }, []);
 
   const handleMouseMove = useCallback(
@@ -138,23 +140,49 @@ export function CanvasGraph({
     },
     [hitTest, onNodeHover],
   );
-
   const handleMouseUp = useCallback(
     (e: React.MouseEvent) => {
-      if (!isDragging.current) {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const rect = canvas.getBoundingClientRect();
-        const cx = e.clientX - rect.left;
-        const cy = e.clientY - rect.top;
-        const hit = hitTest(cx, cy);
-        if (hit) {
-          onNodeClick(hit);
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const hit = hitTest(cx, cy);
+
+      // Right-click: show context menu
+      if (e.button === 2) {
+        if (hit && onNodeContextMenu) {
+          onNodeContextMenu(hit, e.clientX, e.clientY);
         }
+        return;
+      }
+
+      // Left-click: click or drag
+      if (e.button !== 0) return;
+      const dx = Math.abs(e.clientX - mouseDownPos.current.x);
+      const dy = Math.abs(e.clientY - mouseDownPos.current.y);
+      if (dx < 5 && dy < 5 && hit) {
+        onNodeClick(hit);
       }
       isDragging.current = false;
     },
-    [hitTest, onNodeClick],
+    [hitTest, onNodeClick, onNodeContextMenu],
+  );
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const canvas = canvasRef.current;
+      if (!canvas || !onNodeContextMenu) return;
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const hit = hitTest(cx, cy);
+      if (hit) {
+        onNodeContextMenu(hit, e.clientX, e.clientY);
+      }
+    },
+    [hitTest, onNodeContextMenu],
   );
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -171,6 +199,7 @@ export function CanvasGraph({
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
+      onContextMenu={handleContextMenu}
       onWheel={handleWheel}
       onMouseLeave={() => {
         isDragging.current = false;

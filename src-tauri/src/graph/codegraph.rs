@@ -19,7 +19,7 @@ pub struct GraphNode {
 /// An edge between two nodes
 #[derive(Debug, Clone, Serialize)]
 pub struct GraphEdge {
-    pub id: i64,
+    pub id: String,
     pub source: String,
     pub target: String,
     pub kind: String,
@@ -56,13 +56,27 @@ pub struct EdgeKindCount {
 
 /// Open a codegraph database and return graph data
 pub fn load_graph(graph_dir: &Path) -> Result<GraphData, String> {
-    let db_path = graph_dir.join("codegraph.db");
+    let db_path = graph_dir.join("graph.db");
     if !db_path.exists() {
         return Err(format!("Graph database not found at: {}", db_path.display()));
     }
 
     let conn = Connection::open(&db_path)
         .map_err(|e| format!("Cannot open graph database: {}", e))?;
+
+    // Quick schema validation — check nodes table has qualified_name column
+    if conn
+        .query_row("SELECT qualified_name FROM nodes LIMIT 1", [], |_| Ok(()))
+        .is_err()
+    {
+        // Table might be empty, so check the column exists in pragma
+        let has_col: bool = conn
+            .prepare("SELECT qualified_name FROM nodes WHERE 1=0")
+            .is_ok();
+        if !has_col {
+            return Err("Graph database has stale schema (missing qualified_name). Rebuild the graph.".to_string());
+        }
+    }
 
     // Query all nodes
     let mut stmt = conn
@@ -72,7 +86,6 @@ pub fn load_graph(graph_dir: &Path) -> Result<GraphData, String> {
              FROM nodes ORDER BY kind, name",
         )
         .map_err(|e| format!("Cannot prepare node query: {}", e))?;
-
     let nodes: Vec<GraphNode> = stmt
         .query_map([], |row| {
             Ok(GraphNode {
@@ -101,7 +114,7 @@ pub fn load_graph(graph_dir: &Path) -> Result<GraphData, String> {
     let edges: Vec<GraphEdge> = edge_stmt
         .query_map([], |row| {
             Ok(GraphEdge {
-                id: row.get(0)?,
+                id: row.get::<_, String>(0)?,
                 source: row.get(1)?,
                 target: row.get(2)?,
                 kind: row.get(3)?,
@@ -156,7 +169,7 @@ pub fn load_graph(graph_dir: &Path) -> Result<GraphData, String> {
 
 /// Find nodes matching a search query
 pub fn search_nodes(graph_dir: &Path, query: &str, limit: usize) -> Result<Vec<GraphNode>, String> {
-    let db_path = graph_dir.join("codegraph.db");
+    let db_path = graph_dir.join("graph.db");
     if !db_path.exists() {
         return Err("Graph database not found".to_string());
     }
@@ -169,7 +182,7 @@ pub fn search_nodes(graph_dir: &Path, query: &str, limit: usize) -> Result<Vec<G
         .prepare(
             "SELECT id, kind, name, qualified_name, file_path, language, \
              start_line, end_line, signature FROM nodes \
-             WHERE name LIKE ?1 OR qualified_name LIKE ?1 \
+             WHERE name LIKE ?1 OR qualified_name LIKE ?1 OR file_path LIKE ?1 \
              LIMIT ?2",
         )
         .map_err(|e| format!("Cannot prepare search: {}", e))?;
@@ -197,7 +210,7 @@ pub fn search_nodes(graph_dir: &Path, query: &str, limit: usize) -> Result<Vec<G
 /// Find definition nodes by exact name match (name or qualified_name).
 /// Excludes imports, files — returns classes, traits, functions, methods, types, etc.
 pub fn find_definitions(graph_dir: &Path, name: &str, limit: usize) -> Result<Vec<GraphNode>, String> {
-    let db_path = graph_dir.join("codegraph.db");
+    let db_path = graph_dir.join("graph.db");
     if !db_path.exists() {
         return Err("Graph database not found".to_string());
     }
@@ -257,7 +270,7 @@ pub fn get_subgraph(
     node_id: &str,
     _depth: u32,
 ) -> Result<GraphData, String> {
-    let db_path = graph_dir.join("codegraph.db");
+    let db_path = graph_dir.join("graph.db");
     if !db_path.exists() {
         return Err("Graph database not found".to_string());
     }
@@ -307,7 +320,7 @@ pub fn get_subgraph(
     let edges: Vec<GraphEdge> = edge_stmt
         .query_map(params![node_id], |row| {
             Ok(GraphEdge {
-                id: row.get(0)?,
+                id: row.get::<_, String>(0)?,
                 source: row.get(1)?,
                 target: row.get(2)?,
                 kind: row.get(3)?,

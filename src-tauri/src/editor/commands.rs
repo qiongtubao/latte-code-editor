@@ -56,22 +56,38 @@ pub async fn open_folder(
         let mut editor = state.write().await;
         editor.project_root = Some(canonical.clone());
     }
-    // Check for existing graph
-    let graph_db = canonical.join(".codegraph").join("codegraph.db");
+    // Check for existing graph — validate the schema actually works
+    let graph_db = canonical.join(".latte").join("graph.db");
     let (has_graph, graph_node_count) = if graph_db.exists() {
-        let count = std::fs::read_to_string(&graph_db)
-            .ok()
-            .and_then(|_| {
-                rusqlite::Connection::open(&graph_db).ok().and_then(|conn| {
-                    conn.query_row("SELECT COUNT(*) FROM nodes", [], |row| {
-                        row.get::<_, i64>(0)
-                    })
-                    .ok()
-                    .map(|c| c as usize)
-                })
-            })
-            .unwrap_or(0);
-        (true, count)
+        match rusqlite::Connection::open(&graph_db) {
+            Ok(conn) => {
+                // Verify the DB has a valid schema with qualified_name column
+                let schema_ok = conn
+                    .query_row(
+                        "SELECT qualified_name FROM nodes LIMIT 1",
+                        [],
+                        |_| Ok(()),
+                    )
+                    .is_ok();
+
+                if !schema_ok {
+                    // Stale database from old version — delete and rebuild
+                    drop(conn);
+                    let _ = std::fs::remove_file(&graph_db);
+                    (false, 0)
+                } else {
+                    let count = conn
+                        .query_row("SELECT COUNT(*) FROM nodes", [], |row| {
+                            row.get::<_, i64>(0)
+                        })
+                        .ok()
+                        .map(|c| c as usize)
+                        .unwrap_or(0);
+                    (true, count)
+                }
+            }
+            Err(_) => (false, 0),
+        }
     } else {
         (false, 0)
     };
@@ -262,4 +278,68 @@ pub async fn get_file_content(
         is_large_file: reader.is_large_file,
         is_modified: reader.is_modified,
     })
+}
+
+
+/// Search for text across all source files
+#[tauri::command]
+pub async fn search_in_files(
+    query: String,
+    include_glob: Option<String>,
+    exclude_glob: Option<String>,
+    state: State<'_, Arc<RwLock<EditorState>>>,
+) -> Result<Vec<super::search::SearchMatch>, String> {
+    let project_root = {
+        let editor = state.read().await;
+        editor.project_root.clone().ok_or_else(|| "No folder opened".to_string())?
+    };
+    let exclude_dirs = vec![
+        "node_modules".into(), "target".into(), ".git".into(),
+        "dist".into(), "build".into(), "deps".into(),
+        ".venv".into(), ".latte".into(),
+    ];
+    let opts = super::search::SearchOptions {
+        query,
+        max_results: 100,
+        exclude_dirs,
+        include_glob,
+        exclude_glob,
+    };
+    let results = tokio::task::spawn_blocking(move || {
+        super::search::search_text(&project_root, &opts)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+    Ok(results)
+}
+/// Replace text across all source files
+#[derive(serde::Serialize)]
+pub struct ReplaceFileResult {
+    pub file_path: String,
+    pub count: usize,
+}
+
+#[tauri::command]
+pub async fn replace_in_files(
+    query: String,
+    replacement: String,
+    include_glob: Option<String>,
+    exclude_glob: Option<String>,
+    state: State<'_, Arc<RwLock<EditorState>>>,
+) -> Result<Vec<ReplaceFileResult>, String> {
+    let project_root = {
+        let editor = state.read().await;
+        editor.project_root.clone().ok_or_else(|| "No folder opened".to_string())?
+    };
+    let exclude_dirs = vec![
+        "node_modules".into(), "target".into(), ".git".into(),
+        "dist".into(), "build".into(), "deps".into(),
+        ".venv".into(), ".latte".into(),
+    ];
+    let results = tokio::task::spawn_blocking(move || {
+        super::search::replace_text(&project_root, &query, &replacement, &exclude_dirs, &include_glob, &exclude_glob)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+    Ok(results.into_iter().map(|(fp, c)| ReplaceFileResult { file_path: fp, count: c }).collect())
 }
