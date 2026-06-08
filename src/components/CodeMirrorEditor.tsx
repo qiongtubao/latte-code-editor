@@ -33,22 +33,15 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
     const langExt = languages(filePath);
 
     const state = EditorState.create({
-      doc: content,
+      doc: contentRef.current,
       extensions: [
         basicSetup,
+        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         keymap.of([...defaultKeymap, ...historyKeymap]),
-        history(),
         langExt,
-        syntaxHighlighting(defaultHighlightStyle),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
-            contentRef.current = update.state.doc.toString();
-            onChangeRef.current(contentRef.current);
-          }
-          if (update.selectionSet) {
-            const word = update.view.state.wordAt(update.view.state.selection.main.head);
-            const text = word ? update.view.state.doc.sliceString(word.from, word.to) : "";
-            useEditorStore.getState().setCursorWord(text);
+            onChangeRef.current?.(update.state.doc.toString());
           }
         }),
       ],
@@ -65,68 +58,60 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
 
   // Ctrl+Click handler
   useEffect(() => {
-    const editorDom = containerRef.current;
-    if (!editorDom) return;
+    const view = viewRef.current;
+    if (!view || !filePath) return;
 
-    const handler = (e: MouseEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      const cb = onCtrlClickRef.current;
-      if (!cb) return;
-
-      const view = viewRef.current;
-      if (!view) return;
-
-      const rect = editorDom.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const pos = view.posAtCoords({ x, y });
+    const handler = (event: MouseEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos === null) return;
-
       const word = view.state.wordAt(pos);
       if (!word) return;
       const text = view.state.doc.sliceString(word.from, word.to);
-      if (!text.trim()) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-      view.dispatch({ selection: { anchor: pos } });
-      cb(text, e.clientX, e.clientY);
+      if (!text || text.length === 0) return;
+      // Only trigger for multi-word (potential definition names)
+      if (text.match(/^[a-zA-Z_]\w*$/)) {
+        onCtrlClickRef.current?.(text, event.clientX, event.clientY);
+      }
     };
 
-    editorDom.addEventListener("mousedown", handler);
-    return () => editorDom.removeEventListener("mousedown", handler);
+    view.dom.addEventListener("click", handler);
+    return () => view.dom.removeEventListener("click", handler);
   }, [filePath]);
 
   // Sync content from external changes
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-
-    const currentDoc = view.state.doc.toString();
-    if (currentDoc !== content) {
+    const current = view.state.doc.toString();
+    if (current !== content) {
       view.dispatch({
-        changes: { from: 0, to: currentDoc.length, insert: content },
+        changes: { from: 0, to: current.length, insert: content },
       });
     }
   }, [content]);
-  // Scroll to target line when set
+
+  // Scroll to target line + column when set
   useEffect(() => {
     const view = viewRef.current;
-    const line = useEditorStore.getState().targetLine;
-    if (!view || !line || line <= 0) return;
+    const { targetLine, targetColumn } = useEditorStore.getState();
+    if (!view || !targetLine || targetLine <= 0) return;
 
     const timer = setTimeout(() => {
       try {
         const doc = view.state.doc;
-        const targetLine = Math.min(line, doc.lines);
-        const pos = doc.line(targetLine);
+        const safeLine = Math.min(targetLine, doc.lines);
+        const pos = doc.line(safeLine);
+        const anchor = targetColumn != null && targetColumn > 0
+          ? Math.min(pos.from + targetColumn - 1, pos.to)
+          : pos.from;
         view.dispatch({
-          selection: { anchor: pos.from },
-          effects: EditorView.scrollIntoView(pos.from, { y: 'center' }),
+          selection: { anchor },
+          effects: EditorView.scrollIntoView(anchor, { y: "center" }),
         });
         view.focus();
       } catch {
-        // line might be out of range
+        // line/col might be out of range
       }
       useEditorStore.getState().setTargetLine(null);
     }, 50);
@@ -137,7 +122,7 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
   return (
     <div
       ref={containerRef}
-      className="h-full overflow-auto"
+      className="h-full overflow-y-auto"
       style={{ background: "#1e1e1e" }}
     />
   );

@@ -26,3 +26,7 @@ walkdir = "2"
 rusqlite = { version = "0.34", features = ["bundled"] }
 regex = "1"
 latte-rs-graph = { path = "../../latte-rs-graph" }
+
+[dev-dependencies]
+# 单测用临时目录标准库
+tempfile = "3"

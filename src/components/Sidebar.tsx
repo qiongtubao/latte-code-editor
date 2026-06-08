@@ -1,37 +1,69 @@
 import { useState, useCallback, useEffect } from "react";
 import { FileTree } from "./FileTree";
 import { WorkspaceSearch } from "./WorkspaceSearch";
-import { openFolder, buildCodeGraph, searchInFiles, replaceInFiles } from "../api/commands";
+import { buildCodeGraph, listDirectory, searchInFiles, replaceInFiles } from "../api/commands";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import type { FsEntry } from "../api/commands";
 import { useGraphStore } from "../hooks/useGraphStore";
+import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
 
 interface SidebarProps {
   folderRoot: string | null;
-  folderEntries: FsEntry[];
-  onFolderChange: (root: string, entries: FsEntry[]) => void;
   onFileOpen: (path: string) => void;
 }
 
 type SidebarPanel = "explorer" | "search";
 
-export function Sidebar({ folderRoot, folderEntries, onFolderChange, onFileOpen }: SidebarProps) {
+/**
+ * 侧边栏：按当前 active workspace 显示项目根目录的文件树 + 搜索面板
+ * 多工作区改造：
+ * - folderRoot 从 useWorkspaceStore 派生
+ * - 顶层目录条目用 listDirectory 主动拉取
+ * - 打开文件夹直接走 useWorkspaceStore.openFolder
+ */
+export function Sidebar({ folderRoot, onFileOpen }: SidebarProps) {
   const [building, setBuilding] = useState(false);
   const [panel, setPanel] = useState<SidebarPanel>("explorer");
+  const [rootEntries, setRootEntries] = useState<FsEntry[]>([]);
   const requestReload = useGraphStore((s) => s.requestReload);
+  const openFolder = useWorkspaceStore((s) => s.openFolder);
+
+  // folderRoot 变化时拉顶层条目
+  useEffect(() => {
+    if (!folderRoot) {
+      setRootEntries([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const entries = await listDirectory(folderRoot);
+        if (!cancelled) setRootEntries(entries);
+      } catch (e) {
+        if (!cancelled) {
+          console.error("listDirectory failed:", e);
+          setRootEntries([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [folderRoot]);
 
   const handleOpenFolder = useCallback(async () => {
     const selected = await dialogOpen({ multiple: false, directory: true });
     if (typeof selected === "string") {
       try {
         const result = await openFolder(selected);
-        onFolderChange(result.root, result.entries);
         requestReload();
         if (!result.has_graph) {
           setBuilding(true);
           try {
             const buildResult = await buildCodeGraph();
-            console.log(`Graph built: ${buildResult.nodes_created} nodes, ${buildResult.edges_created} edges`);
+            console.log(
+              `Graph built: ${buildResult.nodes_created} nodes, ${buildResult.edges_created} edges`,
+            );
           } catch (e) {
             console.error("Graph build failed:", e);
           } finally {
@@ -43,7 +75,7 @@ export function Sidebar({ folderRoot, folderEntries, onFolderChange, onFileOpen 
         console.error("Failed to open folder:", e);
       }
     }
-  }, [onFolderChange, requestReload]);
+  }, [openFolder, requestReload]);
 
   // Listen for "open-folder" custom event
   useEffect(() => {
@@ -52,7 +84,14 @@ export function Sidebar({ folderRoot, folderEntries, onFolderChange, onFileOpen 
     return () => window.removeEventListener("open-folder", handler);
   }, [handleOpenFolder]);
 
-  // Keyboard shortcuts: Ctrl+Shift+F => search
+  // Listen for "focus-search" custom event (from App.tsx Ctrl+Shift+F)
+  useEffect(() => {
+    const handler = () => setPanel("search");
+    window.addEventListener("focus-search", handler);
+    return () => window.removeEventListener("focus-search", handler);
+  }, []);
+
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key === "f") {
@@ -76,11 +115,18 @@ export function Sidebar({ folderRoot, folderEntries, onFolderChange, onFileOpen 
     return replaceInFiles(q, r, inc, exc);
   }, []);
 
-  // No folder opened: show only the open button
   if (!folderRoot) {
     return (
-      <div className="flex flex-col h-full items-center justify-center text-xs" style={{ background: "#252526" }}>
-        <button onClick={handleOpenFolder} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs cursor-pointer transition-colors">Open Folder</button>
+      <div
+        className="flex flex-col h-full items-center justify-center text-xs"
+        style={{ background: "#252526" }}
+      >
+        <button
+          onClick={handleOpenFolder}
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs cursor-pointer transition-colors"
+        >
+          Open Folder
+        </button>
         <p className="text-gray-500 mt-2">Ctrl+K Ctrl+O</p>
       </div>
     );
@@ -88,17 +134,29 @@ export function Sidebar({ folderRoot, folderEntries, onFolderChange, onFileOpen 
 
   return (
     <div className="flex flex-col h-full">
-      {/* Panel tabs */}
       <div className="flex text-xs border-b border-gray-700 bg-[#2d2d2d]">
-        <button onClick={() => setPanel("explorer")} className={`flex items-center gap-1 px-3 py-1.5 cursor-pointer border-b-[2px] transition-colors ${panel === "explorer" ? "border-[#007acc] text-gray-200" : "border-transparent text-gray-500 hover:text-gray-300"}`}>
+        <button
+          onClick={() => setPanel("explorer")}
+          className={`flex items-center gap-1 px-3 py-1.5 cursor-pointer border-b-[2px] transition-colors ${
+            panel === "explorer"
+              ? "border-[#007acc] text-gray-200"
+              : "border-transparent text-gray-500 hover:text-gray-300"
+          }`}
+        >
           📁 Explorer
         </button>
-        <button onClick={() => setPanel("search")} className={`flex items-center gap-1 px-3 py-1.5 cursor-pointer border-b-[2px] transition-colors ${panel === "search" ? "border-[#007acc] text-gray-200" : "border-transparent text-gray-500 hover:text-gray-300"}`}>
+        <button
+          onClick={() => setPanel("search")}
+          className={`flex items-center gap-1 px-3 py-1.5 cursor-pointer border-b-[2px] transition-colors ${
+            panel === "search"
+              ? "border-[#007acc] text-gray-200"
+              : "border-transparent text-gray-500 hover:text-gray-300"
+          }`}
+        >
           🔍 Search
         </button>
       </div>
 
-      {/* Build progress */}
       {building && (
         <div className="px-3 py-1.5 text-xs text-yellow-400 border-b border-gray-700 bg-[#1e1e1e] flex items-center gap-2">
           <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
@@ -106,10 +164,9 @@ export function Sidebar({ folderRoot, folderEntries, onFolderChange, onFileOpen 
         </div>
       )}
 
-      {/* Panel content */}
       {panel === "explorer" ? (
         <div className="flex-1 overflow-hidden">
-          <FileTree root={folderRoot} entries={folderEntries} onFileOpen={onFileOpen} />
+          <FileTree root={folderRoot} entries={rootEntries} onFileOpen={onFileOpen} />
         </div>
       ) : (
         <div className="flex-1 overflow-hidden">

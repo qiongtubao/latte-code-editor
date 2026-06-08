@@ -1,16 +1,16 @@
+//! Graph 构建命令（按 workspace 路由）
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::{Emitter, State};
-use tokio::sync::RwLock;
+use tauri::{Emitter, State, Window};
 
 use latte_rs_graph::engine::TreeSitterEngine;
 use latte_rs_graph::storage::SqliteStorage;
 use latte_rs_graph::traits::GraphProvider;
 use latte_rs_graph::types::BuildOptions;
 
-use crate::editor::commands::EditorState;
+use crate::workspace::registry::WorkspaceRegistry;
 
-/// Result sent back to the frontend after a graph build.
 #[derive(serde::Serialize)]
 pub struct BuildResult {
     pub files_scanned: usize,
@@ -19,7 +19,6 @@ pub struct BuildResult {
     pub errors: Vec<String>,
 }
 
-/// Resolve the graph database path for a project root.
 fn graph_db_path(root: &Path) -> PathBuf {
     root.join(".latte")
 }
@@ -27,36 +26,38 @@ fn graph_db_path(root: &Path) -> PathBuf {
 #[tauri::command]
 pub async fn build_code_graph(
     app: tauri::AppHandle,
-    state: State<'_, Arc<RwLock<EditorState>>>,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
 ) -> Result<BuildResult, String> {
-    let project_root: PathBuf = {
-        let editor = state.read().await;
-        editor
-            .project_root
-            .clone()
-            .ok_or_else(|| "No folder opened".to_string())?
-    };
-
+    let label = window.label().to_string();
+    let workspace_id = registry
+        .active_for_window(&label)
+        .await
+        .ok_or_else(|| format!("No active workspace for window '{}'", label))?;
+    let project_root = registry
+        .project_root(&workspace_id)
+        .await
+        .ok_or_else(|| format!("Workspace '{}' not found", workspace_id))?;
     let graph_dir = graph_db_path(&project_root);
 
-    // Ensure directory exists and start with a fresh database
     std::fs::create_dir_all(&graph_dir)
         .map_err(|e| format!("Cannot create graph dir: {}", e))?;
     let db_path = graph_dir.join("graph.db");
     let _ = std::fs::remove_file(&db_path);
 
-    let storage =
-        SqliteStorage::open(&db_path).map_err(|e| format!("Cannot open graph DB: {}", e))?;
+    let storage = SqliteStorage::open(&db_path)
+        .map_err(|e| format!("Cannot open graph DB: {}", e))?;
     let engine = TreeSitterEngine::new(storage);
 
     let mut options = BuildOptions::default();
     options.project_root = project_root.to_string_lossy().to_string();
 
-    // Emit build progress event
+    // 进度/完成事件按 workspace id 命名空间（前端按 id 路由）
     let app_for_progress = app.clone();
+    let progress_event = format!("graph-build-progress:{}", workspace_id);
     let _progress_handle = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let _ = app_for_progress.emit("graph-build-progress", 0u32);
+        let _ = app_for_progress.emit(progress_event.as_str(), 0u32);
     });
 
     let stats = engine
@@ -64,7 +65,8 @@ pub async fn build_code_graph(
         .await
         .map_err(|e| format!("Build error: {}", e))?;
 
-    let _ = app.emit("graph-build-done", true);
+    let done_event = format!("graph-build-done:{}", workspace_id);
+    let _ = app.emit(done_event.as_str(), true);
 
     Ok(BuildResult {
         files_scanned: stats.files_scanned,

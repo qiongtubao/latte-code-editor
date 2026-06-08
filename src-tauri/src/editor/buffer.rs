@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Represents an open file buffer in memory
+/// 代表内存中一个打开的文件 buffer
 #[derive(Debug, Clone, Serialize)]
 pub struct Buffer {
     pub path: PathBuf,
@@ -15,29 +15,32 @@ pub struct Buffer {
     pub is_large_file: bool,
 }
 
-/// Large file threshold: 50MB or 100,000 lines
+/// 大文件阈值：50MB 或 100,000 行
 const LARGE_FILE_SIZE: u64 = 50 * 1024 * 1024;
 const LARGE_FILE_LINES: usize = 100_000;
 
-/// In-memory buffer manager
+/// Buffer 池管理器
+///
+/// 内部所有数据用 `Arc<RwLock<...>>` 包装，因此 `BufferManager` 可以 Clone——
+/// clone 出来的多个 handle **共享同一份数据**，可以从 registry 的读锁内"借出"handle
+/// 然后跨 await 自由使用，不必担心锁生命周期问题。
+#[derive(Clone, Default)]
 pub struct BufferManager {
-    buffers: RwLock<HashMap<PathBuf, Arc<RwLock<Buffer>>>>,
-    active: RwLock<Option<PathBuf>>,
+    buffers: Arc<RwLock<HashMap<PathBuf, Arc<RwLock<Buffer>>>>>,
+    active: Arc<RwLock<Option<PathBuf>>>,
 }
 
 impl BufferManager {
     pub fn new() -> Self {
-        Self {
-            buffers: RwLock::new(HashMap::new()),
-            active: RwLock::new(None),
-        }
+        Self::default()
     }
 
-    /// Open a file and create a buffer for it.
+    /// 打开一个文件并创建 buffer。已存在则复用。
     pub async fn open(&self, path: &Path) -> Result<Arc<RwLock<Buffer>>, String> {
-        let canonical = path.canonicalize().map_err(|e| format!("Cannot resolve path: {}", e))?;
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve path: {}", e))?;
 
-        // Check existing buffer
         {
             let buffers = self.buffers.read().await;
             if let Some(buf) = buffers.get(&canonical) {
@@ -52,9 +55,11 @@ impl BufferManager {
         let file_size = metadata.len();
         let is_large_size = file_size > LARGE_FILE_SIZE;
 
-        // Read file content
         let content = if is_large_size {
-            format!("[Large file: {} bytes. Opened in read-only large file mode.]", file_size)
+            format!(
+                "[Large file: {} bytes. Opened in read-only large file mode.]",
+                file_size
+            )
         } else {
             tokio::fs::read_to_string(&canonical)
                 .await
@@ -83,12 +88,17 @@ impl BufferManager {
         Ok(buffer)
     }
 
-    /// Save buffer content to disk
+    /// 把 buffer 内容写回磁盘
     pub async fn save(&self, path: &Path) -> Result<(), String> {
-        let canonical = path.canonicalize().map_err(|e| format!("Cannot resolve path: {}", e))?;
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve path: {}", e))?;
         let buf = {
             let buffers = self.buffers.read().await;
-            buffers.get(&canonical).cloned().ok_or_else(|| "Buffer not found".to_string())?
+            buffers
+                .get(&canonical)
+                .cloned()
+                .ok_or_else(|| "Buffer not found".to_string())?
         };
 
         let content = {
@@ -111,25 +121,84 @@ impl BufferManager {
         Ok(())
     }
 
-    /// Get the active buffer
+    /// 取当前激活 buffer
     pub async fn get_active(&self) -> Option<Arc<RwLock<Buffer>>> {
         let path = self.active.read().await.clone()?;
         let buffers = self.buffers.read().await;
         buffers.get(&path).cloned()
     }
 
-    /// Get a specific buffer by path
+    /// 按路径取 buffer
     pub async fn get_buffer(&self, path: &Path) -> Option<Arc<RwLock<Buffer>>> {
         let canonical = path.canonicalize().ok()?;
         let buffers = self.buffers.read().await;
         buffers.get(&canonical).cloned()
     }
 
-    /// Close a buffer
+    /// 关闭 buffer
     pub async fn close(&self, path: &Path) {
         let mut buffers = self.buffers.write().await;
         if let Ok(canonical) = path.canonicalize() {
             buffers.remove(&canonical);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// 验证 clone 出来的 BufferManager 共享数据
+    #[tokio::test]
+    async fn clone_shares_data() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("foo.txt");
+        std::fs::write(&p, "hello").unwrap();
+        let bm1 = BufferManager::new();
+        let bm2 = bm1.clone();
+        let _buf = bm1.open(&p).await.unwrap();
+        // bm2 应该能看到 bm1 打开的 buffer
+        let got = bm2.get_buffer(&p).await;
+        assert!(got.is_some());
+    }
+
+    /// 验证修改通过 clone handle 可见
+    #[tokio::test]
+    async fn modification_via_clone_handle() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("foo.txt");
+        std::fs::write(&p, "hello").unwrap();
+        let bm1 = BufferManager::new();
+        let bm2 = bm1.clone();
+        let buf = bm1.open(&p).await.unwrap();
+        // bm2 拿同一个 buffer
+        let buf2 = bm2.get_buffer(&p).await.unwrap();
+        assert!(Arc::ptr_eq(&buf, &buf2));
+        {
+            let mut w = buf2.write().await;
+            w.content = "world".to_string();
+            w.is_modified = true;
+        }
+        // bm1 读到的也是修改后
+        let r = buf.read().await;
+        assert_eq!(r.content, "world");
+        assert!(r.is_modified);
+    }
+
+    /// 验证 save 落盘
+    #[tokio::test]
+    async fn save_persists_to_disk() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("foo.txt");
+        std::fs::write(&p, "hello").unwrap();
+        let bm = BufferManager::new();
+        let buf = bm.open(&p).await.unwrap();
+        {
+            let mut w = buf.write().await;
+            w.content = "world".to_string();
+        }
+        bm.save(&p).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "world");
     }
 }

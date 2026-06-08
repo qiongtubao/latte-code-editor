@@ -1,10 +1,13 @@
-use crate::editor::commands::EditorState;
+//! Graph 查询命令
+//!
+//! 所有命令按 window label 路由到当前 workspace，从该 workspace 的 project_root 推 .latte/。
+
 use crate::graph::codegraph;
+use crate::workspace::registry::WorkspaceRegistry;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::State;
-use tokio::sync::RwLock;
+use tauri::{State, Window};
 
 #[derive(Serialize)]
 pub struct GraphResponse {
@@ -21,83 +24,72 @@ pub struct SubgraphResponse {
     pub data: codegraph::GraphData,
 }
 
-/// Resolve the project root and find .latte/ directory.
-/// First checks EditorState.project_root, then falls back to current_dir.
-fn find_graph_dir(state: &EditorState) -> Result<PathBuf, String> {
-    // Try project_root first (set by open_folder)
-    if let Some(root) = &state.project_root {
-        let graph_dir = root.join(".latte");
-        if graph_dir.exists() {
-            return Ok(graph_dir);
-        }
+async fn resolve_graph_dir(
+    window: &Window,
+    registry: &Arc<WorkspaceRegistry>,
+) -> Result<PathBuf, String> {
+    let label = window.label().to_string();
+    let id = registry
+        .active_for_window(&label)
+        .await
+        .ok_or_else(|| format!("No active workspace for window '{}'", label))?;
+    let root = registry
+        .project_root(&id)
+        .await
+        .ok_or_else(|| format!("Workspace '{}' not found", id))?;
+    let graph_dir = root.join(".latte");
+    if graph_dir.exists() {
+        Ok(graph_dir)
+    } else {
+        Err(format!(
+            "No .latte/ directory in workspace '{}'",
+            root.display()
+        ))
     }
-
-    // Fallback to current working directory
-    if let Ok(cwd) = std::env::current_dir() {
-        let graph_dir = cwd.join(".latte");
-        if graph_dir.exists() {
-            return Ok(graph_dir);
-        }
-    }
-    Err("No .latte/ directory found. Open a folder that contains code graph data, or run the graph build tool first.".to_string())
 }
 
 #[tauri::command]
 pub async fn graph_get_data(
-    state: State<'_, Arc<RwLock<EditorState>>>,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
 ) -> Result<GraphResponse, String> {
-    let graph_dir = {
-        let editor = state.read().await;
-        find_graph_dir(&editor)?
-    };
-
-    // Run SQLite query in a blocking thread to avoid blocking async
-    let data = tokio::task::spawn_blocking(move || {
-        codegraph::load_graph(&graph_dir)
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
-    .map_err(|e| format!("Graph load error: {}", e))?;
-
+    let graph_dir = resolve_graph_dir(&window, &registry).await?;
+    let data = tokio::task::spawn_blocking(move || codegraph::load_graph(&graph_dir))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+        .map_err(|e| format!("Graph load error: {}", e))?;
     Ok(GraphResponse { data })
 }
 
 #[tauri::command]
 pub async fn graph_search(
     query: String,
-    state: State<'_, Arc<RwLock<EditorState>>>,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
 ) -> Result<SearchResponse, String> {
-    let graph_dir = {
-        let editor = state.read().await;
-        find_graph_dir(&editor)?
-    };
-
+    let graph_dir = resolve_graph_dir(&window, &registry).await?;
     let nodes = tokio::task::spawn_blocking(move || {
         codegraph::search_nodes(&graph_dir, &query, 100)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
     .map_err(|e| format!("Search error: {}", e))?;
-
     Ok(SearchResponse { nodes })
 }
+
 #[tauri::command]
 pub async fn graph_find_definitions(
     name: String,
-    state: State<'_, Arc<RwLock<EditorState>>>,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
 ) -> Result<SearchResponse, String> {
-    let graph_dir = {
-        let editor = state.read().await;
-        find_graph_dir(&editor)?
-    };
-
+    let graph_dir = resolve_graph_dir(&window, &registry).await?;
     let nodes = tokio::task::spawn_blocking(move || {
         codegraph::find_definitions(&graph_dir, &name, 50)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
     .map_err(|e| format!("Find definitions error: {}", e))?;
-
     Ok(SearchResponse { nodes })
 }
 
@@ -105,19 +97,15 @@ pub async fn graph_find_definitions(
 pub async fn graph_get_subgraph(
     node_id: String,
     depth: u32,
-    state: State<'_, Arc<RwLock<EditorState>>>,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
 ) -> Result<SubgraphResponse, String> {
-    let graph_dir = {
-        let editor = state.read().await;
-        find_graph_dir(&editor)?
-    };
-
+    let graph_dir = resolve_graph_dir(&window, &registry).await?;
     let data = tokio::task::spawn_blocking(move || {
         codegraph::get_subgraph(&graph_dir, &node_id, depth)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
     .map_err(|e| format!("Subgraph error: {}", e))?;
-
     Ok(SubgraphResponse { data })
 }

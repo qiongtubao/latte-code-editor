@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { WorkspaceMeta } from "./workspace";
 
 export interface FileResult {
   path: string;
@@ -15,11 +16,18 @@ export interface FsEntry {
   is_symlink: boolean;
 }
 
+/**
+ * 打开文件夹命令的返回。
+ * 后端 `open_folder` 一次调用同时返回：项目根目录元数据 + 后端权威 workspace id + meta。
+ * 这样前端 useWorkspaceStore.openFolder 一次 await 就能写入 store，避免"先 open_folder 再 list_workspaces"的 race。
+ */
 export interface OpenFolderResult {
   root: string;
   entries: FsEntry[];
   has_graph: boolean;
   graph_node_count: number;
+  workspace_id: string;
+  workspace_meta: WorkspaceMeta;
 }
 
 export interface BuildResult {
@@ -69,7 +77,12 @@ export async function replaceInFiles(
   includeGlob?: string,
   excludeGlob?: string,
 ): Promise<ReplaceFileResult[]> {
-  return invoke<ReplaceFileResult[]>("replace_in_files", { query, replacement, includeGlob, excludeGlob });
+  return invoke<ReplaceFileResult[]>("replace_in_files", {
+    query,
+    replacement,
+    includeGlob,
+    excludeGlob,
+  });
 }
 
 export async function listDirectory(path: string): Promise<FsEntry[]> {

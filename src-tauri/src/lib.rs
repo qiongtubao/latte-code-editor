@@ -1,10 +1,13 @@
 mod editor;
 mod graph;
 mod project;
+mod workspace;
 
-use editor::commands::EditorState;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tauri::Manager;
+
+use crate::workspace::persistence::Persistence;
+use crate::workspace::registry::WorkspaceRegistry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,14 +15,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .manage(Arc::new(RwLock::new(EditorState {
-            buffer_manager: editor::buffer::BufferManager::new(),
-            project_root: None,
-        })))
+        .manage(Arc::new(WorkspaceRegistry::new()))
         .setup(|app| {
+            // 启动时恢复持久化的 workspace 列表 + 为每个 workspace 启动文件监听
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                project::watcher::start_watcher(handle).await;
+                init_workspaces(handle).await;
             });
             Ok(())
         })
@@ -34,11 +35,54 @@ pub fn run() {
             editor::commands::delete_entry,
             editor::commands::search_in_files,
             editor::commands::replace_in_files,
+            editor::commands::find_files,
             graph::commands::graph_search,
             graph::commands::graph_find_definitions,
             graph::commands::graph_get_subgraph,
             graph::build_commands::build_code_graph,
+            workspace::commands::list_workspaces,
+            workspace::commands::new_workspace,
+            workspace::commands::close_workspace,
+            workspace::commands::set_active_workspace,
+            workspace::commands::update_workspace_meta,
+            workspace::commands::detach_workspace_to_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// 启动时初始化：从 app_data_dir 读 state.json 恢复 workspace 列表，
+/// 为每个 workspace 启动文件监听器。
+async fn init_workspaces(app: tauri::AppHandle) {
+    let registry: tauri::State<Arc<WorkspaceRegistry>> = app.state();
+    let pers = match app.path().app_data_dir() {
+        Ok(dir) => Persistence::new(dir),
+        Err(e) => {
+            eprintln!("[setup] cannot resolve app_data_dir: {}", e);
+            return;
+        }
+    };
+    let snap = pers.load().await;
+    if let Err(e) = registry.restore(snap).await {
+        eprintln!("[setup] restore workspaces failed: {}", e);
+    }
+    // 为每个已恢复的 workspace 启动监听器
+    for ws_id in registry.ids().await {
+        let project_root = match registry.project_root(&ws_id).await {
+            Some(r) => r,
+            None => continue,
+        };
+        match crate::workspace::watcher::WorkspaceWatcher::start(
+            &project_root,
+            app.clone(),
+            ws_id.clone(),
+        ) {
+            Ok(watcher) => {
+                if let Err(e) = registry.attach_watcher(&ws_id, watcher).await {
+                    eprintln!("[setup] attach watcher for {} failed: {}", ws_id, e);
+                }
+            }
+            Err(e) => eprintln!("[setup] start watcher for {} failed: {}", ws_id, e),
+        }
+    }
 }

@@ -1,190 +1,234 @@
 import { create } from "zustand";
 import type { FileResult } from "../api/commands";
+import { useWorkspaceStore } from "./useWorkspaceStore";
 
 export type TabState = "code" | "large-file" | "loading" | "empty";
 
-/** A tracked open file with its current content */
 export interface TabFile {
   result: FileResult;
   currentContent: string;
 }
 
-interface EditorStore {
-  /** All open files (tabs) */
+interface WorkspaceEditor {
   tabs: TabFile[];
-  /** Index of active tab */
   activeIndex: number;
+  cursorWord: string;
+  targetLine: number | null;
+  targetColumn: number | null;
+}
 
-  /** Derived state (from active tab) */
+function emptyEditor(): WorkspaceEditor {
+  return {
+    tabs: [],
+    activeIndex: 0,
+    cursorWord: "",
+    targetLine: null,
+    targetColumn: null,
+  };
+}
+
+interface EditorStore {
+  byWorkspace: Record<string, WorkspaceEditor>;
+
+  tabs: TabFile[];
+  activeIndex: number;
   openFile: FileResult | null;
   currentContent: string;
   tabState: TabState;
   modified: boolean;
   filePath: string | null;
-
-  /** Current word at cursor (for go-to-definition) */
-  /** Line to jump to after file opens */
-  targetLine: number | null;
   cursorWord: string;
-  /** Open or switch to a file */
+  targetLine: number | null;
+  targetColumn: number | null;
+
   openFileOrSwitch: (file: FileResult) => void;
-  /** Update content of active tab */
   setContent: (content: string) => void;
   setModified: (modified: boolean) => void;
-  /** Switch to tab by index */
   setCursorWord: (word: string) => void;
   switchTab: (index: number) => void;
-  /** Close tab by index */
-  setTargetLine: (line: number | null) => void;
+  setTargetLine: (line: number | null, column?: number | null) => void;
   closeTab: (index: number) => void;
+  evictWorkspace: (workspaceId: string) => void;
   reset: () => void;
 }
 
-function deriveActive(tabs: TabFile[], activeIndex: number) {
-  if (tabs.length === 0) {
+interface DerivedFields {
+  openFile: FileResult | null;
+  currentContent: string;
+  tabState: TabState;
+  modified: boolean;
+  filePath: string | null;
+  activeIndex: number;
+}
+
+function deriveActive(state: WorkspaceEditor): DerivedFields {
+  if (state.tabs.length === 0) {
     return {
-      openFile: null,
-      currentContent: "",
-      tabState: "empty" as TabState,
-      modified: false,
-      filePath: null,
+      openFile: null, currentContent: "", tabState: "empty",
+      modified: false, filePath: null, activeIndex: 0,
     };
   }
-  const active = tabs[activeIndex] ?? tabs[tabs.length - 1];
-  const idx = active === tabs[activeIndex] ? activeIndex : tabs.length - 1;
+  const safeIdx = state.activeIndex < state.tabs.length
+    ? state.activeIndex
+    : state.tabs.length - 1;
+  const active = state.tabs[safeIdx];
   return {
     openFile: active.result,
     currentContent: active.currentContent,
-    tabState: active.result.is_large_file ? ("large-file" as TabState) : ("code" as TabState),
+    tabState: active.result.is_large_file ? "large-file" : "code",
     modified: active.result.is_modified,
     filePath: active.result.path,
-    activeIndex: idx,
+    activeIndex: safeIdx,
   };
 }
 
-export const useEditorStore = create<EditorStore>((set, get) => ({
-  tabs: [],
-  activeIndex: 0,
-  openFile: null,
-  currentContent: "",
-  tabState: "empty",
-  modified: false,
-  filePath: null,
+function projectFrom(
+  byWorkspace: Record<string, WorkspaceEditor>,
+  wsId: string | null,
+): Partial<EditorStore> {
+  if (!wsId) {
+    return {
+      tabs: [], activeIndex: 0, openFile: null, currentContent: "",
+      tabState: "empty", modified: false, filePath: null,
+      cursorWord: "", targetLine: null, targetColumn: null,
+    };
+  }
+  const ws = byWorkspace[wsId] ?? emptyEditor();
+  const derived = deriveActive(ws);
+  return {
+    tabs: ws.tabs, activeIndex: derived.activeIndex,
+    cursorWord: ws.cursorWord, targetLine: ws.targetLine, targetColumn: ws.targetColumn,
+    openFile: derived.openFile, currentContent: derived.currentContent,
+    tabState: derived.tabState, modified: derived.modified, filePath: derived.filePath,
+  };
+}
 
-  cursorWord: "",
-  targetLine: null,
-  openFileOrSwitch: (file) => {
-    const { tabs } = get();
-    const existing = tabs.findIndex((t) => t.result.path === file.path);
+function mutate(
+  byWorkspace: Record<string, WorkspaceEditor>,
+  wsId: string, ws: WorkspaceEditor,
+): Partial<EditorStore> {
+  const next = { ...byWorkspace, [wsId]: ws };
+  return { byWorkspace: next, ...projectFrom(next, wsId) };
+}
 
-    let newTabs: TabFile[];
-    let newIndex: number;
+function persistTabs(state: WorkspaceEditor) {
+  const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+  if (!wsId) return;
+  useWorkspaceStore.getState().updateMeta(wsId, {
+    open_tabs: state.tabs.map((t) => t.result.path),
+    active_tab: state.tabs[state.activeIndex]?.result.path ?? null,
+  });
+}
 
-    if (existing >= 0) {
-      // Update content and switch to existing tab
-      newTabs = tabs.map((t, i) =>
-        i === existing
-          ? { result: file, currentContent: file.content }
-          : t,
-      );
-      newIndex = existing;
-    } else {
-      // Add new tab
-      newTabs = [
-        ...tabs,
-        { result: file, currentContent: file.content },
-      ];
-      newIndex = newTabs.length - 1;
-    }
+export const useEditorStore = create<EditorStore>((set) => {
+  useWorkspaceStore.subscribe(() => {
+    const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+    set((s) => projectFrom(s.byWorkspace, wsId));
+  });
 
-    set({
-      tabs: newTabs,
-      ...deriveActive(newTabs, newIndex),
-    });
-  },
+  return {
+    byWorkspace: {},
+    tabs: [], activeIndex: 0, openFile: null, currentContent: "",
+    tabState: "empty", modified: false, filePath: null,
+    cursorWord: "", targetLine: null, targetColumn: null,
 
-  setContent: (content) => {
-    const { tabs, activeIndex } = get();
-    if (tabs.length === 0) return;
-
-    const newTabs = tabs.map((t, i) =>
-      i === activeIndex
-        ? { ...t, currentContent: content, result: { ...t.result, is_modified: true } }
-        : t,
-    );
-
-    set({
-      tabs: newTabs,
-      currentContent: content,
-      modified: true,
-    });
-  },
-
-  setModified: (modified) => {
-    const { tabs, activeIndex } = get();
-    if (tabs.length === 0) return;
-
-
-    const newTabs = tabs.map((t, i) =>
-      i === activeIndex
-        ? { ...t, result: { ...t.result, is_modified: modified } }
-        : t,
-    );
-    set({ tabs: newTabs, modified });
-  },
-
-  setCursorWord: (word) => set({ cursorWord: word }),
-
-  setTargetLine: (line) => set({ targetLine: line }),
-
-  switchTab: (index) => {
-    const { tabs } = get();
-    if (index < 0 || index >= tabs.length) return;
-    set({ ...deriveActive(tabs, index) });
-  },
-
-  closeTab: (index) => {
-    const { tabs } = get();
-    if (index < 0 || index >= tabs.length) return;
-
-    const newTabs = tabs.filter((_, i) => i !== index);
-    if (newTabs.length === 0) {
-      set({
-        tabs: [],
-        openFile: null,
-        currentContent: "",
-        tabState: "empty",
-        modified: false,
-        filePath: null,
-        activeIndex: 0,
+    openFileOrSwitch: (file) => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) { console.warn("[useEditorStore] openFileOrSwitch without active workspace"); return; }
+      set((s) => {
+        const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        const existing = ws.tabs.findIndex((t) => t.result.path === file.path);
+        let newTabs: TabFile[];
+        let newIndex: number;
+        if (existing >= 0) {
+          newTabs = ws.tabs.map((t, i) => i === existing ? { result: file, currentContent: file.content } : t);
+          newIndex = existing;
+        } else {
+          newTabs = [...ws.tabs, { result: file, currentContent: file.content }];
+          newIndex = newTabs.length - 1;
+        }
+        const newWs: WorkspaceEditor = { ...ws, tabs: newTabs, activeIndex: newIndex };
+        queueMicrotask(() => persistTabs(newWs));
+        return mutate(s.byWorkspace, wsId, newWs);
       });
-      return;
-    }
+    },
 
-    // If closing active or before active, adjust index
-    let newIndex = get().activeIndex;
-    if (index <= newIndex && newIndex > 0) {
-      newIndex--;
-    } else if (index < newIndex) {
-      newIndex--;
-    }
-    // Clamp
-    if (newIndex >= newTabs.length) newIndex = newTabs.length - 1;
+    setContent: (content) => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) return;
+      set((s) => {
+        const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        if (ws.tabs.length === 0) return s;
+        const newTabs = ws.tabs.map((t, i) => i === ws.activeIndex ? { ...t, currentContent: content, result: { ...t.result, is_modified: true } } : t);
+        return mutate(s.byWorkspace, wsId, { ...ws, tabs: newTabs });
+      });
+    },
 
-    set({
-      tabs: newTabs,
-      ...deriveActive(newTabs, newIndex),
-    });
-  },
+    setModified: (modified) => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) return;
+      set((s) => {
+        const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        if (ws.tabs.length === 0) return s;
+        const newTabs = ws.tabs.map((t, i) => i === ws.activeIndex ? { ...t, result: { ...t.result, is_modified: modified } } : t);
+        return mutate(s.byWorkspace, wsId, { ...ws, tabs: newTabs });
+      });
+    },
 
-  reset: () =>
-    set({
-      tabs: [],
-      activeIndex: 0,
-      openFile: null,
-      currentContent: "",
-      tabState: "empty",
-      modified: false,
-      filePath: null,
-    }),
-}));
+    setCursorWord: (word) => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) return;
+      set((s) => {
+        const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        return mutate(s.byWorkspace, wsId, { ...ws, cursorWord: word });
+      });
+    },
+
+    setTargetLine: (line, column) => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) return;
+      set((s) => {
+        const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        return mutate(s.byWorkspace, wsId, { ...ws, targetLine: line, targetColumn: column ?? null });
+      });
+    },
+
+    switchTab: (index) => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) return;
+      set((s) => {
+        const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        if (index < 0 || index >= ws.tabs.length) return s;
+        const newWs: WorkspaceEditor = { ...ws, activeIndex: index };
+        queueMicrotask(() => persistTabs(newWs));
+        return mutate(s.byWorkspace, wsId, newWs);
+      });
+    },
+
+    closeTab: (index) => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) return;
+      set((s) => {
+        const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        if (index < 0 || index >= ws.tabs.length) return s;
+        const newTabs = ws.tabs.filter((_, i) => i !== index);
+        let newIndex = ws.activeIndex;
+        if (index <= newIndex && newIndex > 0) newIndex--;
+        if (newIndex >= newTabs.length) newIndex = Math.max(0, newTabs.length - 1);
+        const newWs: WorkspaceEditor = { ...ws, tabs: newTabs, activeIndex: newIndex };
+        queueMicrotask(() => persistTabs(newWs));
+        return mutate(s.byWorkspace, wsId, newWs);
+      });
+    },
+
+    evictWorkspace: (workspaceId) => {
+      set((s) => {
+        const { [workspaceId]: _drop, ...rest } = s.byWorkspace;
+        const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+        return { byWorkspace: rest, ...projectFrom(rest, wsId) };
+      });
+    },
+
+    reset: () => set({ byWorkspace: {} }),
+  };
+});

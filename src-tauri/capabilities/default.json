@@ -1,9 +1,16 @@
 {
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
+  "description": "Capabilities for main + any detached workspace-* windows",
+  "windows": ["main", "workspace-*"],
   "permissions": [
     "core:default",
+    "core:window:default",
+    "core:window:allow-set-title",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:webview:default",
+    "core:webview:allow-create-webview-window",
     "shell:allow-open",
     "dialog:default",
     "fs:default"
