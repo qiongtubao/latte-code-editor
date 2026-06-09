@@ -93,6 +93,21 @@ export async function buildCodeGraph(): Promise<BuildResult> {
   return invoke<BuildResult>("build_code_graph");
 }
 
+export interface UpdateReport {
+  changed_files: number;
+  nodes_added: number;
+  nodes_removed: number;
+  edges_rebuilt: number;
+  duration_ms: number;
+  error?: string | null;
+}
+
+export async function updateCodeGraph(
+  paths: string[],
+): Promise<UpdateReport> {
+  return invoke<UpdateReport>("update_code_graph", { paths });
+}
+
 export async function createFile(path: string): Promise<void> {
   return invoke<void>("create_file", { path });
 }

@@ -1,7 +1,13 @@
 import { useEditorStore } from "../hooks/useEditorStore";
+import { useGraphSettings } from "../hooks/useGraphSettings";
 
-export function StatusBar() {
+export function StatusBar({
+  onToggleSettings,
+}: {
+  onToggleSettings: () => void;
+}) {
   const { openFile, modified, tabState, filePath } = useEditorStore();
+  const autoUpdate = useGraphSettings((s) => s.auto_update_enabled);
 
   const getLanguageLabel = (path: string | null): string => {
     if (!path) return "";
@@ -44,6 +50,18 @@ export function StatusBar() {
           <span className="opacity-90">⚠ Large File</span>
         )}
         {openFile && <span className="opacity-80">{getLineInfo()}</span>}
+        <button
+          onClick={onToggleSettings}
+          title={
+            autoUpdate
+              ? "Graph auto-update: ON — click to configure"
+              : "Graph auto-update: OFF — click to configure"
+          }
+          className="flex items-center gap-1 opacity-80 hover:opacity-100 cursor-pointer"
+        >
+          <span>{autoUpdate ? "⚡" : "⏸"}</span>
+          <span>{autoUpdate ? "Auto" : "Manual"}</span>
+        </button>
       </div>
     </div>
   );

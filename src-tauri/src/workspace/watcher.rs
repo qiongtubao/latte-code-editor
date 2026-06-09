@@ -10,14 +10,13 @@
 //! 设计权衡：
 //! - 旧的 `project/watcher.rs` 硬编码 `Path::new(".")`，不能多 workspace。新设计替代之。
 //! - 监听器在独立线程中运行（notify::RecommendedWatcher + mpsc channel），不阻塞 tauri runtime。
-
 use std::path::Path;
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter};
 
+use crate::graph::incremental::IncrementalHub;
 /// 单 workspace 监听器句柄。drop 时停止监听线程。
 pub struct WorkspaceWatcher {
     stop_tx: Option<Sender<()>>,
@@ -28,9 +27,13 @@ pub struct WorkspaceWatcher {
 impl WorkspaceWatcher {
     /// 启动监听器
     /// - `root`: 项目根目录
-    /// - `app`: tauri AppHandle，用于 emit 事件
-    /// - `workspace_id`: workspace 唯一标识（用于事件命名）
-    pub fn start(root: &Path, app: AppHandle, workspace_id: String) -> Result<Self, String> {
+    /// - `hub`: incremental hub to feed file changes into
+    /// - `workspace_id`: workspace 唯一标识
+    pub fn start(
+        root: &Path,
+        hub: std::sync::Arc<IncrementalHub>,
+        workspace_id: String,
+    ) -> Result<Self, String> {
         if !root.exists() {
             return Err(format!("Watch root does not exist: {}", root.display()));
         }
@@ -43,8 +46,9 @@ impl WorkspaceWatcher {
             .map_err(|e| format!("Cannot watch root: {}", e))?;
 
         let (stop_tx, stop_rx) = channel::<()>();
-        let app_for_thread = app.clone();
+        let root_for_thread = root.to_path_buf();
         let workspace_id_for_thread = workspace_id.clone();
+        let hub_for_thread = hub.clone();
 
         thread::Builder::new()
             .name(format!("ws-watcher-{}", workspace_id))
@@ -58,11 +62,10 @@ impl WorkspaceWatcher {
                                 EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
                             ) {
                                 for path in event.paths {
-                                    let event_name =
-                                        format!("file-changed:{}", workspace_id_for_thread);
-                                    let _ = app_for_thread.emit(
-                                        event_name.as_str(),
-                                        path.to_string_lossy().to_string(),
+                                    hub_for_thread.enqueue(
+                                        workspace_id_for_thread.clone(),
+                                        root_for_thread.clone(),
+                                        path,
                                     );
                                 }
                             }

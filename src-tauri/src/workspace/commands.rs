@@ -135,9 +135,10 @@ pub async fn new_workspace(
             .add(id.clone(), Workspace::new(meta.clone()))
             .await
             .map_err(|e| format!("Cannot add workspace: {}", e))?;
+        let hub: tauri::State<Arc<crate::graph::incremental::IncrementalHub>> = app.state();
         match crate::workspace::watcher::WorkspaceWatcher::start(
             &canonical,
-            app.clone(),
+            hub.inner().clone(),
             id.clone(),
         ) {
             Ok(w) => {

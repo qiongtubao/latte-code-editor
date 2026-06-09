@@ -7,6 +7,7 @@ import { OutlinePanel } from "./components/OutlinePanel";
 import { ResizeDivider } from "./components/ResizeDivider";
 import { StatusBar } from "./components/StatusBar";
 import { DefinitionPopup } from "./components/DefinitionPopup";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { WorkspaceTabs } from "./components/WorkspaceTabs";
 import { QuickOpenModal } from "./components/QuickOpenModal";
 import { openFile } from "./api/commands";
@@ -14,15 +15,15 @@ import { useEditorStore } from "./hooks/useEditorStore";
 import { useGraphStore } from "./hooks/useGraphStore";
 import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
-
+import { useGraphEvents } from "./hooks/useGraphEvents";
 type ActivePanel = "editor" | "graph" | "split";
-
 function App() {
   const [activePanel, setActivePanel] = useState<ActivePanel>("split");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [outlineWidth, setOutlineWidth] = useState(180);
   const [editorFlex, setEditorFlex] = useState(0.5);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const { openFileOrSwitch } = useEditorStore();
   const { filePath } = useEditorStore();
@@ -36,6 +37,9 @@ function App() {
   const [defPopup, setDefPopup] = useState<{ word: string; x: number; y: number } | null>(
     null,
   );
+
+  // Mount the graph auto-update event listener.
+  useGraphEvents();
 
   useEffect(() => {
     hydrate();
@@ -202,7 +206,17 @@ function App() {
       </div>
 
       <QuickOpenModal />
-      <StatusBar />
+      {settingsOpen && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSettingsOpen(false)}>
+          <div
+            className="w-96 max-h-[80vh] overflow-hidden rounded shadow-2xl border border-gray-700"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <SettingsPanel onClose={() => setSettingsOpen(false)} />
+          </div>
+        </div>
+      )}
+      <StatusBar onToggleSettings={() => setSettingsOpen((v) => !v)} />
     </div>
   );
 }

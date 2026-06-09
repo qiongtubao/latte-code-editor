@@ -91,9 +91,10 @@ pub async fn open_folder(
             .await
             .map_err(|e| format!("Cannot register workspace: {}", e))?;
         let app = window.app_handle().clone();
+        let hub: tauri::State<Arc<crate::graph::incremental::IncrementalHub>> = app.state();
         match crate::workspace::watcher::WorkspaceWatcher::start(
             &canonical,
-            app,
+            hub.inner().clone(),
             ws_id.clone(),
         ) {
             Ok(watcher) => {

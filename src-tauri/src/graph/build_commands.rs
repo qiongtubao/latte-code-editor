@@ -67,11 +67,58 @@ pub async fn build_code_graph(
 
     let done_event = format!("graph-build-done:{}", workspace_id);
     let _ = app.emit(done_event.as_str(), true);
-
     Ok(BuildResult {
         files_scanned: stats.files_scanned,
         nodes_created: stats.nodes_created,
         edges_created: stats.edges_created,
         errors: stats.errors,
     })
+}
+
+/// Incrementally update the code graph for a subset of changed files.
+/// Called by:
+/// - the hub, after a debounced batch of file-watcher events;
+/// - the frontend, when the user wants to push a specific file's
+///   changes through without waiting for the next debounce.
+///
+/// Paths are absolute or project-relative. The engine normalises
+/// them. Missing files are purged from the graph (matches the
+/// watcher's delete-event semantics).
+#[tauri::command]
+pub async fn update_code_graph(
+    paths: Vec<String>,
+    app: tauri::AppHandle,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
+) -> Result<latte_rs_graph::types::UpdateReport, String> {
+    let label = window.label().to_string();
+    let workspace_id = registry
+        .active_for_window(&label)
+        .await
+        .ok_or_else(|| format!("No active workspace for window '{}'", label))?;
+    let project_root = registry
+        .project_root(&workspace_id)
+        .await
+        .ok_or_else(|| format!("Workspace '{}' not found", workspace_id))?;
+    let graph_dir = project_root.join(".latte");
+    if !graph_dir.exists() {
+        return Err("graph not built yet; run build_code_graph first".into());
+    }
+    let db_path = graph_dir.join("graph.db");
+    let storage =
+        SqliteStorage::open(&db_path).map_err(|e| format!("Cannot open graph DB: {}", e))?;
+    let engine = TreeSitterEngine::new(storage);
+
+    let path_bufs: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    let report = engine
+        .update_files(&project_root, &path_bufs)
+        .await
+        .map_err(|e| format!("Update error: {}", e))?;
+
+    // Tell the frontend the graph is fresh.
+    let _ = app.emit(
+        &format!("graph-updated:{}", workspace_id),
+        &report,
+    );
+    Ok(report)
 }
