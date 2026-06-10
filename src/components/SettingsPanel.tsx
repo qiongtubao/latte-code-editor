@@ -1,117 +1,97 @@
-// Settings panel — graph auto-update controls.
-import { useGraphSettings } from "../hooks/useGraphSettings";
+import { useSettingsStore, type EditorTheme } from "../hooks/useSettingsStore";
 
-export function SettingsPanel({ onClose }: { onClose: () => void }) {
-  const {
-    auto_update_enabled,
-    debounce_ms,
-    max_files_per_batch,
-    low_memory_skip_mb,
-    loading,
-    setAutoUpdateEnabled,
-    setDebounceMs,
-    setMaxFilesPerBatch,
-    setLowMemorySkipMb,
-  } = useGraphSettings();
+const themeLabels: Record<EditorTheme, string> = {
+  monokai: "Monokai",
+  dracula: "Dracula",
+  oneDark: "One Dark",
+  solarizedLight: "Solarized Light",
+  githubLight: "GitHub Light",
+};
+
+interface Props {
+  onClose: () => void;
+}
+
+export function SettingsPanel({ onClose }: Props) {
+  const { theme, fontSize, tabSize, lineNumbers, wordWrap, autoSave, setTheme, setFontSize, setTabSize, setLineNumbers, setWordWrap, setAutoSave } = useSettingsStore();
 
   return (
-    <div className="flex flex-col h-full text-xs" style={{ background: "#252526" }}>
+    <div className="h-full flex flex-col text-xs" style={{ background: "#252526" }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
-        <span className="font-medium text-gray-300">Graph Settings</span>
-        <button
-          onClick={onClose}
-          className="text-gray-500 hover:text-gray-200 text-sm leading-none px-1"
-        >
-          ×
-        </button>
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700 bg-[#2d2d2d]">
+        <span className="text-gray-200 font-medium">Settings</span>
+        <button onClick={onClose} className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer">×</button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
-        {/* Master switch */}
-        <label className="flex items-center justify-between gap-2 text-gray-300 cursor-pointer">
-          <span>Auto-update on file change</span>
-          <input
-            type="checkbox"
-            checked={auto_update_enabled}
-            disabled={loading}
-            onChange={(e) => setAutoUpdateEnabled(e.target.checked)}
-            className="cursor-pointer"
-          />
-        </label>
+      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-4">
+        {/* Editor section */}
+        <Section title="Editor">
+          <Field label="Theme">
+            <select value={theme} onChange={(e) => setTheme(e.target.value as EditorTheme)}
+              className="w-full px-2 py-1 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded outline-none focus:border-[#007acc]">
+              {(Object.keys(themeLabels) as EditorTheme[]).map((k) => (
+                <option key={k} value={k}>{themeLabels[k]}</option>
+              ))}
+            </select>
+          </Field>
 
-        <p className="text-gray-500 -mt-1">
-          When enabled, the graph re-indexes changed files as you type.
-          When disabled, the file watcher still runs but changes are
-          discarded.
-        </p>
+          <Field label="Font Size">
+            <input type="number" min={10} max={30} value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))}
+              className="w-20 px-2 py-1 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded outline-none focus:border-[#007acc]" />
+          </Field>
 
-        <hr className="border-gray-700" />
+          <Field label="Tab Size">
+            <select value={tabSize} onChange={(e) => setTabSize(Number(e.target.value))}
+              className="px-2 py-1 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded outline-none focus:border-[#007acc]">
+              {[2, 4, 8].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </Field>
 
-        {/* Debounce */}
-        <label className="flex items-center justify-between gap-2 text-gray-300">
-          <span>Debounce (ms)</span>
-          <input
-            type="number"
-            min={100}
-            max={10000}
-            step={100}
-            value={debounce_ms}
-            disabled={loading || !auto_update_enabled}
-            onChange={(e) => setDebounceMs(Number(e.target.value))}
-            className="w-24 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded outline-none focus:border-[#007acc] disabled:opacity-50"
-          />
-        </label>
-        <p className="text-gray-500 -mt-2">
-          Time to wait after the last file change before starting a
-          batch update. Higher values reduce CPU churn when many files
-          change at once.
-        </p>
+          <Field label="Line Numbers">
+            <input type="checkbox" checked={lineNumbers} onChange={(e) => setLineNumbers(e.target.checked)}
+              className="accent-[#007acc]" />
+          </Field>
 
-        <hr className="border-gray-700" />
+          <Field label="Word Wrap">
+            <input type="checkbox" checked={wordWrap} onChange={(e) => setWordWrap(e.target.checked)}
+              className="accent-[#007acc]" />
+          </Field>
 
-        {/* Max files per batch */}
-        <label className="flex items-center justify-between gap-2 text-gray-300">
-          <span>Max files per batch</span>
-          <input
-            type="number"
-            min={1}
-            max={1000}
-            step={10}
-            value={max_files_per_batch}
-            disabled={loading || !auto_update_enabled}
-            onChange={(e) => setMaxFilesPerBatch(Number(e.target.value))}
-            className="w-24 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded outline-none focus:border-[#007acc] disabled:opacity-50"
-          />
-        </label>
-        <p className="text-gray-500 -mt-2">
-          Batches larger than this are dropped; the user should run a
-          manual rebuild. Keeps background work bounded when e.g. a
-          branch switch touches thousands of files.
-        </p>
+          <Field label="Auto Save">
+            <input type="checkbox" checked={autoSave} onChange={(e) => setAutoSave(e.target.checked)}
+              className="accent-[#007acc]" />
+          </Field>
+        </Section>
 
-        <hr className="border-gray-700" />
-
-        {/* Low memory threshold */}
-        <label className="flex items-center justify-between gap-2 text-gray-300">
-          <span>Low-memory skip (MB)</span>
-          <input
-            type="number"
-            min={64}
-            max={32768}
-            step={64}
-            value={low_memory_skip_mb}
-            disabled={loading || !auto_update_enabled}
-            onChange={(e) => setLowMemorySkipMb(Number(e.target.value))}
-            className="w-24 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded outline-none focus:border-[#007acc] disabled:opacity-50"
-          />
-        </label>
-        <p className="text-gray-500 -mt-2">
-          Skip auto-updates when system free memory drops below this
-          floor. Only effective on Linux/macOS; unsupported platforms
-          are treated as "no opinion" and updates proceed.
-        </p>
+        {/* Theme preview */}
+        <Section title="Preview">
+          <div className="p-2 rounded font-mono text-xs leading-5" style={{ background: "#1e1e1e" }}>
+            <span style={{ color: "#c678dd" }}>import</span> <span style={{ color: "#e5c07b" }}>React</span> <span style={{ color: "#c678dd" }}>from</span> <span style={{ color: "#98c379" }}>"react"</span><br />
+            <span style={{ color: "#61afef" }}>function</span> <span style={{ color: "#61afef" }}>App</span>() {"{"}<br />
+            &nbsp;&nbsp;<span style={{ color: "#c678dd" }}>const</span> [count, setCount] = useState(0)<br />
+            &nbsp;&nbsp;<span style={{ color: "#c678dd" }}>return</span> &lt;div&gt;{"{count}"}&lt;/div&gt;<br />
+            {"}"}
+          </div>
+        </Section>
       </div>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase text-gray-500 font-semibold mb-1 tracking-wider">{title}</div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-gray-400 shrink-0">{label}</span>
+      {children}
     </div>
   );
 }

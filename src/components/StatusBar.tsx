@@ -71,8 +71,9 @@ export function StatusBar({
           className="flex items-center gap-1 opacity-80 hover:opacity-100 cursor-pointer"
         >
           <span>{autoUpdate ? "⚡" : "⏸"}</span>
-          <span>{autoUpdate ? "Auto" : "Manual"}</span>
+          {autoUpdate ? "Auto" : "Manual"}
         </button>
+        <button onClick={onToggleSettings} className="opacity-80 hover:opacity-100 cursor-pointer" title="Settings">⚙</button>
       </div>
       </div>
     </div>
