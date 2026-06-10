@@ -1,5 +1,6 @@
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useGraphSettings } from "../hooks/useGraphSettings";
+import { LspStatusBar } from "./LspStatusBar";
 
 export function StatusBar({
   onToggleSettings,
@@ -44,12 +45,22 @@ export function StatusBar({
       <div className="flex items-center gap-4">
         {filePath && <span>{getLanguageLabel(filePath)}</span>}
         {modified && <span className="opacity-80">● Modified</span>}
-      </div>
+        {filePath && (
+          <button
+            onClick={() => useEditorStore.getState().refreshCurrentFile()}
+            title="Refresh file from disk (Ctrl+Shift+R)"
+            className="opacity-80 hover:opacity-100 cursor-pointer"
+          >
+            ↻ Refresh
+          </button>
+        )}
       <div className="flex items-center gap-4">
         {tabState === "large-file" && (
           <span className="opacity-90">⚠ Large File</span>
         )}
         {openFile && <span className="opacity-80">{getLineInfo()}</span>}
+        {/* LSP 状态栏 - 手动触发模式 */}
+        <LspStatusBar />
         <button
           onClick={onToggleSettings}
           title={
@@ -62,6 +73,7 @@ export function StatusBar({
           <span>{autoUpdate ? "⚡" : "⏸"}</span>
           <span>{autoUpdate ? "Auto" : "Manual"}</span>
         </button>
+      </div>
       </div>
     </div>
   );

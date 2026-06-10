@@ -52,19 +52,24 @@ fn default_true() -> bool { true }
 fn default_active_panel() -> String { "split".to_string() }
 fn default_sidebar_panel() -> String { "explorer".to_string() }
 
-/// 一个 workspace 实例的运行时数据
 pub struct Workspace {
     pub meta: WorkspaceMeta,
     pub buffers: BufferManager,
     pub watcher: Option<crate::workspace::watcher::WorkspaceWatcher>,
+    /// LSP 管理器
+    pub lsp_manager: Arc<RwLock<crate::editor::lsp::LspManager>>,
 }
 
 impl Workspace {
     pub fn new(meta: WorkspaceMeta) -> Self {
+        let project_root = meta.project_root.clone();
         Self {
             meta,
             buffers: BufferManager::new(),
             watcher: None,
+            lsp_manager: Arc::new(RwLock::new(
+                crate::editor::lsp::LspManager::new(project_root)
+            )),
         }
     }
 

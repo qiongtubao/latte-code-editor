@@ -142,6 +142,93 @@ impl BufferManager {
             buffers.remove(&canonical);
         }
     }
+
+    /// 刷新指定文件的缓存（重新从磁盘加载）
+    ///
+    /// 如果文件未在缓存中，返回错误
+    /// 如果文件已修改未保存，警告用户（但仍刷新）
+    pub async fn refresh(&self, path: &Path) -> Result<Arc<RwLock<Buffer>>, String> {
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve path: {}", e))?;
+
+        // 检查 buffer 是否存在
+        let buffers = self.buffers.read().await;
+        let existing = buffers.get(&canonical)
+            .ok_or_else(|| format!("Buffer not found for {}", canonical.display()))?;
+        
+        // 检查是否已修改（警告但不阻止刷新）
+        {
+            let buf = existing.read().await;
+            if buf.is_modified {
+                eprintln!("[refresh] Warning: buffer {} has unsaved changes, will be overwritten", canonical.display());
+            }
+        }
+
+        // 从磁盘重新读取
+        let metadata = std::fs::metadata(&canonical)
+            .map_err(|e| format!("Cannot read metadata: {}", e))?;
+
+        let file_size = metadata.len();
+        let is_large_size = file_size > LARGE_FILE_SIZE;
+
+        let content = if is_large_size {
+            format!(
+                "[Large file: {} bytes. Opened in read-only large file mode.]",
+                file_size
+            )
+        } else {
+            tokio::fs::read_to_string(&canonical)
+                .await
+                .map_err(|e| format!("Cannot read file: {}", e))?
+        };
+
+        let line_count = content.lines().count();
+        let byte_size = content.len();
+        let is_large = is_large_size || line_count > LARGE_FILE_LINES;
+
+        // 更新 buffer 内容
+        {
+            let mut buf = existing.write().await;
+            buf.content = content;
+            buf.line_count = line_count;
+            buf.byte_size = byte_size;
+            buf.is_large_file = is_large;
+            buf.is_modified = false; // 刷新后标记为未修改
+        }
+
+        Ok(existing.clone())
+    }
+
+    /// 检查文件是否在磁盘上被修改（对比 buffer 和磁盘内容）
+    ///
+    /// 返回 true 表示磁盘文件已变化
+    pub async fn is_file_changed_on_disk(&self, path: &Path) -> Result<bool, String> {
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve path: {}", e))?;
+
+        let buffers = self.buffers.read().await;
+        let buffer = buffers.get(&canonical)
+            .ok_or_else(|| format!("Buffer not found for {}", canonical.display()))?;
+
+        let buf = buffer.read().await;
+
+        // 如果是大文件模式，无法精确对比
+        if buf.is_large_file {
+            // 检查文件大小是否变化
+            let metadata = std::fs::metadata(&canonical)
+                .map_err(|e| format!("Cannot read metadata: {}", e))?;
+            return Ok(metadata.len() != buf.byte_size as u64);
+        }
+
+        // 读取磁盘内容对比
+        let disk_content = tokio::fs::read_to_string(&canonical)
+            .await
+            .map_err(|e| format!("Cannot read file: {}", e))?;
+
+        Ok(buf.content != disk_content)
+    }
 }
 
 #[cfg(test)]

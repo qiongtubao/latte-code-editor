@@ -16,6 +16,7 @@ import { useGraphStore } from "./hooks/useGraphStore";
 import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
+import { LspManagerPanel } from "./components/LspManagerPanel";
 type ActivePanel = "editor" | "graph" | "split";
 function App() {
   const [activePanel, setActivePanel] = useState<ActivePanel>("split");
@@ -24,6 +25,7 @@ function App() {
   const [outlineWidth, setOutlineWidth] = useState(180);
   const [editorFlex, setEditorFlex] = useState(0.5);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lspManagerOpen, setLspManagerOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const { openFileOrSwitch } = useEditorStore();
   const { filePath } = useEditorStore();
@@ -81,6 +83,9 @@ function App() {
         setSidebarOpen(true);
         // focus search — 通过触发自定义事件让 Sidebar 切换面板
         window.dispatchEvent(new CustomEvent("focus-search"));
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "L" || e.key === "l")) {
+        e.preventDefault();
+        setLspManagerOpen((v) => !v);
       }
     };
     window.addEventListener("keydown", handler);
@@ -216,6 +221,10 @@ function App() {
           </div>
         </div>
       )}
+      {lspManagerOpen && (
+        <LspManagerPanel onClose={() => setLspManagerOpen(false)} />
+      )}
+
       <StatusBar onToggleSettings={() => setSettingsOpen((v) => !v)} />
     </div>
   );

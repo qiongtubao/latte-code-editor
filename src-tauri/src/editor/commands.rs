@@ -333,13 +333,15 @@ pub async fn search_in_files(
         .project_root(&ws_id)
         .await
         .ok_or_else(|| format!("Workspace not found: {}", ws_id))?;
+    // 默认排除的目录：仅排除与版本控制、构建产物、项目内部元数据相关的目录
+    // 注意：不要硬编码 "deps"——它是 Redis/Elixir/Go 等项目中常见的源码目录（含 git submodule），
+    // 需要排除时应让用户在搜索面板的 excludeGlob 中自行配置。
     let exclude_dirs = vec![
         "node_modules".into(),
         "target".into(),
         ".git".into(),
         "dist".into(),
         "build".into(),
-        "deps".into(),
         ".venv".into(),
         ".latte".into(),
     ];
@@ -378,13 +380,13 @@ pub async fn replace_in_files(
         .project_root(&ws_id)
         .await
         .ok_or_else(|| format!("Workspace not found: {}", ws_id))?;
+    // 与 search_in_files 保持一致：不要硬编码 "deps"，由用户通过 excludeGlob 控制
     let exclude_dirs = vec![
         "node_modules".into(),
         "target".into(),
         ".git".into(),
         "dist".into(),
         "build".into(),
-        "deps".into(),
         ".venv".into(),
         ".latte".into(),
     ];
@@ -409,6 +411,54 @@ pub async fn replace_in_files(
         .collect())
 }
 
+/// 刷新文件缓存（从磁盘重新加载）
+#[tauri::command]
+pub async fn refresh_file(
+    path: String,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
+) -> Result<FileResult, String> {
+    let workspace_id = resolve_workspace_id(&window, &registry).await?;
+    
+    let snap = registry.snapshot().await;
+    let workspace = snap.workspaces.get(&workspace_id)
+        .ok_or_else(|| format!("Workspace {} not found", workspace_id))?;
+    
+    // 获取 workspace 实例（包含 BufferManager）
+    let buffer_manager = registry.with_workspace(&workspace_id, |ws| {
+        ws.buffers.clone()
+    }).await?;
+    
+    let path_buf = PathBuf::from(&path);
+    let buffer = buffer_manager.refresh(&path_buf).await?;
+    let buf = buffer.read().await;
+    
+    Ok(FileResult {
+        path: buf.path.to_string_lossy().to_string(),
+        content: buf.content.clone(),
+        line_count: buf.line_count,
+        is_large_file: buf.is_large_file,
+        is_modified: buf.is_modified,
+    })
+}
+
+/// 检查文件是否在磁盘上被修改
+#[tauri::command]
+pub async fn check_file_changed(
+    path: String,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
+) -> Result<bool, String> {
+    let workspace_id = resolve_workspace_id(&window, &registry).await?;
+    
+    let buffer_manager = registry.with_workspace(&workspace_id, |ws| {
+        ws.buffers.clone()
+    }).await?;
+    
+    let path_buf = PathBuf::from(&path);
+    buffer_manager.is_file_changed_on_disk(&path_buf).await
+}
+
 /// Quick Open 用的文件名模糊搜索（按子序列匹配），返回 top N 候选
 /// 注意：只搜文件名，不搜文件内容——内容搜索用 search_in_files
 #[tauri::command]
@@ -423,13 +473,13 @@ pub async fn find_files(
         .project_root(&ws_id)
         .await
         .ok_or_else(|| format!("Workspace not found: {}", ws_id))?;
+    // 不硬编码 "deps"——它是 Redis/Elixir/Go 等项目中常见的源码目录（含 git submodule）
     let exclude_dirs = vec![
         "node_modules".into(),
         "target".into(),
         ".git".into(),
         "dist".into(),
         "build".into(),
-        "deps".into(),
         ".venv".into(),
         ".latte".into(),
     ];

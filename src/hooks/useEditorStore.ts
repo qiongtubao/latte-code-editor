@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { FileResult } from "../api/commands";
 import { useWorkspaceStore } from "./useWorkspaceStore";
+import { refreshFile } from "../api/fileRefresh";
 
 export type TabState = "code" | "large-file" | "loading" | "empty";
 
@@ -50,6 +51,7 @@ interface EditorStore {
   closeTab: (index: number) => void;
   evictWorkspace: (workspaceId: string) => void;
   reset: () => void;
+  refreshCurrentFile: () => Promise<void>;
 }
 
 interface DerivedFields {
@@ -230,5 +232,33 @@ export const useEditorStore = create<EditorStore>((set) => {
     },
 
     reset: () => set({ byWorkspace: {} }),
+
+    refreshCurrentFile: async () => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) return;
+      
+      const state = useEditorStore.getState();
+      const ws = state.byWorkspace[wsId] ?? emptyEditor();
+      
+      if (ws.tabs.length === 0 || !ws.tabs[ws.activeIndex]) return;
+      
+      const currentTab = ws.tabs[ws.activeIndex];
+      const filePath = currentTab.result.path;
+      
+      try {
+        const result = await refreshFile(filePath);
+        set((s) => {
+          const ws = s.byWorkspace[wsId] ?? emptyEditor();
+          const newTabs = ws.tabs.map((t, i) => 
+            i === ws.activeIndex 
+              ? { result: { ...t.result, ...result, is_modified: false }, currentContent: result.content }
+              : t
+          );
+          return mutate(s.byWorkspace, wsId, { ...ws, tabs: newTabs });
+        });
+      } catch (e) {
+        console.error("[refreshCurrentFile] Failed to refresh file:", e);
+      }
+    },
   };
 });

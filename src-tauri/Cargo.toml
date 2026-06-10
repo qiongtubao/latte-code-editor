@@ -26,7 +26,16 @@ walkdir = "2"
 rusqlite = { version = "0.34", features = ["bundled"] }
 regex = "1"
 latte-rs-graph = { path = "../../latte-rs-graph" }
+# LSP 相关依赖
+lsp-types = "0.97"
+async-lsp = "0.2"
+# ripgrep 引擎（用 crate 形式集成，不 fork 进程）
+ignore = "0.4"
+grep = "0.4"
+grep-regex = "0.1"
+grep-matcher = "0.1"
+grep-searcher = "0.1"
+aho-corasick = "1"
 
 [dev-dependencies]
-# 单测用临时目录标准库
 tempfile = "3"

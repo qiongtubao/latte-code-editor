@@ -47,18 +47,68 @@ export function EditorPanel({ onCtrlClick }: EditorPanelProps) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + S: 保存
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         handleSave();
       }
+      // Ctrl/Cmd + O: 打开文件
       if ((e.ctrlKey || e.metaKey) && e.key === "o") {
         e.preventDefault();
         handleOpenFile();
+      }
+      // Ctrl/Cmd + Shift + R: 刷新当前文件
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "R") {
+        e.preventDefault();
+        useEditorStore.getState().refreshCurrentFile();
+      }
+      // Ctrl/Cmd + L: 手动触发当前文件 LSP
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "l") {
+        e.preventDefault();
+        triggerLspForCurrentFile();
+      }
+      // Ctrl/Cmd + Alt + H: 休眠当前 LSP
+      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === "h") {
+        e.preventDefault();
+        hibernateCurrentLsp();
+      }
+      // Ctrl/Cmd + Alt + S: 停止当前 LSP
+      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === "s") {
+        e.preventDefault();
+        stopCurrentLsp();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [handleSave, handleOpenFile]);
+
+  // LSP 手动触发函数
+  const triggerLspForCurrentFile = useCallback(async () => {
+    if (!filePath) return;
+    const { detectFileLanguage, useLspStore } = await import("../hooks/useLspStore");
+    const lang = detectFileLanguage(filePath);
+    if (!lang) {
+      console.log("[LSP] No language detected for file:", filePath);
+      return;
+    }
+    await useLspStore.getState().startLsp(lang);
+  }, [filePath]);
+
+  const hibernateCurrentLsp = useCallback(async () => {
+    if (!filePath) return;
+    const { detectFileLanguage, useLspStore } = await import("../hooks/useLspStore");
+    const lang = detectFileLanguage(filePath);
+    if (!lang) return;
+    await useLspStore.getState().hibernateLsp(lang);
+  }, [filePath]);
+
+  const stopCurrentLsp = useCallback(async () => {
+    if (!filePath) return;
+    const { detectFileLanguage, useLspStore } = await import("../hooks/useLspStore");
+    const lang = detectFileLanguage(filePath);
+    if (!lang) return;
+    await useLspStore.getState().stopLsp(lang);
+  }, [filePath]);
 
   const handleChange = useCallback(
     (content: string) => {

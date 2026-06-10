@@ -22,18 +22,18 @@ pub fn run() {
         .manage(Arc::new(WorkspaceRegistry::new()))
         .setup(|app| {
             // Initialise the settings store + incremental graph hub.
-            // The hub runs in its own thread and bridges the
-            // workspace::watcher events to the engine. The settings
-            // store is created here (not via `.manage`) so we can
-            // wrap it in `Arc` and share it with the hub.
             let data_dir = app.path().app_data_dir().ok();
-            if let Some(dir) = data_dir {
-                let store = Arc::new(SettingsStore::new(dir));
-                let hub = IncrementalHub::start(app.handle().clone(), (*store).clone());
-                app.manage(store);
-                app.manage(hub);
+            if let Some(dir) = &data_dir {
+                if let Err(e) = std::fs::create_dir_all(dir) {
+                    eprintln!("[setup] Failed to create app_data_dir: {}", e);
+                }
             }
-            // 启动时恢复持久化的 workspace 列表 + 为每个 workspace 启动文件监听
+            let settings_store = Arc::new(SettingsStore::new(data_dir.unwrap_or_else(|| std::env::temp_dir())));
+            let hub = IncrementalHub::start(app.handle().clone(), (*settings_store).clone());
+            app.manage(settings_store);
+            app.manage(hub);
+            
+            // 启动时恢复持久化的 workspace 列表
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 init_workspaces(handle).await;
@@ -41,69 +41,59 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            editor::commands::open_file,
-            editor::commands::save_file,
-            editor::commands::get_file_content,
-            editor::commands::open_folder,
-            editor::commands::list_directory,
-            editor::commands::create_file,
-            editor::commands::create_folder,
-            editor::commands::delete_entry,
-            editor::commands::search_in_files,
-            editor::commands::replace_in_files,
-            editor::commands::find_files,
-            graph::commands::graph_search,
-            graph::commands::graph_find_definitions,
-            graph::commands::graph_get_subgraph,
-            graph::build_commands::build_code_graph,
-            graph::build_commands::update_code_graph,
-            workspace::commands::list_workspaces,
-            workspace::commands::new_workspace,
-            workspace::commands::close_workspace,
-            workspace::commands::set_active_workspace,
-            workspace::commands::update_workspace_meta,
-            workspace::commands::detach_workspace_to_window,
-            settings_commands::get_graph_settings,
-            settings_commands::get_app_settings,
-            settings_commands::set_graph_settings,
+            // editor
+            crate::editor::commands::open_folder,
+            crate::editor::commands::list_directory,
+            crate::editor::commands::create_file,
+            crate::editor::commands::create_folder,
+            crate::editor::commands::delete_entry,
+            crate::editor::commands::open_file,
+            crate::editor::commands::save_file,
+            crate::editor::commands::get_file_content,
+            crate::editor::commands::refresh_file,
+            crate::editor::commands::check_file_changed,
+            crate::editor::commands::search_in_files,
+            crate::editor::commands::replace_in_files,
+            crate::editor::commands::find_files,
+            // workspace
+            crate::workspace::commands::list_workspaces,
+            crate::workspace::commands::set_active_workspace,
+            crate::workspace::commands::close_workspace,
+            crate::workspace::commands::update_workspace_meta,
+            crate::workspace::commands::new_workspace,
+            crate::workspace::commands::detach_workspace_to_window,
+            // graph
+            crate::graph::commands::graph_get_data,
+            crate::graph::commands::graph_search,
+            crate::graph::commands::graph_find_definitions,
+            crate::graph::commands::graph_get_subgraph,
+            crate::graph::build_commands::build_code_graph,
+            crate::graph::build_commands::update_code_graph,
+            // settings
+            crate::settings_commands::get_graph_settings,
+            crate::settings_commands::get_app_settings,
+            crate::settings_commands::set_graph_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-/// 启动时初始化：从 app_data_dir 读 state.json 恢复 workspace 列表，
-/// 为每个 workspace 启动文件监听器。
+/// 启动时初始化：从 app_data_dir 读 state.json 恢复 workspace 列表
 async fn init_workspaces(app: tauri::AppHandle) {
     let registry: tauri::State<Arc<WorkspaceRegistry>> = app.state();
+    
     let pers = match app.path().app_data_dir() {
         Ok(dir) => Persistence::new(dir),
         Err(e) => {
-            eprintln!("[setup] cannot resolve app_data_dir: {}", e);
+            eprintln!("[setup] Failed to get app_data_dir: {}", e);
             return;
         }
     };
+    
     let snap = pers.load().await;
     if let Err(e) = registry.restore(snap).await {
         eprintln!("[setup] restore workspaces failed: {}", e);
     }
-    // 为每个已恢复的 workspace 启动监听器
-    let hub: tauri::State<Arc<IncrementalHub>> = app.state();
-    for ws_id in registry.ids().await {
-        let project_root = match registry.project_root(&ws_id).await {
-            Some(r) => r,
-            None => continue,
-        };
-        match crate::workspace::watcher::WorkspaceWatcher::start(
-            &project_root,
-            hub.inner().clone(),
-            ws_id.clone(),
-        ) {
-            Ok(watcher) => {
-                if let Err(e) = registry.attach_watcher(&ws_id, watcher).await {
-                    eprintln!("[setup] attach watcher for {} failed: {}", ws_id, e);
-                }
-            }
-            Err(e) => eprintln!("[setup] start watcher for {} failed: {}", ws_id, e),
-        }
-    }
+    
+    // TODO: 启动文件监听器（需要实现 IncrementalHub 的相应方法）
 }
