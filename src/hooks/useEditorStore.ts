@@ -2,7 +2,10 @@ import { create } from "zustand";
 import type { FileResult } from "../api/commands";
 import { useWorkspaceStore } from "./useWorkspaceStore";
 import { refreshFile } from "../api/fileRefresh";
+import { createDebugLogger } from "../utils/debug/logger";
+import { registerDebugEvent } from "../utils/debug/inject";
 
+const log = createDebugLogger("editor");
 export type TabState = "code" | "large-file" | "loading" | "empty";
 
 export interface TabFile {
@@ -133,10 +136,10 @@ export const useEditorStore = create<EditorStore>((set) => {
     tabs: [], activeIndex: 0, openFile: null, currentContent: "",
     tabState: "empty", modified: false, filePath: null,
     cursorWord: "", targetLine: null, targetColumn: null,
-
     openFileOrSwitch: (file, targetLine = null) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) { console.warn("[useEditorStore] openFileOrSwitch without active workspace"); return; }
+      log.info("file.open", "opening file", { path: file.path, workspaceId: wsId });
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyEditor();
         const existing = ws.tabs.findIndex((t) => t.result.path === file.path);
@@ -159,6 +162,7 @@ export const useEditorStore = create<EditorStore>((set) => {
     setContent: (content: string) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
+      log.debug("file.content", "content updated", { workspaceId: wsId, len: content.length });
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyEditor();
         if (ws.tabs.length === 0) return s;
@@ -207,10 +211,10 @@ export const useEditorStore = create<EditorStore>((set) => {
         return mutate(s.byWorkspace, wsId, newWs);
       });
     },
-
     closeTab: (index: number) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
+      log.info("file.close", "closing tab", { workspaceId: wsId, index });
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyEditor();
         if (index < 0 || index >= ws.tabs.length) return s;
@@ -263,3 +267,28 @@ export const useEditorStore = create<EditorStore>((set) => {
     },
   };
 });
+
+// Register editor events for debug injection.
+registerDebugEvent("file.open", async (ctx) => {
+  const path = typeof ctx.path === "string" ? ctx.path : "";
+  if (!path) return;
+  try {
+    const file = await import("../api/commands").then((m) => m.openFile(path));
+    useEditorStore.getState().openFileOrSwitch(file);
+  } catch (e) {
+    log.error("file.open.error", String(e), { path });
+  }
+});
+registerDebugEvent("file.save", async (ctx) => {
+  // Save is a "dangerous" op: it overwrites the on-disk file.
+  // We do not attempt to implement full save semantics here; the warning and
+  // audit log are the contract.
+  const path = typeof ctx.path === "string" ? ctx.path : "";
+  if (!path) return;
+  log.warn("file.save.attempt", "save requested via debug inject", { path });
+}, { dangerous: true });
+registerDebugEvent("file.delete", async (ctx) => {
+  const path = typeof ctx.path === "string" ? ctx.path : "";
+  if (!path) return;
+  log.warn("file.delete.attempt", "delete requested via debug inject", { path });
+}, { dangerous: true });
