@@ -21,9 +21,13 @@ export function GraphPanel() {
     setSelectedNode, setHoveredNode, setHighlightedNodes, requestReload,
   } = useGraphStore();
   const { openFileOrSwitch } = useEditorStore();
-  const workerRef = useRef<Worker | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const workerRef = useRef<Worker | null>(null);
   const simStarted = useRef(false);
+  // 诊断：graphData 是否真的从 store 流入组件
+  useEffect(() => {
+    console.log("[GP] graphData in component:", !!graphData, "nodes:", graphData?.nodes?.length);
+  }, [graphData]);
   const [displayMode, setDisplayMode] = useState<GraphDisplayMode>("main");
   const [displayLabel, setDisplayLabel] = useState("");
   const [rebuilding, setRebuilding] = useState(false);
