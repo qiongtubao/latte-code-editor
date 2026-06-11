@@ -36,11 +36,9 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
   const handleResultClick = useCallback(async (m: SearchMatch) => {
     try {
       const result = await openFile(m.file_path);
-      useEditorStore.getState().setTargetLine(m.line_number);
-      useEditorStore.getState().openFileOrSwitch(result);
+      useEditorStore.getState().openFileOrSwitch(result, m.line_number);
     } catch { /* ignore */ }
   }, []);
-
   const handleReplaceAll = useCallback(async () => {
     if (!onReplace || !query.trim()) return;
     setLoading(true);

@@ -5,6 +5,7 @@ import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { basicSetup } from "codemirror";
 import { languages } from "./languageExtensions";
 import { useSettingsStore } from "../hooks/useSettingsStore";
+import { useEditorStore } from "../hooks/useEditorStore";
 import { cmThemes, getHighlightStyle } from "../hooks/themes";
 
 interface CodeMirrorProps {
@@ -63,7 +64,6 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
 
   // Rebuild on settings change
   useEffect(() => {
-    // Clean and rebuild when store fires
     const unsub = useSettingsStore.subscribe(() => {
       viewRef.current?.destroy();
       containerRef.current!.innerHTML = "";
@@ -71,6 +71,29 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
     });
     return unsub;
   }, []);
+
+  // 滚动到 targetLine：在 filePath 或 content 变化后执行
+  // （EditorView 在 useEffect 之后才创建，所以这里要下一帧）
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    // 用 microtask 等 EditorView 完全初始化
+    queueMicrotask(() => {
+      const v = viewRef.current;
+      if (!v) return;
+      const line = useEditorStore.getState().targetLine;
+      if (line == null || line < 1) return;
+      const safeLine = Math.min(line, v.state.doc.lines);
+      if (safeLine < 1) return;
+      const lineObj = v.state.doc.line(safeLine);
+      v.dispatch({
+        selection: { anchor: lineObj.from, head: lineObj.from },
+        effects: EditorView.scrollIntoView(lineObj.from, { y: "center" }),
+      });
+      // 用完即清，避免后续编辑时光标跳走
+      useEditorStore.getState().setTargetLine(null);
+    });
+  }, [filePath, content]);
 
   // Ctrl+Click handler
   useEffect(() => {

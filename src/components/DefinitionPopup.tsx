@@ -56,9 +56,7 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
   const handleJump = useCallback(async (node: GraphData["nodes"][0]) => {
     try {
       const result = await openFile(node.file_path);
-      useEditorStore.getState().setTargetLine(node.start_line);
-      useEditorStore.getState().openFileOrSwitch(result);
-      onClose();
+      useEditorStore.getState().openFileOrSwitch(result, node.start_line);
     } catch (e) {
       console.error("Cannot jump to definition:", e);
     }

@@ -168,9 +168,8 @@ export function GraphPanel() {
     setSelectedNode(nodeId);
     const node = filteredData?.nodes.find((n) => n.id === nodeId);
     if (!node) return;
-    try { const r = await openFile(node.file_path); useEditorStore.getState().setTargetLine(node.start_line ?? null); openFileOrSwitch(r); } catch { /* ignore */ }
+    try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch { /* ignore */ }
   }, [filteredData, setSelectedNode, openFileOrSwitch]);
-
   const handleRebuild = useCallback(async () => {
     setRebuilding(true);
     try { await buildCodeGraph(); requestReload(); } catch (e) { console.error("Rebuild:", e); } finally { setRebuilding(false); }
@@ -195,21 +194,13 @@ export function GraphPanel() {
   const handleSearchSelect = useCallback(async (node: GraphNode) => {
     setSearchResults([]); setSearchQuery(node.name);
     if (node.kind === "file") {
-      try { const r = await openFile(node.file_path); openFileOrSwitch(r); } catch { /* ignore */ }
+      try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch { /* ignore */ }
       return;
     }
     setFocusedNodeId(node.id); setSelectedNode(node.id);
     workerRef.current?.terminate(); workerRef.current = null; simStarted.current = false;
     setSimResult({ nodes: [], edges: [] });
-    if (graphData) {
-      const ids = new Set<string>(); ids.add(node.id);
-      for (const e of graphData.edges) { if (e.source === node.id) ids.add(e.target); if (e.target === node.id) ids.add(e.source); }
-      setHighlightedNodes(ids);
-    }
-    setDisplayMode("focus"); setDisplayLabel(`focus: ${node.name}`);
-    try { const r = await openFile(node.file_path); useEditorStore.getState().setTargetLine(node.start_line ?? null); openFileOrSwitch(r); } catch { /* ignore */ }
   }, [graphData, setSelectedNode, setSimResult, setHighlightedNodes, openFileOrSwitch]);
-
   const handleSearch = useCallback(async () => {
     const q = searchQuery.trim();
     if (!q) return;
@@ -239,19 +230,16 @@ export function GraphPanel() {
       const node = root.data.nodes.find((n) => n.file_path === m.file_path);
       if (node) {
         const r = await openFile(node.file_path);
-        useEditorStore.getState().setTargetLine(m.line_number);
-        openFileOrSwitch(r);
+        openFileOrSwitch(r, m.line_number);
       }
     } catch { /* ignore */ }
   }, [openFileOrSwitch]);
-
   const handleContextJumpToCode = useCallback(async () => {
     if (!contextMenu) return;
     const { nodeId } = contextMenu; setContextMenu(null);
     const node = filteredData?.nodes.find((n) => n.id === nodeId); if (!node) return;
-    try { const r = await openFile(node.file_path); useEditorStore.getState().setTargetLine(node.start_line ?? null); openFileOrSwitch(r); } catch { /* ignore */ }
+    try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch { /* ignore */ }
   }, [contextMenu, filteredData, openFileOrSwitch]);
-
   const handleContextExpand = useCallback(() => {
     if (!contextMenu) return; setContextMenu(null);
     handleSearchSelect({ id: contextMenu.nodeId, name: "", kind: "", file_path: "", start_line: 0, qualified_name: "", language: "", end_line: 0, signature: null } as GraphNode);

@@ -3,7 +3,9 @@ import {
   forceSimulation, forceLink, forceManyBody,
   forceCenter, forceCollide, forceX, forceY,
   type SimulationLinkDatum, type SimulationNodeDatum,
+  type Simulation,
 } from "d3-force";
+
 export interface InputNode {
   id: string;
   kind: string;
@@ -56,12 +58,28 @@ interface WorkerMessage {
   centerId?: string;
 }
 
-self.onmessage = (e: MessageEvent<WorkerMessage>) => {
-  const { nodes: rawNodes, edges: rawEdges, width, height } = e.data;
+/**
+ * 单例 simulation：所有 message 都走同一个 handler
+ * 之前代码有 bug：第二个 `self.onmessage = ...` 覆盖了第一个，
+ * 导致主线程 postMessage 的数据实际跑到"stop"分支里，
+ * 仿真永远不启动，hasWorker 永远 false，canvas 永远不渲染。
+ */
+let simulation: Simulation<SimNodeDatum, SimLinkDatum> | null = null;
 
-  const nodeMap = new Map(rawNodes.map((n: InputNode) => [n.id, n]));
+self.onmessage = (e: MessageEvent<WorkerMessage | string>) => {
+  // "stop" 是控制消息
+  if (typeof e.data === "string" && e.data === "stop") {
+    simulation?.stop();
+    return;
+  }
 
-  const simNodes: SimNodeDatum[] = rawNodes.map((n: InputNode) => ({
+  // 重新进入布局前先清掉旧的
+  simulation?.stop();
+  simulation = null;
+
+  const { nodes: rawNodes, edges: rawEdges, width, height, centerId } = e.data as WorkerMessage;
+
+  const simNodes: SimNodeDatum[] = rawNodes.map((n) => ({
     id: n.id,
     kind: n.kind,
     name: n.name,
@@ -73,7 +91,7 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
     y: height / 2 + (Math.random() - 0.5) * height * 0.5,
   }));
 
-  // Add community clustering: pull nodes in same community closer
+  // Community clustering
   const communities = new Map<number, SimNodeDatum[]>();
   for (const n of simNodes) {
     const c = n.community ?? 0;
@@ -81,23 +99,23 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
     communities.get(c)!.push(n);
   }
 
-  const simEdges: SimLinkDatum[] = rawEdges.map((e: InputEdge) => ({
+  const simEdges: SimLinkDatum[] = rawEdges.map((e) => ({
     source: e.source,
     target: e.target,
     kind: e.kind,
   }));
 
-  const simulation = forceSimulation<SimNodeDatum>(simNodes)
+  simulation = forceSimulation<SimNodeDatum>(simNodes)
     .force(
       "link",
       forceLink<SimNodeDatum, SimLinkDatum>(simEdges)
-        .id((d: SimNodeDatum) => d.id)
-        .distance((d: SimLinkDatum) => {
-          const kind: string = d.kind;
+        .id((d) => d.id)
+        .distance((d) => {
+          const kind = d.kind;
           return kind === "calls" ? 100 : kind === "contains" ? 60 : 80;
         })
-        .strength((d: SimLinkDatum) => {
-          const kind: string = d.kind;
+        .strength((d) => {
+          const kind = d.kind;
           return kind === "calls" ? 0.6 : kind === "contains" ? 0.2 : 0.3;
         }),
     )
@@ -106,10 +124,8 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
     .alphaDecay(0.02)
     .alpha(1);
 
-  // Center anchoring: focus node stays center, others spread around
-  const { centerId } = e.data;
-  if (centerId && simNodes.find((n: SimNodeDatum) => n.id === centerId)) {
-    // Strong anchor for center node
+  // Center anchoring: focus node stays center
+  if (centerId && simNodes.find((n) => n.id === centerId)) {
     simulation.force("centerX", forceX<SimNodeDatum>(width / 2).strength(0.05));
     simulation.force("centerY", forceY<SimNodeDatum>(height / 2).strength(0.05));
   } else {
@@ -117,8 +133,9 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
   }
 
   simulation.on("tick", () => {
+    if (!simulation) return;
     const result: SimResult = {
-      nodes: simNodes.map((n: SimNodeDatum) => ({
+      nodes: simNodes.map((n) => ({
         id: n.id,
         x: n.x ?? 0,
         y: n.y ?? 0,
@@ -126,7 +143,7 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
         vy: n.vy ?? 0,
         group: n.group,
       })),
-      edges: rawEdges.map((e: InputEdge) => ({
+      edges: rawEdges.map((e) => ({
         source: typeof e.source === "string" ? e.source : (e.source as unknown as { id: string }).id,
         target: typeof e.target === "string" ? e.target : (e.target as unknown as { id: string }).id,
         kind: e.kind,
@@ -134,11 +151,4 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
     };
     self.postMessage(result);
   });
-
-  // Allow stop
-  self.onmessage = (stopMsg: MessageEvent) => {
-    if (stopMsg.data === "stop") {
-      simulation.stop();
-    }
-  };
 };

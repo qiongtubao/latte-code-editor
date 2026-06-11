@@ -60,8 +60,7 @@ export function OutlinePanel() {
     async (node: (typeof symbols)[0]) => {
       try {
         const result = await openFile(node.file_path);
-        useEditorStore.getState().setTargetLine(node.start_line);
-        useEditorStore.getState().openFileOrSwitch(result);
+        useEditorStore.getState().openFileOrSwitch(result, node.start_line);
       } catch (e) {
         console.error("Cannot open file:", e);
       }

@@ -42,7 +42,7 @@ interface EditorStore {
   targetLine: number | null;
   targetColumn: number | null;
 
-  openFileOrSwitch: (file: FileResult) => void;
+  openFileOrSwitch: (file: FileResult, targetLine?: number | null) => void;
   setContent: (content: string) => void;
   setModified: (modified: boolean) => void;
   setCursorWord: (word: string) => void;
@@ -134,7 +134,7 @@ export const useEditorStore = create<EditorStore>((set) => {
     tabState: "empty", modified: false, filePath: null,
     cursorWord: "", targetLine: null, targetColumn: null,
 
-    openFileOrSwitch: (file) => {
+    openFileOrSwitch: (file, targetLine = null) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) { console.warn("[useEditorStore] openFileOrSwitch without active workspace"); return; }
       set((s) => {
@@ -149,13 +149,14 @@ export const useEditorStore = create<EditorStore>((set) => {
           newTabs = [...ws.tabs, { result: file, currentContent: file.content }];
           newIndex = newTabs.length - 1;
         }
-        const newWs: WorkspaceEditor = { ...ws, tabs: newTabs, activeIndex: newIndex };
+        // 原子地同时设置 targetLine + 切换 tab：避免中间帧抖动到错误位置
+        const newWs: WorkspaceEditor = { ...ws, tabs: newTabs, activeIndex: newIndex, targetLine };
         queueMicrotask(() => persistTabs(newWs));
         return mutate(s.byWorkspace, wsId, newWs);
       });
     },
 
-    setContent: (content) => {
+    setContent: (content: string) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
@@ -166,7 +167,7 @@ export const useEditorStore = create<EditorStore>((set) => {
       });
     },
 
-    setModified: (modified) => {
+    setModified: (modified: boolean) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
@@ -177,7 +178,7 @@ export const useEditorStore = create<EditorStore>((set) => {
       });
     },
 
-    setCursorWord: (word) => {
+    setCursorWord: (word: string) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
@@ -186,7 +187,7 @@ export const useEditorStore = create<EditorStore>((set) => {
       });
     },
 
-    setTargetLine: (line, column) => {
+    setTargetLine: (line: number | null, column?: number | null) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
@@ -195,7 +196,7 @@ export const useEditorStore = create<EditorStore>((set) => {
       });
     },
 
-    switchTab: (index) => {
+    switchTab: (index: number) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
@@ -207,7 +208,7 @@ export const useEditorStore = create<EditorStore>((set) => {
       });
     },
 
-    closeTab: (index) => {
+    closeTab: (index: number) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
@@ -223,7 +224,7 @@ export const useEditorStore = create<EditorStore>((set) => {
       });
     },
 
-    evictWorkspace: (workspaceId) => {
+    evictWorkspace: (workspaceId: string) => {
       set((s) => {
         const { [workspaceId]: _drop, ...rest } = s.byWorkspace;
         const wsId = useWorkspaceStore.getState().activeWorkspaceId;
@@ -236,21 +237,21 @@ export const useEditorStore = create<EditorStore>((set) => {
     refreshCurrentFile: async () => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
-      
+
       const state = useEditorStore.getState();
       const ws = state.byWorkspace[wsId] ?? emptyEditor();
-      
+
       if (ws.tabs.length === 0 || !ws.tabs[ws.activeIndex]) return;
-      
+
       const currentTab = ws.tabs[ws.activeIndex];
       const filePath = currentTab.result.path;
-      
+
       try {
         const result = await refreshFile(filePath);
         set((s) => {
           const ws = s.byWorkspace[wsId] ?? emptyEditor();
-          const newTabs = ws.tabs.map((t, i) => 
-            i === ws.activeIndex 
+          const newTabs = ws.tabs.map((t, i) =>
+            i === ws.activeIndex
               ? { result: { ...t.result, ...result, is_modified: false }, currentContent: result.content }
               : t
           );
