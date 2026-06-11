@@ -33,6 +33,8 @@ function App() {
   const hydrateDebug = useDebugStore((s) => s.hydrate);
   const setDebugOn = useDebugStore((s) => s.setOn);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastRRef = useRef(0);
+  const lastSRef = useRef(0);
   const { openFileOrSwitch } = useEditorStore();
   const { filePath } = useEditorStore();
   const { graphData } = useGraphStore();
@@ -88,14 +90,49 @@ function App() {
       } else if (e.ctrlKey && e.shiftKey && e.key === "f") {
         e.preventDefault();
         setSidebarOpen(true);
-        // focus search — 通过触发自定义事件让 Sidebar 切换面板
-        window.dispatchEvent(new CustomEvent("focus-search"));
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "D" || e.key === "d")) {
         e.preventDefault();
         setDebugOn(!useDebugStore.getState().isOn);
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "M" || e.key === "m")) {
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "R" || e.key === "r")) {
+        if (!useDebugStore.getState().isOn) return;
         e.preventDefault();
-        setLspManagerOpen((v) => !v);
+        const now = Date.now();
+        if (now - lastRRef.current < 250) return;
+        lastRRef.current = now;
+        void import("./utils/debug/inject").then((m) => m.replayLastAction());
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) {
+        if (!useDebugStore.getState().isOn) return;
+        e.preventDefault();
+        const now = Date.now();
+        if (now - lastSRef.current < 250) return;
+        lastSRef.current = now;
+        const snap = {
+          ts: new Date().toISOString(),
+          stores: {
+            editor: useEditorStore.getState(),
+            workspace: useWorkspaceStore.getState(),
+            graph: useGraphStore.getState(),
+            lsp: null, // require()d lazily to avoid circular import
+          },
+        };
+        console.info("latte:debug-snapshot", JSON.stringify(snap, null, 2));
+        import("./hooks/useLspStore").then(({ useLspStore }) => {
+          const s = useLspStore.getState();
+          console.info(
+            "latte:debug-snapshot-lsp",
+            JSON.stringify(
+              { status: s.status, settings: s.settings, error: s.error },
+              null,
+              2,
+            ),
+          );
+        });
+        invoke<unknown>("debug_dump_backend_state")
+          .then((b) =>
+            console.info("latte:debug-snapshot-backend", JSON.stringify(b, null, 2)),
+          )
+          .catch((e) => console.error("latte:debug-snapshot-backend-error", String(e)));
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "M" || e.key === "m")) {
       }
     };
     window.addEventListener("keydown", handler);
