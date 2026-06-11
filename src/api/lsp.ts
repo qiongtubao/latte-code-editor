@@ -3,7 +3,7 @@
  * 用于手动触发模式
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./ipcDebug";
 
 /**
  * LSP 状态信息（增强版 - 包含内存占用）
