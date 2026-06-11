@@ -1,12 +1,12 @@
 /**
  * LSP 状态管理（手动触发模式）
- * 
+ *
  * 核心理念：默认零资源消耗，需要时显式触发
  */
 
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { 
+import {
   type LspStatusInfo,
   startLsp as apiStartLsp,
   stopLsp as apiStopLsp,
@@ -15,6 +15,11 @@ import {
   stopAllLsp as apiStopAllLsp,
   getLspStatusWithMemory,
 } from "../api/lsp";
+import { createDebugLogger } from "../utils/debug/logger";
+import { registerDebugEvent } from "../utils/debug/inject";
+import { useDebugStore } from "../utils/debug/store";
+
+const log = createDebugLogger("lsp");
 
 /**
  * LSP 设置（可配置）
@@ -89,32 +94,48 @@ export const useLspStore = create<LspStore>((set, get) => ({
   error: null,
   settings: DEFAULT_SETTINGS,
   monitorTimer: null,
-
   startLsp: async (language: string) => {
+    const lockKey = `lsp:start:${language}`;
+    if (!useDebugStore.getState().tryAcquireLock(lockKey)) {
+      log.warn("lsp.start.skipped", "locked", { language });
+      return;
+    }
     set({ loading: true, error: null });
     try {
+      log.info("lsp.start", `starting ${language}`, { language });
       await manualTriggerStart(language);
       set({ loading: false });
+      log.info("lsp.start.ok", `${language} running`, { language });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       set({ error, loading: false });
+      log.error("lsp.start.error", String(e), { language });
+    } finally {
+      useDebugStore.getState().releaseLock(lockKey);
     }
   },
-
   stopLsp: async (language: string) => {
+    const lockKey = `lsp:stop:${language}`;
+    if (!useDebugStore.getState().tryAcquireLock(lockKey)) {
+      log.warn("lsp.stop.skipped", "locked", { language });
+      return;
+    }
     set({ loading: true, error: null });
     try {
+      log.info("lsp.stop", `stopping ${language}`, { language });
       await apiStopLsp(language);
       await get().refreshStatus();
       set({ loading: false });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       set({ error, loading: false });
+    } finally {
+      useDebugStore.getState().releaseLock(lockKey);
     }
   },
-
   hibernateLsp: async (language: string) => {
     try {
+      log.info("lsp.hibernate", `hibernating ${language}`, { language });
       await apiHibernateLsp(language);
       await get().refreshStatus();
     } catch (e) {
@@ -125,6 +146,7 @@ export const useLspStore = create<LspStore>((set, get) => ({
 
   wakeLsp: async (language: string) => {
     try {
+      log.info("lsp.wake", `waking ${language}`, { language });
       await apiWakeLsp(language);
       await get().refreshStatus();
     } catch (e) {
@@ -211,3 +233,21 @@ export function detectFileLanguage(filePath: string): string | null {
   };
   return ext ? (langMap[ext] ?? null) : null;
 }
+
+// Register LSP events for debug injection.
+registerDebugEvent("lsp.start", async (ctx) => {
+  const language = typeof ctx.language === "string" ? ctx.language : "rust";
+  await useLspStore.getState().startLsp(language);
+});
+registerDebugEvent("lsp.stop", async (ctx) => {
+  const language = typeof ctx.language === "string" ? ctx.language : "rust";
+  await useLspStore.getState().stopLsp(language);
+}, { dangerous: true });
+registerDebugEvent("lsp.hibernate", async (ctx) => {
+  const language = typeof ctx.language === "string" ? ctx.language : "rust";
+  await useLspStore.getState().hibernateLsp(language);
+});
+registerDebugEvent("lsp.wake", async (ctx) => {
+  const language = typeof ctx.language === "string" ? ctx.language : "rust";
+  await useLspStore.getState().wakeLsp(language);
+});
