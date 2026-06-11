@@ -140,7 +140,7 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
           <div className="font-semibold mb-1">Keyboard Shortcuts:</div>
           <ul className="space-y-0.5">
             <li>• Ctrl+L / Cmd+L: Start LSP for current file</li>
-            <li>• Ctrl+Shift+L: Open this panel</li>
+            <li>• Ctrl+Shift+M: Open this panel</li>
             <li>• Ctrl+Alt+H: Hibernate current LSP</li>
             <li>• Ctrl+Alt+S: Stop current LSP</li>
           </ul>
