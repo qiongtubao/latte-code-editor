@@ -7,6 +7,11 @@
 import { create } from "zustand";
 import type { GraphData, SimResult, SimNode } from "./graphTypes";
 import { useWorkspaceStore } from "./useWorkspaceStore";
+import { createDebugLogger } from "../utils/debug/logger";
+import { registerDebugEvent } from "../utils/debug/inject";
+import { useDebugStore } from "../utils/debug/store";
+
+const log = createDebugLogger("graph");
 
 interface WorkspaceGraph {
   graphData: GraphData | null;
@@ -181,8 +186,17 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     },
 
     requestReload: () => {
+      const lockKey = "graph:requestReload";
+      if (!useDebugStore.getState().tryAcquireLock(lockKey)) {
+        log.warn("graph.requestReload.skipped", "locked", {});
+        return;
+      }
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-      if (!wsId) return;
+      if (!wsId) {
+        useDebugStore.getState().releaseLock(lockKey);
+        return;
+      }
+      log.info("graph.requestReload", "reload requested", { workspaceId: wsId });
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
         return mutateByWs(s, wsId, {
@@ -194,6 +208,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
           error: null,
         });
       });
+      useDebugStore.getState().releaseLock(lockKey);
     },
 
     evictWorkspace: (workspaceId) => {
@@ -206,3 +221,15 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     reset: () => set({ byWorkspace: {} }),
   };
 });
+
+// Register graph events for debug injection.
+registerDebugEvent("graph.requestReload", async () => {
+  useGraphStore.getState().requestReload();
+});
+registerDebugEvent("graph.rebuild", async () => {
+  // A rebuild is a destructive op: clear cached graph data and request reload.
+  const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+  if (!wsId) return;
+  useGraphStore.getState().evictWorkspace(wsId);
+  useGraphStore.getState().requestReload();
+}, { dangerous: true });
