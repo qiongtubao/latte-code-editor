@@ -36,6 +36,9 @@ grep-regex = "0.1"
 grep-matcher = "0.1"
 grep-searcher = "0.1"
 aho-corasick = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "fmt"] }
+tracing-appender = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
