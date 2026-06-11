@@ -44,8 +44,10 @@ export function GraphPanel() {
       try {
         const response = await graphGetData();
         if (cancelled) return;
+        console.log("[GP] setGraphData, nodes:", response.data?.nodes?.length);
         setGraphData(response.data);
       } catch (e) {
+        console.error("[GP] graphGetData FAILED:", e);
         if (!cancelled) setError(String(e));
       } finally {
         if (!cancelled) setLoading(false);
