@@ -7,6 +7,9 @@
 
 let cached: boolean | null = null;
 
+/** requestAdapter 超时时间（毫秒），防止在某些 WebView 中 hang 导致 Canvas 2D 兜底失效 */
+const ADAPTER_TIMEOUT_MS = 2000;
+
 export async function isWebGPUAvailable(): Promise<boolean> {
   if (cached !== null) return cached;
 
@@ -16,10 +19,13 @@ export async function isWebGPUAvailable(): Promise<boolean> {
     return false;
   }
 
-  // 2. requestAdapter 必须成功返回
+  // 2. requestAdapter 必须成功返回（带超时保护，防止 WebView hang）
   try {
     const gpu = (navigator as Navigator & { gpu: GPU }).gpu;
-    const adapter = await gpu.requestAdapter();
+    const adapter = await Promise.race([
+      gpu.requestAdapter(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), ADAPTER_TIMEOUT_MS)),
+    ]);
     if (!adapter) {
       cached = false;
       return false;
