@@ -4,6 +4,7 @@ mod project;
 mod settings;
 mod settings_commands;
 mod workspace;
+mod debug;
 
 use std::sync::Arc;
 use tauri::Manager;
