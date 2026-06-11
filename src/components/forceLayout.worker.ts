@@ -65,7 +65,6 @@ interface WorkerMessage {
  * 仿真永远不启动，hasWorker 永远 false，canvas 永远不渲染。
  */
 let simulation: Simulation<SimNodeDatum, SimLinkDatum> | null = null;
-console.log("[worker] module loaded");
 // 发送 ready 确认，让主线程知道 worker 已加载（某些 WebView 不转发 worker console）
 self.postMessage({ type: "ready" });
 self.onmessage = (e: MessageEvent<WorkerMessage | string>) => {

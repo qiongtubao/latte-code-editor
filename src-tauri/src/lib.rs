@@ -94,6 +94,15 @@ async fn init_workspaces(app: tauri::AppHandle) {
     if let Err(e) = registry.restore(snap).await {
         eprintln!("[setup] restore workspaces failed: {}", e);
     }
-    
-    // TODO: 启动文件监听器（需要实现 IncrementalHub 的相应方法）
+
+    // restore 之后必须设置 window→workspace 映射，否则 graph_get_data 等命令
+    // 在 resolve_graph_dir 中调用 active_for_window() 会返回 None，导致图谱数据
+    // 永远加载不到。App.tsx 的 hydrate+requestReload 依赖此映射。
+    let ids = registry.ids().await;
+    if !ids.is_empty() {
+        let first = &ids[0];
+        if let Err(e) = registry.set_active("main", first).await {
+            eprintln!("[setup] set_active failed: {}", e);
+        }
+    }
 }
