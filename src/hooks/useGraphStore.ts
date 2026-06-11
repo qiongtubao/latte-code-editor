@@ -82,6 +82,16 @@ function project(state: GraphStore): Partial<GraphStore> {
   return { ...ws };
 }
 
+/** 把某个 workspace 的状态写回 store，同时重算派生字段。 */
+function mutateByWs(
+  state: GraphStore,
+  wsId: string,
+  newWs: WorkspaceGraph,
+): Partial<GraphStore> {
+  const byWorkspace = { ...state.byWorkspace, [wsId]: newWs };
+  return { byWorkspace, ...project({ ...state, byWorkspace }) };
+}
+
 export const useGraphStore = create<GraphStore>((set, get) => {
   // 订阅 workspace 切换
   useWorkspaceStore.subscribe(() => {
@@ -99,24 +109,25 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     hoveredNodeId: null,
     highlightedNodeIds: new Set(),
     loadVersion: 0,
-
+    // 所有 setter 都要把 byWorkspace 一并写回
+    // project() 会读到旧的 byWorkspace，把 projected 字段全部清空（之前是个隐性 bug：
+    // 只要 workspace 那边有一次重新 setState，graphData/simNodes 立刻被擦成默认值，
+    // 图谱看上去就"消失了")。mutate() 复用 useEditorStore 的写法，写 byWorkspace + 派生字段。
     setGraphData: (data) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
         const newWs: WorkspaceGraph = { ...ws, graphData: data, error: null };
-        return { ...project({ ...s, byWorkspace: { ...s.byWorkspace, [wsId]: newWs } }) };
+        return mutateByWs(s, wsId, newWs);
       });
     },
-
     setLoading: (loading) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
-        const newWs: WorkspaceGraph = { ...ws, loading };
-        return { ...project({ ...s, byWorkspace: { ...s.byWorkspace, [wsId]: newWs } }) };
+        return mutateByWs(s, wsId, { ...ws, loading });
       });
     },
 
@@ -125,8 +136,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
-        const newWs: WorkspaceGraph = { ...ws, error };
-        return { ...project({ ...s, byWorkspace: { ...s.byWorkspace, [wsId]: newWs } }) };
+        return mutateByWs(s, wsId, { ...ws, error });
       });
     },
 
@@ -135,12 +145,11 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
-        const newWs: WorkspaceGraph = {
+        return mutateByWs(s, wsId, {
           ...ws,
           simNodes: result.nodes,
           simEdges: result.edges,
-        };
-        return { ...project({ ...s, byWorkspace: { ...s.byWorkspace, [wsId]: newWs } }) };
+        });
       });
     },
 
@@ -149,8 +158,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
-        const newWs: WorkspaceGraph = { ...ws, selectedNodeId: id };
-        return { ...project({ ...s, byWorkspace: { ...s.byWorkspace, [wsId]: newWs } }) };
+        return mutateByWs(s, wsId, { ...ws, selectedNodeId: id });
       });
     },
 
@@ -159,8 +167,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
-        const newWs: WorkspaceGraph = { ...ws, hoveredNodeId: id };
-        return { ...project({ ...s, byWorkspace: { ...s.byWorkspace, [wsId]: newWs } }) };
+        return mutateByWs(s, wsId, { ...ws, hoveredNodeId: id });
       });
     },
 
@@ -169,8 +176,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
-        const newWs: WorkspaceGraph = { ...ws, highlightedNodeIds: ids };
-        return { ...project({ ...s, byWorkspace: { ...s.byWorkspace, [wsId]: newWs } }) };
+        return mutateByWs(s, wsId, { ...ws, highlightedNodeIds: ids });
       });
     },
 
@@ -179,22 +185,21 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
-        const newWs: WorkspaceGraph = {
+        return mutateByWs(s, wsId, {
           ...ws,
           loadVersion: ws.loadVersion + 1,
           graphData: null,
           simNodes: [],
           simEdges: [],
           error: null,
-        };
-        return { ...project({ ...s, byWorkspace: { ...s.byWorkspace, [wsId]: newWs } }) };
+        });
       });
     },
 
     evictWorkspace: (workspaceId) => {
       set((s) => {
         const { [workspaceId]: _drop, ...rest } = s.byWorkspace;
-        return { ...project({ ...s, byWorkspace: rest }) };
+        return { byWorkspace: rest, ...project({ ...s, byWorkspace: rest }) };
       });
     },
 

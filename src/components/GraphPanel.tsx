@@ -23,11 +23,9 @@ export function GraphPanel() {
   const { openFileOrSwitch } = useEditorStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const workerRef = useRef<Worker | null>(null);
-  const simStarted = useRef(false);
-  // 诊断：graphData 是否真的从 store 流入组件
-  useEffect(() => {
-    console.log("[GP] graphData in component:", !!graphData, "nodes:", graphData?.nodes?.length);
-  }, [graphData]);
+  // 递增锁：每次 layout effect 跑都 ++，旧 worker 来的 tick 比对版本号后丢弃，
+  // 避免 communityMap 抖动时被前一个 worker 的过期 setSimResult 覆盖。
+  const layoutVersionRef = useRef(0);
   const [displayMode, setDisplayMode] = useState<GraphDisplayMode>("main");
   const [displayLabel, setDisplayLabel] = useState("");
   const [rebuilding, setRebuilding] = useState(false);
@@ -40,15 +38,14 @@ export function GraphPanel() {
   const [focusMeta, setFocusMeta] = useState<{ total: number; callers: number; callees: number; truncated: boolean } | null>(null);
 
   // Load graph data
+  // 载入当前 active workspace 的图谱数据。loadVersion 变化时（包括切 workspace、显式 reload）重跑。
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      simStarted.current = false;
       try {
         const response = await graphGetData();
         if (cancelled) return;
-        console.log("[GP] setGraphData, nodes:", response.data?.nodes?.length);
         setGraphData(response.data);
       } catch (e) {
         console.error("[GP] graphGetData FAILED:", e);
@@ -109,11 +106,19 @@ export function GraphPanel() {
     return { nodes: graphData.nodes.length, edges: graphData.edges.length, communities: c.length };
   }, [graphData]);
 
-  // Layout
+  // 布局 effect。
+  //
+  // 之前两个坑：
+  // 1. `simStarted.current` 从来没被置为 true，是死代码——导致 cleanup 重置后下一次仍然照跑。
+  // 2. `communityMap` 是新 useMemo 出来的 Map 引用，每次 graphData 变更都不同对象，触发了
+  //    layout effect 在 worker 还没收敛时就 terminate 掉重建，graph 永远画不出来。
+  //
+  // 修法：用一个递增的 layoutVersion 锁住当前这一轮 worker，旧 worker 来的 tick 直接丢弃。
+  // communityMap 仍然进 deps，但仅在 user 切换 displayMode / focusedNodeId / graphData
+  // 这些"真正要重算"的情况下重启 worker。
   useEffect(() => {
-    console.log("[GP] layout enter: filteredData=", !!filteredData, "nodes=", filteredData?.nodes?.length, "simStarted=", simStarted.current);
-    if (!filteredData || simStarted.current) return;
-    console.log("[GP] layout RUNNING: sNodes=", filteredData.nodes.length, "displayMode=", displayMode);
+    if (!filteredData) return;
+    const myVersion = ++layoutVersionRef.current;
     const sNodes = filteredData.nodes.map((n) => ({
       id: n.id, kind: n.kind, name: n.name, file_path: n.file_path, start_line: n.start_line ?? 0,
       group: nodeKindToGroup(n.kind), community: communityMap.get(n.id) ?? 0,
@@ -140,23 +145,35 @@ export function GraphPanel() {
       }
     }
 
-    const circle = (): SimResult => {
+    const makeCircle = (): SimResult => {
       const cx = (containerRef.current?.clientWidth ?? 800) / 2;
       const cy = (containerRef.current?.clientHeight ?? 600) / 2;
       const r = Math.min(cx, cy) * 0.3;
       return { nodes: sNodes.map((n, i) => ({ id: n.id, x: cx + Math.cos((i / sNodes.length) * Math.PI * 2) * r, y: cy + Math.sin((i / sNodes.length) * Math.PI * 2) * r, vx: 0, vy: 0, group: n.group })), edges: sEdges };
     };
-    if (sNodes.length <= 3) { console.log("[GP] <=3 nodes: using circle"); setSimResult(circle()); return; }
+    if (sNodes.length <= 3) { setSimResult(makeCircle()); return; }
 
     const w = new Worker(new URL("./forceLayout.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = w;
-    const t = setTimeout(() => { console.log("[GP] 3s timeout fallback"); if (workerRef.current === w) setSimResult(circle()); }, 3000);
+    const t = setTimeout(() => {
+      // 3s 还没收到任何 tick：worker 卡住了，直接用圆形兜底
+      if (layoutVersionRef.current === myVersion && workerRef.current === w) {
+        setSimResult(makeCircle());
+      }
+    }, 3000);
     w.onmessage = (e: MessageEvent<SimResult & { type?: string }>) => {
-      if (e.data?.type === "ready") { console.log("[GP] worker ready"); return; }
-      clearTimeout(t); setSimResult(e.data);
+      if (e.data?.type === "ready") return;
+      // 旧 worker 迟到的 tick：忽略，避免把已经重置的 sim 写回去
+      if (layoutVersionRef.current !== myVersion) return;
+      clearTimeout(t);
+      setSimResult(e.data);
     };
     w.postMessage({ nodes: sNodes, edges: sEdges, width: containerRef.current?.clientWidth || 800, height: containerRef.current?.clientHeight || 600 });
-    return () => { clearTimeout(t); w.terminate(); workerRef.current = null; simStarted.current = false; };
+    return () => {
+      clearTimeout(t);
+      w.terminate();
+      if (workerRef.current === w) workerRef.current = null;
+    };
   }, [filteredData, setSimResult, communityMap, displayMode, focusedNodeId]);
 
   // Resize
@@ -183,14 +200,26 @@ export function GraphPanel() {
     try { await buildCodeGraph(); requestReload(); } catch (e) { console.error("Rebuild:", e); } finally { setRebuilding(false); }
   }, [requestReload]);
 
+  // 切换 Main/Full：杀掉当前 worker、清 sim，让 layout effect 用新 displayMode 重建。
+  // 递增 layoutVersion 让旧 worker 的迟到的 tick 全部失效。
   const switchMode = useCallback((m: GraphDisplayMode) => {
-    workerRef.current?.terminate(); workerRef.current = null; simStarted.current = false;
-    setSimResult({ nodes: [], edges: [] }); setDisplayMode(m); setFocusedNodeId(null); setFocusMeta(null); setDisplayLabel("");
+    layoutVersionRef.current++;
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    setSimResult({ nodes: [], edges: [] });
+    setDisplayMode(m);
+    setFocusedNodeId(null);
+    setFocusMeta(null);
+    setDisplayLabel("");
   }, [setSimResult]);
 
+  // 重新跑布局：清 sim + 自增版本号，让 layout effect 重启 worker。
   const handleZoomFit = useCallback(() => {
-    workerRef.current?.terminate(); workerRef.current = null; simStarted.current = false;
-    setSimResult({ nodes: [], edges: [] }); setDisplayLabel("");
+    layoutVersionRef.current++;
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    setSimResult({ nodes: [], edges: [] });
+    setDisplayLabel("");
   }, [setSimResult]);
 
   const handleNodeContextMenu = useCallback((nodeId: string, x: number, y: number) => {
@@ -199,15 +228,31 @@ export function GraphPanel() {
     setSelectedNode(nodeId);
   }, [setSelectedNode]);
 
+  // 搜索结果点击：统一打开文件 + 跳到节点行 + 切到 focus 模式把该节点的关联图画出来。
+  //
+  // 之前两个坑：
+  // - 只对 kind==="file" 调 openFile，symbol 不打开（已修）
+  // - 清掉 simResult 但 layout effect 不重启，画布变白（已修）
+  //
+  // 现在要解决的：点完搜索结果后图谱必须切到该节点的关联视图（callers / callees），
+  // 不是停在主视图。filteredData 在 displayMode==="focus" + focusedNodeId 时
+  // 走 extractFocusSubgraph 把 [callers, center, callees] 排好，layout effect 的
+  // focus 分支再画图。
   const handleSearchSelect = useCallback(async (node: GraphNode) => {
-    setSearchResults([]); setSearchQuery(node.name);
-    if (node.kind === "file") {
-      try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch (e) { console.error("[GP] searchSelect openFile failed:", e, "path:", node.file_path); }
-      return;
+    setSearchResults([]);
+    setSearchQuery(node.name);
+    // 先切 focus：filteredData 会立即重算成 center + direct callers + direct callees
+    setDisplayMode("focus");
+    setFocusedNodeId(node.id);
+    setSelectedNode(node.id);
+    // 再打开文件（异步，不阻塞图谱切换）
+    try {
+      const r = await openFile(node.file_path);
+      openFileOrSwitch(r, node.start_line ?? null);
+    } catch (e) {
+      console.error("[GP] searchSelect openFile failed:", e, "path:", node.file_path);
     }
-    workerRef.current?.terminate(); workerRef.current = null; simStarted.current = false;
-    setSimResult({ nodes: [], edges: [] });
-  }, [graphData, setSelectedNode, setSimResult, setHighlightedNodes, openFileOrSwitch]);
+  }, [setDisplayMode, setFocusedNodeId, setSelectedNode, openFileOrSwitch]);
   const handleSearch = useCallback(async () => {
     const q = searchQuery.trim();
     if (!q) return;
