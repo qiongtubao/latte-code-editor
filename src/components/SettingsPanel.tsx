@@ -1,4 +1,4 @@
-import { useSettingsStore, type EditorTheme } from "../hooks/useSettingsStore";
+import { useSettingsStore, type EditorTheme, type GraphRendererKind } from "../hooks/useSettingsStore";
 
 const themeLabels: Record<EditorTheme, string> = {
   monokai: "Monokai",
@@ -8,23 +8,27 @@ const themeLabels: Record<EditorTheme, string> = {
   githubLight: "GitHub Light",
 };
 
+const rendererLabels: Record<GraphRendererKind, string> = {
+  auto: "Auto (WebGPU when available)",
+  webgpu: "WebGPU (high performance)",
+  canvas2d: "Canvas 2D (compatibility)",
+};
+
 interface Props {
   onClose: () => void;
 }
 
 export function SettingsPanel({ onClose }: Props) {
-  const { theme, fontSize, tabSize, lineNumbers, wordWrap, autoSave, setTheme, setFontSize, setTabSize, setLineNumbers, setWordWrap, setAutoSave } = useSettingsStore();
+  const { theme, fontSize, tabSize, lineNumbers, wordWrap, autoSave, graphRenderer, setTheme, setFontSize, setTabSize, setLineNumbers, setWordWrap, setAutoSave, setGraphRenderer } = useSettingsStore();
 
   return (
     <div className="h-full flex flex-col text-xs" style={{ background: "#252526" }}>
-      {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700 bg-[#2d2d2d]">
         <span className="text-gray-200 font-medium">Settings</span>
         <button onClick={onClose} className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer">×</button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-4">
-        {/* Editor section */}
         <Section title="Editor">
           <Field label="Theme">
             <select value={theme} onChange={(e) => setTheme(e.target.value as EditorTheme)}
@@ -63,7 +67,21 @@ export function SettingsPanel({ onClose }: Props) {
           </Field>
         </Section>
 
-        {/* Theme preview */}
+        <Section title="Graph">
+          <Field label="Renderer">
+            <select value={graphRenderer} onChange={(e) => setGraphRenderer(e.target.value as GraphRendererKind)}
+              className="px-2 py-1 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded outline-none focus:border-[#007acc]">
+              {(Object.keys(rendererLabels) as GraphRendererKind[]).map((k) => (
+                <option key={k} value={k}>{rendererLabels[k]}</option>
+              ))}
+            </select>
+          </Field>
+          <div className="text-[10px] text-gray-500 leading-relaxed">
+            WebGPU 在 Chrome/Edge 113+ 和 Safari 17+ 可用，能在大项目（5000+ 节点）保持 60fps。
+            不支持时自动降级到 Canvas 2D。
+          </div>
+        </Section>
+
         <Section title="Preview">
           <div className="p-2 rounded font-mono text-xs leading-5" style={{ background: "#1e1e1e" }}>
             <span style={{ color: "#c678dd" }}>import</span> <span style={{ color: "#e5c07b" }}>React</span> <span style={{ color: "#c678dd" }}>from</span> <span style={{ color: "#98c379" }}>"react"</span><br />

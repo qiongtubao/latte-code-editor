@@ -75,18 +75,16 @@ export class Canvas2DRenderer implements GraphRenderer {
     this.nodeDegrees.clear();
     for (const n of simNodes) nodeMap.set(n.id, n);
     for (const e of simEdges) {
-      const s = typeof e.source === "string" ? e.source : e.source;
-      const t = typeof e.target === "string" ? e.target : e.target;
+      const s = typeof e.source === "string" ? e.source : e.source.id;
+      const t = typeof e.target === "string" ? e.target : e.target.id;
       this.nodeDegrees.set(s, (this.nodeDegrees.get(s) ?? 0) + 1);
       this.nodeDegrees.set(t, (this.nodeDegrees.get(t) ?? 0) + 1);
     }
-
     // Edge helper for source/target
     const src = (e: { source: string | { id: string }; target: string | { id: string }; kind: string }): string =>
       typeof e.source === "string" ? e.source : e.source.id;
     const tgt = (e: { source: string | { id: string }; target: string | { id: string }; kind: string }): string =>
       typeof e.target === "string" ? e.target : e.target.id;
-    // === Hover dimming: when hovering, dim non-connected elements ===
     const hoveredNodes = new Set<string>();
     if (hoveredNodeId) {
       hoveredNodes.add(hoveredNodeId);

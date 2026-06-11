@@ -1,7 +1,8 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import type { SimRenderNode } from "./graphRenderer";
 import type { GraphRenderer } from "./graphRenderer";
 import { Canvas2DRenderer } from "./Canvas2DRenderer";
+import { createRenderer, rendererKindOf, type RendererKind } from "./rendererFactory";
 
 interface CanvasGraphProps {
   simNodes: SimRenderNode[];
@@ -12,7 +13,12 @@ interface CanvasGraphProps {
   onNodeClick: (nodeId: string) => void;
   onNodeHover: (nodeId: string | null) => void;
   onNodeContextMenu?: (nodeId: string, x: number, y: number) => void;
+  /** 外部传入的渲染器（测试或自定义场景）。优先级高于 rendererKind */
   renderer?: GraphRenderer;
+  /** 渲染器选择（auto = 探测后选最优；webgpu = 强制 WebGPU；canvas2d = 强制 Canvas 2D） */
+  rendererKind?: RendererKind;
+  /** 渲染器已就绪的回调（用于状态栏显示） */
+  onRendererReady?: (kind: "webgpu" | "canvas2d") => void;
 }
 
 export function CanvasGraph({
@@ -25,6 +31,8 @@ export function CanvasGraph({
   onNodeHover,
   onNodeContextMenu,
   renderer: externalRenderer,
+  rendererKind = "auto",
+  onRendererReady,
 }: CanvasGraphProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animFrameRef = useRef<number>(0);
@@ -34,6 +42,7 @@ export function CanvasGraph({
   const lastMouse = useRef({ x: 0, y: 0 });
   const rendererRef = useRef<GraphRenderer | null>(null);
   const nodeMapRef = useRef<Map<string, SimRenderNode>>(new Map());
+  const [activeKind, setActiveKind] = useState<"webgpu" | "canvas2d" | null>(null);
 
   // Build node lookup from simNodes (used by hitTest via getNodeMap)
   useEffect(() => {
@@ -44,24 +53,44 @@ export function CanvasGraph({
     nodeMapRef.current = map;
   }, [simNodes]);
 
-  // Initialize renderer
+  // Initialize renderer (支持 async——WebGPU 探测和设备请求都是 async)
   useEffect(() => {
     if (!canvasRef.current) return;
+    let cancelled = false;
 
-    const renderer = externalRenderer ?? new Canvas2DRenderer();
-    rendererRef.current = renderer;
-
-    renderer.init({
+    const initOptions = {
       canvas: canvasRef.current,
       getNodeMap: () => nodeMapRef.current,
-    });
+    };
+
+    if (externalRenderer) {
+      // 外部传入：假设已 init 完毕（同步 init）
+      rendererRef.current = externalRenderer;
+      setActiveKind(rendererKindOf(externalRenderer));
+      onRendererReady?.(rendererKindOf(externalRenderer));
+    } else {
+      // 自动 / 显式选择
+      createRenderer(rendererKind, initOptions).then((r) => {
+        if (cancelled) {
+          r.destroy();
+          return;
+        }
+        rendererRef.current = r;
+        const k = rendererKindOf(r);
+        setActiveKind(k);
+        onRendererReady?.(k);
+      }).catch((e) => {
+        console.error("[CanvasGraph] renderer init failed:", e);
+      });
+    }
 
     return () => {
-      renderer.destroy();
+      cancelled = true;
+      const r = rendererRef.current;
+      if (r && r !== externalRenderer) r.destroy();
       rendererRef.current = null;
     };
-  }, [externalRenderer]);
-
+  }, [externalRenderer, rendererKind, onRendererReady]);
   // Resize handler
   useEffect(() => {
     const canvas = canvasRef.current;

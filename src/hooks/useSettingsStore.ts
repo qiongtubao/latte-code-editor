@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export type EditorTheme = "monokai" | "dracula" | "oneDark" | "solarizedLight" | "githubLight";
+export type GraphRendererKind = "auto" | "webgpu" | "canvas2d";
 
 export interface SettingsState {
   // Editor
@@ -12,6 +13,8 @@ export interface SettingsState {
   wordWrap: boolean;
   autoSave: boolean;
   autoSaveDelay: number; // ms
+  // Graph
+  graphRenderer: GraphRendererKind;
   // Actions
   setTheme: (t: EditorTheme) => void;
   setFontSize: (s: number) => void;
@@ -19,6 +22,7 @@ export interface SettingsState {
   setLineNumbers: (v: boolean) => void;
   setWordWrap: (v: boolean) => void;
   setAutoSave: (v: boolean) => void;
+  setGraphRenderer: (k: GraphRendererKind) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -31,12 +35,14 @@ export const useSettingsStore = create<SettingsState>()(
       wordWrap: false,
       autoSave: false,
       autoSaveDelay: 2000,
+      graphRenderer: "auto",
       setTheme: (t) => set({ theme: t }),
       setFontSize: (s) => set({ fontSize: s }),
       setTabSize: (s) => set({ tabSize: s }),
       setLineNumbers: (v) => set({ lineNumbers: v }),
       setWordWrap: (v) => set({ wordWrap: v }),
       setAutoSave: (v) => set({ autoSave: v }),
+      setGraphRenderer: (k) => set({ graphRenderer: k }),
     }),
     { name: "latte-settings" },
   ),

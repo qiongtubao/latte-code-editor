@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useGraphStore } from "../hooks/useGraphStore";
 import { useEditorStore } from "../hooks/useEditorStore";
+import { useSettingsStore } from "../hooks/useSettingsStore";
 import { CanvasGraph } from "./CanvasGraph";
 import { graphGetData, graphSearch } from "../api/graphCommands";
 import { openFile, buildCodeGraph, searchInFiles, type SearchMatch } from "../api/commands";

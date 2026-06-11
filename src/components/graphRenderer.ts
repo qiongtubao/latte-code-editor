@@ -17,8 +17,8 @@ export interface SimRenderNode {
 }
 
 export interface SimRenderEdge {
-  source: string;
-  target: string;
+  source: string | { id: string };
+  target: string | { id: string };
   kind: string;
 }
 
