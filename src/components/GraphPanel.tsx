@@ -38,14 +38,18 @@ export function GraphPanel() {
   // Load graph data
   useEffect(() => {
     let cancelled = false;
+    console.log("[GP] data loading effect start, loadVersion=", loadVersion);
     async function load() {
       setLoading(true);
       simStarted.current = false;
       try {
         const response = await graphGetData();
-        if (cancelled) return;
+        console.log("[GP] graphGetData returned, nodes=", response.data?.nodes?.length);
+        if (cancelled) { console.log("[GP] data loading cancelled, dropping"); return; }
         setGraphData(response.data);
+        console.log("[GP] setGraphData done, nodes now:", response.data.nodes.length);
       } catch (e) {
+        console.error("[GP] graphGetData FAILED:", e);
         if (!cancelled) setError(String(e));
       } finally {
         if (!cancelled) setLoading(false);
