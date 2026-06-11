@@ -22,6 +22,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(Arc::new(WorkspaceRegistry::new()))
         .setup(|app| {
+            // Initialise debug-mode logging (no-op unless LATTE_DEBUG=1).
+            debug::logger::init(app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()));
             // Initialise the settings store + incremental graph hub.
             let data_dir = app.path().app_data_dir().ok();
             if let Some(dir) = &data_dir {
