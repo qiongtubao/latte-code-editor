@@ -17,6 +17,9 @@ import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
 import { LspManagerPanel } from "./components/LspManagerPanel";
+import { DebugBar } from "./components/DebugBar";
+import { useDebugStore } from "./utils/debug/store";
+import { invoke } from "./api/ipcDebug";
 type ActivePanel = "editor" | "graph" | "split";
 function App() {
   const [activePanel, setActivePanel] = useState<ActivePanel>("split");
@@ -26,6 +29,9 @@ function App() {
   const [editorFlex, setEditorFlex] = useState(0.5);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lspManagerOpen, setLspManagerOpen] = useState(false);
+  const [injectOpen, setInjectOpen] = useState(false);
+  const hydrateDebug = useDebugStore((s) => s.hydrate);
+  const setDebugOn = useDebugStore((s) => s.setOn);
   const containerRef = useRef<HTMLDivElement>(null);
   const { openFileOrSwitch } = useEditorStore();
   const { filePath } = useEditorStore();
@@ -40,8 +46,9 @@ function App() {
     null,
   );
 
-  // Mount the graph auto-update event listener.
-  useGraphEvents();
+  useEffect(() => {
+    hydrateDebug();
+  }, [hydrateDebug]);
 
   useEffect(() => {
     hydrate();
@@ -83,6 +90,9 @@ function App() {
         setSidebarOpen(true);
         // focus search — 通过触发自定义事件让 Sidebar 切换面板
         window.dispatchEvent(new CustomEvent("focus-search"));
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "D" || e.key === "d")) {
+        e.preventDefault();
+        setDebugOn(!useDebugStore.getState().isOn);
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "L" || e.key === "l")) {
         e.preventDefault();
         setLspManagerOpen((v) => !v);
@@ -224,8 +234,37 @@ function App() {
       {lspManagerOpen && (
         <LspManagerPanel onClose={() => setLspManagerOpen(false)} />
       )}
-
-      <StatusBar onToggleSettings={() => setSettingsOpen((v) => !v)} />
+      <DebugBar
+        onOpenInject={() => setInjectOpen(true)}
+        onSnapshot={async () => {
+          try {
+            const snap = await invoke<unknown>("debug_dump_backend_state");
+            console.info("latte:debug-snapshot", JSON.stringify(snap, null, 2));
+          } catch (e) {
+            console.error("latte:debug-snapshot-error", String(e));
+          }
+        }}
+      />
+      {injectOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={() => setInjectOpen(false)}
+        >
+          <div
+            className="bg-white text-black rounded p-4 w-[520px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-bold mb-2">Inject (stub — wired in Phase 4)</h3>
+            <p className="text-sm">Event-inject modal will land in Phase 4.</p>
+            <button
+              onClick={() => setInjectOpen(false)}
+              className="mt-2 px-3 py-1 bg-gray-200 rounded"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
