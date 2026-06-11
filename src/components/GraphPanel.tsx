@@ -105,6 +105,7 @@ export function GraphPanel() {
 
   // Layout
   useEffect(() => {
+    console.log("[GP] layout effect: filteredData=", !!filteredData, "simStarted=", simStarted.current);
     if (!filteredData || simStarted.current) return;
     simStarted.current = true;
 
@@ -113,6 +114,7 @@ export function GraphPanel() {
       group: nodeKindToGroup(n.kind), community: communityMap.get(n.id) ?? 0,
     }));
     const sEdges = filteredData.edges.map((e) => ({ source: e.source, target: e.target, kind: e.kind }));
+    console.log("[GP] creating worker for", sNodes.length, "nodes,", sEdges.length, "edges");
 
     if (displayMode === "focus" && focusedNodeId) {
       const cx = (containerRef.current?.clientWidth ?? 800) / 2;
@@ -130,6 +132,7 @@ export function GraphPanel() {
           ],
           edges: sEdges,
         });
+        console.log("[GP] focus mode: setSimResult directly");
         return;
       }
     }
@@ -140,14 +143,19 @@ export function GraphPanel() {
       const r = Math.min(cx, cy) * 0.3;
       return { nodes: sNodes.map((n, i) => ({ id: n.id, x: cx + Math.cos((i / sNodes.length) * Math.PI * 2) * r, y: cy + Math.sin((i / sNodes.length) * Math.PI * 2) * r, vx: 0, vy: 0, group: n.group })), edges: sEdges };
     };
-    if (sNodes.length <= 3) { setSimResult(circle()); return; }
+    if (sNodes.length <= 3) { console.log("[GP] <=3 nodes: using circle"); setSimResult(circle()); return; }
 
+    console.log("[GP] new Worker...");
     const w = new Worker(new URL("./forceLayout.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = w;
-    const t = setTimeout(() => { if (workerRef.current === w) setSimResult(circle()); }, 3000);
-    w.onmessage = (e: MessageEvent<SimResult>) => { clearTimeout(t); setSimResult(e.data); };
-    w.onerror = () => { clearTimeout(t); setSimResult(circle()); };
+    const t = setTimeout(() => { console.log("[GP] 3s timeout fallback"); if (workerRef.current === w) setSimResult(circle()); }, 3000);
+    w.onmessage = (e: MessageEvent<SimResult & { type?: string }>) => {
+      if (e.data?.type === "ready") { console.log("[GP] worker ready"); return; }
+      console.log("[GP] worker msg received, nodes:", e.data.nodes?.length);
+      clearTimeout(t); setSimResult(e.data);
+    };
     w.postMessage({ nodes: sNodes, edges: sEdges, width: containerRef.current?.clientWidth || 800, height: containerRef.current?.clientHeight || 600 });
+    console.log("[GP] postMessage sent to worker");
     return () => { clearTimeout(t); w.terminate(); workerRef.current = null; simStarted.current = false; };
   }, [filteredData, setSimResult, communityMap, displayMode, focusedNodeId]);
 
