@@ -344,9 +344,10 @@ export function GraphPanel() {
             {searchResults.slice(0, 20).map((r) => (
               <div key={r.id} onClick={() => handleSearchSelect(r)} className="flex items-center gap-2 px-2 py-0.5 cursor-pointer hover:bg-[#094771]">
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ background: NODE_COLORS[nodeKindToGroup(r.kind)] }} />
-                <span className="text-gray-200 truncate">{r.kind === "file" ? "" : r.name}</span>
-                <span className="text-gray-500 shrink-0">{r.kind}</span>
-                <span className="text-gray-600 ml-auto shrink-0 truncate">{r.file_path}:{r.start_line}</span>
+                <span style={{ color: "#86efac" }} className="truncate">{r.kind === "file" ? "" : r.name}</span>
+                <span className="text-purple-300 shrink-0">{r.kind}</span>
+                <span style={{ color: "#86efac" }} className="ml-auto shrink-0 truncate">{r.file_path}</span>
+                <span style={{ color: "#93c5fd" }} className="shrink-0 font-medium">{r.start_line}</span>
               </div>
             ))}
           </div>
@@ -357,9 +358,9 @@ export function GraphPanel() {
           <div className="mt-1 max-h-24 overflow-y-auto bg-[#333] border border-gray-700 rounded text-xs">
             {searchTextResults.slice(0, 20).map((r, i) => (
               <div key={i} onClick={() => handleSearchTextClick(r)} className="flex items-center gap-2 px-2 py-0.5 cursor-pointer hover:bg-[#094771]">
-                <span className="text-gray-300 shrink-0 w-16 truncate">{r.file_path.split("/").pop()}</span>
-                <span className="text-yellow-400 shrink-0">{r.line_number}</span>
-                <span className="text-gray-400 truncate">{r.line_content}</span>
+                <span style={{ color: "#86efac" }} className="shrink-0 w-16 truncate">{r.file_path.split("/").pop()}</span>
+                <span style={{ color: "#93c5fd" }} className="shrink-0 font-medium w-10 text-right">{r.line_number}</span>
+                <span className="text-gray-300 truncate">{r.line_content}</span>
               </div>
             ))}
           </div>

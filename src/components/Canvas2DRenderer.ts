@@ -187,18 +187,27 @@ export class Canvas2DRenderer implements GraphRenderer {
       // Label for hovered or larger nodes
       if (isHovered || r > 8) {
         const label = n.id.includes(":") ? n.id.split(":").slice(-2, -1)[0] || n.id : n.id;
-        ctx.fillStyle = isHovered ? "#fff" : "#d4d4d4";
-        ctx.font = isHovered ? "bold 11px monospace" : `${Math.min(11, r * 1.2)}px monospace`;
+        const display = label.length > 25 ? label.slice(0, 23) + "…" : label;
+        ctx.font = isHovered ? "bold 12px monospace" : `${Math.min(12, r * 1.3)}px monospace`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         if (isHovered) {
-          const textW = ctx.measureText(label.length > 25 ? label.slice(0, 23) + "…" : label).width;
+          // Hovered: subtle dark backdrop + bright text for emphasis
+          const textW = ctx.measureText(display).width;
           ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
-          ctx.roundRect(n.x - textW / 2 - 3, n.y + r + 2, textW + 6, 14, 3);
+          ctx.beginPath();
+          ctx.roundRect(n.x - textW / 2 - 4, n.y + r + 1, textW + 8, 16, 3);
           ctx.fill();
-          ctx.fillStyle = "#fff";
+          ctx.fillStyle = "#ffffff";
+        } else {
+          // Default: bright text with dark outline so it pops on any background
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+          ctx.lineWidth = 3;
+          ctx.lineJoin = "round";
+          ctx.strokeText(display, n.x, n.y + r + 2);
         }
-        ctx.fillText(label.length > 25 ? label.slice(0, 23) + "…" : label, n.x, n.y + r + 2);
+        ctx.fillText(display, n.x, n.y + r + 2);
       }
       }
 

@@ -808,15 +808,28 @@ export class WebGPURenderer implements GraphRenderer {
       const truncated = label.length > 25 ? label.slice(0, 23) + "…" : label;
 
       if (isHovered) {
-        // 背景框
-        ctx.font = "bold 11px monospace";
+        // Hovered: subtle dark backdrop + bright text for emphasis
+        ctx.font = "bold 12px monospace";
         const textW = ctx.measureText(truncated).width;
         ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
-        ctx.fillRect(screenX - textW / 2 - 3, screenY + radius + 2, textW + 6, 14);
-        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        const bx = screenX - textW / 2 - 4;
+        const by = screenY + radius + 1;
+        if (typeof (ctx as any).roundRect === "function") {
+          (ctx as any).roundRect(bx, by, textW + 8, 16, 3);
+        } else {
+          ctx.rect(bx, by, textW + 8, 16);
+        }
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
       } else {
-        ctx.font = `${Math.min(11, radius * 1.2)}px monospace`;
-        ctx.fillStyle = "#d4d4d4";
+        // Default: bright text with dark outline so it pops on any background
+        ctx.font = `${Math.min(12, radius * 1.3)}px monospace`;
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+        ctx.lineWidth = 3;
+        ctx.lineJoin = "round";
+        ctx.strokeText(truncated, screenX, screenY + radius + 2);
       }
       ctx.textAlign = "center";
       ctx.textBaseline = "top";

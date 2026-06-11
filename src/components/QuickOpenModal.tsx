@@ -9,7 +9,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuickOpenStore } from "../hooks/useQuickOpenStore";
 import { findFiles } from "../api/workspace";
-import { openWithLineCol } from "../utils/quickOpen";
+import { openWithLineCol, parseLineCol } from "../utils/quickOpen";
 
 export function QuickOpenModal() {
   const {
@@ -33,7 +33,16 @@ export function QuickOpenModal() {
   // query 变化 → debounce invoke findFiles
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!query.trim()) {
+    const raw = query.trim();
+    if (!raw) {
+      setResults([]);
+      setLoading(false);
+      setFetchError(null);
+      return;
+    }
+    // 路径:行号:列号 语法：先剥掉 :line:col 再搜文件名
+    const { cleanPath } = parseLineCol(raw);
+    if (!cleanPath) {
       setResults([]);
       setLoading(false);
       setFetchError(null);
@@ -43,7 +52,7 @@ export function QuickOpenModal() {
     setFetchError(null);
     debounceRef.current = setTimeout(async () => {
       try {
-        const results = await findFiles(query.trim(), 50);
+        const results = await findFiles(cleanPath, 50);
         setResults(results);
       } catch (e) {
         setFetchError(String(e));
@@ -80,10 +89,16 @@ export function QuickOpenModal() {
         selectPrev();
       } else if (e.key === "Enter") {
         e.preventDefault();
+        const parsed = parseLineCol(query.trim());
+        const suffix =
+          parsed.line != null
+            ? parsed.col != null
+              ? `:${parsed.line}:${parsed.col}`
+              : `:${parsed.line}`
+            : "";
         if (results.length > 0) {
-          handleSelect(results[selectedIndex].path);
+          handleSelect(results[selectedIndex].path + suffix);
         } else if (query.trim()) {
-          // 无结果时也可以直接回车用 query 作为路径尝试打开
           handleSelect(query.trim());
         }
       }
@@ -93,11 +108,14 @@ export function QuickOpenModal() {
 
   if (!open) return null;
 
-  // 取 basename 加路径尾缀的显示（缩短长路径）
+
+  // 取 basename + 路径尾缀的显示（缩短长路径，保留尾段）
   const displayPath = (fullPath: string) => {
-    const parts = fullPath.split("/");
-    if (parts.length <= 3) return fullPath;
-    return parts.slice(0, 2).join("/") + "/…/" + parts.slice(-1);
+    const parts = fullPath.split("/").filter((p) => p.length > 0);
+    const base = parts.pop() ?? "";
+    if (parts.length === 0) return base;
+    if (parts.length <= 2) return parts.join("/") + "/" + base;
+    return parts[0] + "/…/" + parts.slice(-2).join("/") + "/" + base;
   };
 
   return (
@@ -140,34 +158,41 @@ export function QuickOpenModal() {
             <div className="px-4 py-3 text-yellow-400 text-xs">{fetchError}</div>
           )}
           {!loading && !fetchError && query.trim() && results.length === 0 && (
-            <div className="px-4 py-3 text-gray-500 text-xs">
+            <div className="px-4 py-3 text-gray-300 text-xs">
               No files match "{query.trim()}"
             </div>
           )}
-          {results.map((r, i) => {
-            const isSelected = i === selectedIndex;
-            const { cleanPath, line, col } = parseInline(r.path);
-            return (
-              <div
-                key={r.path + i}
-                onClick={() => handleSelect(r.path)}
-                className={`flex items-center gap-2 px-4 py-2 text-xs cursor-pointer transition-colors ${
-                  isSelected
-                    ? "bg-[#094771] text-white"
-                    : "text-gray-300 hover:bg-[#2a2d2e]"
-                }`}
-              >
-                <span className="w-4 text-center text-gray-500">📄</span>
-                <span className="truncate flex-1">{displayPath(cleanPath)}</span>
-                {line != null && (
-                  <span className="text-gray-400 shrink-0">{line}</span>
-                )}
-                <span className="text-gray-500 shrink-0 text-2xs">{r.score}</span>
-              </div>
-            );
-          })}
-          <div className="px-4 py-2 text-2xs text-gray-600 border-t border-gray-700 flex items-center gap-3">
-            <span>↑↓ navigate</span>
+          {(() => {
+            const parsed = parseLineCol(query.trim());
+            const suffix =
+              parsed.line != null
+                ? parsed.col != null
+                  ? `:${parsed.line}:${parsed.col}`
+                  : `:${parsed.line}`
+                : "";
+            return results.map((r, i) => {
+              const isSelected = i === selectedIndex;
+              return (
+                <div
+                  key={r.path + i}
+                  onClick={() => handleSelect(r.path + suffix)}
+                  className={`flex items-center gap-2 px-4 py-2 text-xs cursor-pointer transition-colors ${
+                    isSelected
+                      ? "bg-[#094771] text-white"
+                      : "text-gray-300 hover:bg-[#2a2d2e]"
+                  }`}
+                >
+                  <span className="w-4 text-center text-gray-500">📄</span>
+                  <span className="truncate flex-1">{displayPath(r.path)}</span>
+                  {parsed.line != null && (
+                    <span className="text-blue-300 shrink-0 font-medium">{parsed.line}</span>
+                  )}
+                  <span className="text-gray-400 shrink-0 text-2xs">{r.score}</span>
+                </div>
+              );
+            });
+          })()}
+          <div className="px-4 py-2 text-2xs text-gray-400 border-t border-gray-700 flex items-center gap-3">
             <span>↵ open</span>
             <span>Esc close</span>
             <span className="ml-auto">path:line:col supported</span>
