@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDebugStore } from "../utils/debug/store";
+import { DebugModuleActions } from "./DebugModuleActions";
 
 interface Props {
   onOpenInject: () => void;
@@ -55,6 +56,7 @@ export function DebugBar({ onOpenInject, onSnapshot }: Props) {
             📨 Inject
           </button>
         </div>
+        <DebugModuleActions />
       </div>
     </div>
   );
