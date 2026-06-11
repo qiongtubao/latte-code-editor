@@ -5,8 +5,8 @@ import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { basicSetup } from "codemirror";
 import { languages } from "./languageExtensions";
 import { useSettingsStore } from "../hooks/useSettingsStore";
+import { useEditorStore } from "../hooks/useEditorStore";
 import { cmThemes, getHighlightStyle } from "../hooks/themes";
-
 interface CodeMirrorProps {
   content: string;
   filePath: string | null;
@@ -17,10 +17,10 @@ interface CodeMirrorProps {
 export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: CodeMirrorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const targetLine = useEditorStore((s) => s.targetLine);
   const contentRef = useRef(content);
   const onChangeRef = useRef(onChange);
   const onCtrlClickRef = useRef(onCtrlClick);
-
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
   useEffect(() => { onCtrlClickRef.current = onCtrlClick; }, [onCtrlClick]);
   useEffect(() => { contentRef.current = content; }, [content]);
@@ -61,6 +61,20 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
     return () => { viewRef.current?.destroy(); viewRef.current = null; };
   }, [filePath]);
 
+  // 滚动到 targetLine（仅在 targetLine 变化时触发，不跟 content/filePath 耦合）
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || targetLine == null || targetLine < 1) return;
+    const safeLine = Math.min(targetLine, view.state.doc.lines);
+    if (safeLine < 1) return;
+    const lineObj = view.state.doc.line(safeLine);
+    view.dispatch({
+      selection: { anchor: lineObj.from, head: lineObj.from },
+      effects: EditorView.scrollIntoView(lineObj.from, { y: "center" }),
+    });
+    // 用完清掉，避免下次 effect 重触发
+    useEditorStore.getState().setTargetLine(null);
+  }, [targetLine]);
   // Rebuild on settings change
   useEffect(() => {
     // Clean and rebuild when store fires
