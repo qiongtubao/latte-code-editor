@@ -8,6 +8,11 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { OpenFolderResult } from "../api/commands";
+import { createDebugLogger } from "../utils/debug/logger";
+import { registerDebugEvent } from "../utils/debug/inject";
+import { useDebugStore } from "../utils/debug/store";
+
+const log = createDebugLogger("workspace");
 
 /** 与后端 WorkspaceMeta 字段对齐 */
 export interface WorkspaceMeta {
@@ -119,19 +124,31 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   setActive: async (workspaceId: string) => {
-    if (!get().workspaces[workspaceId]) return;
+    if (!get().workspaces[workspaceId]) {
+      log.warn("ws.activate.unknown", "unknown workspace", { workspaceId });
+      return;
+    }
+    log.info("ws.activate", "setting active", { workspaceId });
     try {
       await invoke("set_active_workspace", { workspaceId });
     } catch (e) {
+      log.error("ws.activate.error", String(e), { workspaceId });
       console.error("[useWorkspaceStore] setActive failed:", e);
     }
     set({ activeWorkspaceId: workspaceId });
+    log.info("ws.activate.ok", "active", { workspaceId });
   },
-
   closeWorkspace: async (workspaceId: string) => {
+    const lockKey = `workspace:close:${workspaceId}`;
+    if (!useDebugStore.getState().tryAcquireLock(lockKey)) {
+      log.warn("ws.close.skipped", "locked", { workspaceId });
+      return;
+    }
     try {
+      log.info("ws.close", "closing", { workspaceId });
       await invoke("close_workspace", { workspaceId });
     } catch (e) {
+      log.error("ws.close.error", String(e), { workspaceId });
       console.error("[useWorkspaceStore] closeWorkspace failed:", e);
     }
     set((s) => {
@@ -142,6 +159,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         activeWorkspaceId: isActive ? null : s.activeWorkspaceId,
       };
     });
+    useDebugStore.getState().releaseLock(lockKey);
   },
 
   updateMeta: async (workspaceId, patch) => {
@@ -194,6 +212,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     return Object.entries(s.workspaces).map(([id, meta]) => ({ id, meta }));
   },
 }));
+
+// Register workspace events for debug injection.
+registerDebugEvent("workspace.activate", async (ctx) => {
+  const id = typeof ctx.workspaceId === "string" ? ctx.workspaceId : "";
+  if (id) await useWorkspaceStore.getState().setActive(id);
+});
+registerDebugEvent("workspace.delete", async (ctx) => {
+  const id = typeof ctx.workspaceId === "string" ? ctx.workspaceId : "";
+  if (id) await useWorkspaceStore.getState().closeWorkspace(id);
+}, { dangerous: true });
+registerDebugEvent("workspace.hydrate", async () => {
+  await useWorkspaceStore.getState().hydrate();
+});
 
 export function defaultUiState(): UiState {
   return { ...DEFAULT_UI_STATE };
