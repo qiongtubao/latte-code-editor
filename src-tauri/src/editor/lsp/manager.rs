@@ -28,6 +28,13 @@ pub struct LspStatus {
     supports_hibernation: bool,
 }
 
+impl LspStatus {
+    pub fn language(&self) -> &str { &self.language }
+    pub fn state(&self) -> &str { &self.state }
+    pub fn project_root(&self) -> &str { &self.project_root }
+    pub fn supports_hibernation(&self) -> bool { self.supports_hibernation }
+}
+
 /// LSP 管理器
 pub struct LspManager {
     /// LSP 客户端映射（语言 -> 客户端）

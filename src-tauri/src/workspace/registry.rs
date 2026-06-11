@@ -213,11 +213,24 @@ impl WorkspaceRegistry {
         let mut guard = self.inner.write().await;
         guard.lru_order.retain(|x| x != id);
         guard.lru_order.push(id.to_string());
-        if let Some(ws) = guard.workspaces.get_mut(id) {
-            ws.meta.last_used_at = now_secs();
-        }
     }
 
+    /// Snapshot the LSP manager states of a single workspace.
+    /// Returns `None` if the workspace id is unknown.
+    pub async fn lsp_managers_snapshot(
+        &self,
+        id: &str,
+    ) -> Option<std::collections::HashMap<String, String>> {
+        let guard = self.inner.read().await;
+        let ws = guard.workspaces.get(id)?;
+        let mgr = ws.lsp_manager.read().await;
+        let statuses = mgr.status().await;
+        let map: std::collections::HashMap<String, String> = statuses
+            .into_iter()
+            .map(|s| (s.language().to_string(), s.state().to_string()))
+            .collect();
+        Some(map)
+    }
     pub async fn update_meta<F>(&self, id: &str, f: F) -> Result<(), String>
     where
         F: FnOnce(&mut WorkspaceMeta),

@@ -76,6 +76,9 @@ pub fn run() {
             crate::settings_commands::get_graph_settings,
             crate::settings_commands::get_app_settings,
             crate::settings_commands::set_graph_settings,
+            // debug
+            crate::debug::commands::debug_dump_backend_state,
+            crate::debug::commands::debug_purge_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
