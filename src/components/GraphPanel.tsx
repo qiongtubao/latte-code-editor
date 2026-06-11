@@ -43,7 +43,7 @@ export function GraphPanel() {
       simStarted.current = false;
       try {
         const response = await graphGetData();
-        if (cancelled) { console.log("[GP] data loading cancelled, dropping"); return; }
+        if (cancelled) return;
         setGraphData(response.data);
       } catch (e) {
         if (!cancelled) setError(String(e));
