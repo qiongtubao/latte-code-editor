@@ -170,7 +170,7 @@ export function GraphPanel() {
     setSelectedNode(nodeId);
     const node = filteredData?.nodes.find((n) => n.id === nodeId);
     if (!node) return;
-    try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch { /* ignore */ }
+    try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch (e) { console.error("[GP] openFile failed:", e, "node.path:", node.file_path); }
   }, [filteredData, setSelectedNode, openFileOrSwitch]);
   const handleRebuild = useCallback(async () => {
     setRebuilding(true);
@@ -196,10 +196,9 @@ export function GraphPanel() {
   const handleSearchSelect = useCallback(async (node: GraphNode) => {
     setSearchResults([]); setSearchQuery(node.name);
     if (node.kind === "file") {
-      try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch { /* ignore */ }
+      try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch (e) { console.error("[GP] searchSelect openFile failed:", e, "path:", node.file_path); }
       return;
     }
-    setFocusedNodeId(node.id); setSelectedNode(node.id);
     workerRef.current?.terminate(); workerRef.current = null; simStarted.current = false;
     setSimResult({ nodes: [], edges: [] });
   }, [graphData, setSelectedNode, setSimResult, setHighlightedNodes, openFileOrSwitch]);
@@ -234,13 +233,13 @@ export function GraphPanel() {
         const r = await openFile(node.file_path);
         openFileOrSwitch(r, m.line_number);
       }
-    } catch { /* ignore */ }
+    } catch (e) { console.error("[GP] searchTextClick failed:", e, "path:", m.file_path); }
   }, [openFileOrSwitch]);
   const handleContextJumpToCode = useCallback(async () => {
     if (!contextMenu) return;
     const { nodeId } = contextMenu; setContextMenu(null);
     const node = filteredData?.nodes.find((n) => n.id === nodeId); if (!node) return;
-    try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch { /* ignore */ }
+    try { const r = await openFile(node.file_path); openFileOrSwitch(r, node.start_line ?? null); } catch (e) { console.error("[GP] contextJump openFile failed:", e, "path:", node.file_path); }
   }, [contextMenu, filteredData, openFileOrSwitch]);
   const handleContextExpand = useCallback(() => {
     if (!contextMenu) return; setContextMenu(null);
