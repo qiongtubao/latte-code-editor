@@ -107,9 +107,9 @@ export function GraphPanel() {
 
   // Layout
   useEffect(() => {
+    console.log("[GP] layout enter: filteredData=", !!filteredData, "nodes=", filteredData?.nodes?.length, "simStarted=", simStarted.current);
     if (!filteredData || simStarted.current) return;
-    simStarted.current = true;
-
+    console.log("[GP] layout RUNNING: sNodes=", filteredData.nodes.length, "displayMode=", displayMode);
     const sNodes = filteredData.nodes.map((n) => ({
       id: n.id, kind: n.kind, name: n.name, file_path: n.file_path, start_line: n.start_line ?? 0,
       group: nodeKindToGroup(n.kind), community: communityMap.get(n.id) ?? 0,
