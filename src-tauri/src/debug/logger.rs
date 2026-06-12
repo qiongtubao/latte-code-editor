@@ -52,6 +52,19 @@ pub fn init(app_data_dir: PathBuf) -> bool {
         .with(env_filter)
         .with(layer)
         .try_init();
+
+    // Schedule a periodic purge on a background thread. Falls back to env
+    // defaults if the corresponding env vars are absent.
+    let max_age_secs = std::env::var("LATTE_DEBUG_MAX_AGE_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7)
+        * 86_400;
+    let max_bytes_mb = std::env::var("LATTE_DEBUG_MAX_DIR_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500);
+    spawn_periodic_purge(6, max_age_secs, max_bytes_mb);
     true
 }
 
