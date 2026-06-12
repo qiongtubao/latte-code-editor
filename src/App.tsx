@@ -93,7 +93,13 @@ function App() {
         setSidebarOpen(true);
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "D" || e.key === "d")) {
         e.preventDefault();
-        setDebugOn(!useDebugStore.getState().isOn);
+        const next = !useDebugStore.getState().isOn;
+        const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
+        if (next && env?.DEV === true) {
+          // Dev convenience: expose the store on window so F12 console can
+          // call __latteDebug.getState().xxx without ESM scoping.
+          (window as unknown as { __latteDebug?: unknown }).__latteDebug = useDebugStore;
+        }
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "R" || e.key === "r")) {
         if (!useDebugStore.getState().isOn) return;
         e.preventDefault();
