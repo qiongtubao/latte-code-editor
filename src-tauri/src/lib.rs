@@ -23,8 +23,18 @@ pub fn run() {
         .manage(Arc::new(WorkspaceRegistry::new()))
         .setup(|app| {
             // Initialise debug-mode logging (no-op unless LATTE_DEBUG=1).
-            debug::logger::init(app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()));
-            // Initialise the settings store + incremental graph hub.
+            let data_dir_for_debug = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
+            debug::logger::init(data_dir_for_debug.clone());
+            // Purge old debug logs on startup (env-tunable thresholds).
+            let max_age_secs: u64 = std::env::var("LATTE_DEBUG_MAX_AGE_DAYS")
+                .ok().and_then(|v| v.parse().ok()).unwrap_or(7) * 86_400;
+            let max_bytes_mb: u64 = std::env::var("LATTE_DEBUG_MAX_DIR_MB")
+                .ok().and_then(|v| v.parse().ok()).unwrap_or(500);
+            let debug_dir = data_dir_for_debug.join("debug");
+            match debug::storage::purge_old_logs(&debug_dir, max_age_secs, max_bytes_mb, 50) {
+                Ok(removed) => tracing::info!(event = "debug.log.purged", removed, "purged old debug logs"),
+                Err(e) => tracing::warn!(event = "debug.log.purge_error", error = %e, "purge failed"),
+            }
             let data_dir = app.path().app_data_dir().ok();
             if let Some(dir) = &data_dir {
                 if let Err(e) = std::fs::create_dir_all(dir) {
