@@ -18,6 +18,7 @@ import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
 import { LspManagerPanel } from "./components/LspManagerPanel";
 import { DebugBar } from "./components/DebugBar";
+import { DebugEventInjectModal } from "./components/DebugEventInjectModal";
 import { useDebugStore } from "./utils/debug/store";
 import { invoke } from "./api/ipcDebug";
 type ActivePanel = "editor" | "graph" | "split";
@@ -256,18 +257,6 @@ function App() {
           </div>
         </div>
       </div>
-
-      <QuickOpenModal />
-      {settingsOpen && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSettingsOpen(false)}>
-          <div
-            className="w-96 max-h-[80vh] overflow-hidden rounded shadow-2xl border border-gray-700"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <SettingsPanel onClose={() => setSettingsOpen(false)} />
-          </div>
-        </div>
-      )}
       {lspManagerOpen && (
         <LspManagerPanel onClose={() => setLspManagerOpen(false)} />
       )}
@@ -283,24 +272,7 @@ function App() {
         }}
       />
       {injectOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={() => setInjectOpen(false)}
-        >
-          <div
-            className="bg-white text-black rounded p-4 w-[520px]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="font-bold mb-2">Inject (stub — wired in Phase 4)</h3>
-            <p className="text-sm">Event-inject modal will land in Phase 4.</p>
-            <button
-              onClick={() => setInjectOpen(false)}
-              className="mt-2 px-3 py-1 bg-gray-200 rounded"
-            >
-              Close
-            </button>
-          </div>
-        </div>
+        <DebugEventInjectModal onClose={() => setInjectOpen(false)} />
       )}
     </div>
   );
