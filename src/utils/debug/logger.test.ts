@@ -4,9 +4,26 @@ import { useDebugStore } from "./store";
 
 describe("createDebugLogger", () => {
   beforeEach(() => {
-    useDebugStore.setState({ isOn: true });
+    useDebugStore.setState({ isOn: true, verbose: false });
+    localStorage.removeItem("latte.debug.verbose");
   });
 
+  it("suppresses level=debug when verbose is off", () => {
+    const spy = vi.spyOn(console, "debug").mockImplementation(() => {});
+    const log = createDebugLogger("editor");
+    log.debug("file.content", "typing", { path: "/a" });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("emits level=debug when verbose is on", () => {
+    useDebugStore.setState({ verbose: true });
+    const spy = vi.spyOn(console, "debug").mockImplementation(() => {});
+    const log = createDebugLogger("editor");
+    log.debug("file.content", "typing", { path: "/a" });
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
   it("emits a JSON line via console when isOn", () => {
     const spy = vi.spyOn(console, "info").mockImplementation(() => {});
     const log = createDebugLogger("lsp");

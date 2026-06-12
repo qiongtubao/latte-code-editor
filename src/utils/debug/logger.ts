@@ -1,5 +1,15 @@
 import { useDebugStore } from "./store";
 
+const VERBOSE_KEY = "latte.debug.verbose";
+function isVerbose(): boolean {
+  if (useDebugStore.getState().verbose) return true;
+  try {
+    return localStorage.getItem(VERBOSE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 const SECRET_KEYS = new Set([
   "password",
   "apiKey",
@@ -42,6 +52,10 @@ export function createDebugLogger(
     (event: string, msg: string, ctx: Record<string, unknown> = {}) => {
       const { isOn } = useDebugStore.getState();
       if (!isOn && level !== "error") return;
+      // Suppress `debug` level unless verbose mode is on. Verbose is opt-in
+      // (via `localStorage["latte.debug.verbose"] === "1"` or the DebugBar
+      // toggle) so the default experience stays quiet.
+      if (level === "debug" && !isVerbose()) return;
       if (level !== "error" && sampleRate < 1 && Math.random() > sampleRate) return;
       const traceId =
         typeof ctx.traceId === "string" ? (ctx.traceId as string) : event;

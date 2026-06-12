@@ -2,10 +2,13 @@ import { create } from "zustand";
 
 interface DebugState {
   isOn: boolean;
+  /** When true, also emit `level=debug` events (high-volume). Default off. */
+  verbose: boolean;
   sid: string;
   replayLocks: Map<string, number>; // key -> acquiredAtMs
   skipDangerousConfirm: boolean;
   setOn: (v: boolean) => void;
+  setVerbose: (v: boolean) => void;
   hydrate: () => void;
   tryAcquireLock: (key: string) => boolean;
   releaseLock: (key: string) => void;
@@ -30,12 +33,17 @@ function readEnvOn(): boolean {
 
 export const useDebugStore = create<DebugState>((set, get) => ({
   isOn: false,
+  verbose: localStorage.getItem("latte.debug.verbose") === "1",
   sid: newSid(),
   replayLocks: new Map(),
   skipDangerousConfirm: false,
   setOn: (v) => {
     localStorage.setItem(STORAGE_KEY, v ? "1" : "0");
     set({ isOn: v });
+  },
+  setVerbose: (v) => {
+    localStorage.setItem("latte.debug.verbose", v ? "1" : "0");
+    set({ verbose: v });
   },
   hydrate: () => {
     const stored = localStorage.getItem(STORAGE_KEY);

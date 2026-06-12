@@ -8,7 +8,8 @@ interface Props {
 }
 
 export function DebugBar({ onOpenInject, onSnapshot }: Props) {
-  const { isOn, sid, replayLocks, setOn } = useDebugStore();
+  const { isOn, verbose, sid, replayLocks, setOn, setVerbose } = useDebugStore();
+
   const [locksText, setLocksText] = useState("");
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export function DebugBar({ onOpenInject, onSnapshot }: Props) {
             ✕
           </button>
         </div>
-        <div className="flex gap-1 flex-wrap">
+        <div className="flex gap-1 flex-wrap items-center">
           <button
             onClick={onSnapshot}
             className="px-2 py-0.5 bg-blue-700 rounded hover:bg-blue-600"
@@ -55,6 +56,17 @@ export function DebugBar({ onOpenInject, onSnapshot }: Props) {
           >
             📨 Inject
           </button>
+          <label
+            className="flex items-center gap-1 text-[10px] text-gray-300 select-none"
+            title="When on, also emit level=debug events (file.content, ipc.invoke) — high volume."
+          >
+            <input
+              type="checkbox"
+              checked={verbose}
+              onChange={(e) => setVerbose(e.target.checked)}
+            />
+            verbose
+          </label>
         </div>
         <DebugModuleActions />
       </div>

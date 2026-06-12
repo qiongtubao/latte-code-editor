@@ -6,10 +6,17 @@ describe("useDebugStore", () => {
     localStorage.clear();
     useDebugStore.setState({
       isOn: false,
+      verbose: false,
       sid: "",
       replayLocks: new Map(),
       skipDangerousConfirm: false,
     });
+  });
+
+  it("verbose toggle persists to localStorage", () => {
+    useDebugStore.getState().setVerbose(true);
+    expect(useDebugStore.getState().verbose).toBe(true);
+    expect(localStorage.getItem("latte.debug.verbose")).toBe("1");
   });
 
   it("toggle flips isOn and persists to localStorage", () => {
