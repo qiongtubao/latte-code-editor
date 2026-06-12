@@ -94,6 +94,7 @@ function App() {
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "D" || e.key === "d")) {
         e.preventDefault();
         const next = !useDebugStore.getState().isOn;
+        setDebugOn(next);
         const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
         if (next && env?.DEV === true) {
           // Dev convenience: expose the store on window so F12 console can
