@@ -151,7 +151,9 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
           return (
             <div
               key={node.id}
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={() => handleJump(node)}
+              onDoubleClick={() => handleJump(node)}
               className="flex items-start gap-2 px-3 py-1.5 cursor-pointer hover:bg-[#3a3a3a] border-b border-gray-800 last:border-0"
             >
               <span
