@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { basicSetup } from "codemirror";
 import { languages } from "./languageExtensions";
@@ -86,7 +87,9 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
     return unsub;
   }, []);
 
-  // Ctrl+Click handler
+  // Ctrl+Click handler — pick the entire token (Identifier, function name,
+  // macro name, type name, etc.) at the click position. This mirrors VS Code
+  // semantics: clicking anywhere inside `println!` resolves to `println`.
   useEffect(() => {
     const view = viewRef.current;
     if (!view || !filePath) return;
@@ -95,13 +98,40 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
       if (!e.ctrlKey && !e.metaKey) return;
       const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return;
-      const w = view.state.doc.sliceString(pos, pos + 50).match(/^[a-zA-Z_]\w*/)?.[0];
-      if (w) { e.preventDefault(); onCtrlClickRef.current?.(w, e.clientX, e.clientY); }
+      const word = wordAtPos(view, pos);
+      if (word) {
+        e.preventDefault();
+        onCtrlClickRef.current?.(word, e.clientX, e.clientY);
+      }
     };
 
     view.dom.addEventListener("click", handler);
     return () => view.dom.removeEventListener("click", handler);
   }, [filePath]);
-
   return <div ref={containerRef} className="h-full overflow-auto" />;
+}
+
+/**
+ * Resolve the symbol under the cursor position using CodeMirror's
+ * Lezer syntax tree. Returns the entire token text, e.g. clicking anywhere
+ * inside `println!` yields `println`. Falls back to a simple identifier scan
+ * for plain text or languages without a parser.
+ */
+export function wordAtPos(view: EditorView, pos: number): string | null {
+  const state = view.state;
+  // First, try the deepest node the position falls within.
+  const node = syntaxTree(state).resolveInner(pos, -1);
+  if (node) {
+    const text = state.doc.sliceString(node.from, node.to).trim();
+    if (text.length > 0) return text;
+  }
+  // Fallback: simple identifier scan on the same line.
+  const line = state.doc.lineAt(pos);
+  const offset = pos - line.from;
+  const before = line.text.slice(0, offset);
+  const after = line.text.slice(offset);
+  const head = before.match(/[A-Za-z_][A-Za-z0-9_]*!?$/)?.[0] ?? "";
+  const tail = after.match(/^[A-Za-z0-9_]*!?/)?.[0] ?? "";
+  const combined = head + tail;
+  return combined.length > 0 ? combined : null;
 }
