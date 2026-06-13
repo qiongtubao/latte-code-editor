@@ -15,6 +15,9 @@ export interface SettingsState {
   autoSaveDelay: number; // ms
   // Graph
   graphRenderer: GraphRendererKind;
+  // Docs
+  docsInputDir: string;
+  docsOutputDir: string;
   // Actions
   setTheme: (t: EditorTheme) => void;
   setFontSize: (s: number) => void;
@@ -23,6 +26,8 @@ export interface SettingsState {
   setWordWrap: (v: boolean) => void;
   setAutoSave: (v: boolean) => void;
   setGraphRenderer: (k: GraphRendererKind) => void;
+  setDocsInputDir: (d: string) => void;
+  setDocsOutputDir: (d: string) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -36,6 +41,8 @@ export const useSettingsStore = create<SettingsState>()(
       autoSave: false,
       autoSaveDelay: 2000,
       graphRenderer: "auto",
+      docsInputDir: "docs",
+      docsOutputDir: ".latte-review/reports",
       setTheme: (t) => set({ theme: t }),
       setFontSize: (s) => set({ fontSize: s }),
       setTabSize: (s) => set({ tabSize: s }),
@@ -43,6 +50,8 @@ export const useSettingsStore = create<SettingsState>()(
       setWordWrap: (v) => set({ wordWrap: v }),
       setAutoSave: (v) => set({ autoSave: v }),
       setGraphRenderer: (k) => set({ graphRenderer: k }),
+      setDocsInputDir: (d) => set({ docsInputDir: d }),
+      setDocsOutputDir: (d) => set({ docsOutputDir: d }),
     }),
     { name: "latte-settings" },
   ),

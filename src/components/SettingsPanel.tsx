@@ -19,7 +19,7 @@ interface Props {
 }
 
 export function SettingsPanel({ onClose }: Props) {
-  const { theme, fontSize, tabSize, lineNumbers, wordWrap, autoSave, graphRenderer, setTheme, setFontSize, setTabSize, setLineNumbers, setWordWrap, setAutoSave, setGraphRenderer } = useSettingsStore();
+  const { theme, fontSize, tabSize, lineNumbers, wordWrap, autoSave, graphRenderer, docsInputDir, docsOutputDir, setTheme, setFontSize, setTabSize, setLineNumbers, setWordWrap, setAutoSave, setGraphRenderer, setDocsInputDir, setDocsOutputDir } = useSettingsStore();
 
   return (
     <div className="h-full flex flex-col text-xs" style={{ background: "#252526" }}>
@@ -79,6 +79,21 @@ export function SettingsPanel({ onClose }: Props) {
           <div className="text-[10px] text-gray-500 leading-relaxed">
             WebGPU 在 Chrome/Edge 113+ 和 Safari 17+ 可用，能在大项目（5000+ 节点）保持 60fps。
             不支持时自动降级到 Canvas 2D。
+          </div>
+        </Section>
+
+        <Section title="Docs">
+          <Field label="Input Dir">
+            <input type="text" value={docsInputDir} onChange={(e) => setDocsInputDir(e.target.value)}
+              className="w-full px-2 py-1 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded outline-none focus:border-[#007acc] font-mono" />
+          </Field>
+          <Field label="Output Dir">
+            <input type="text" value={docsOutputDir} onChange={(e) => setDocsOutputDir(e.target.value)}
+              className="w-full px-2 py-1 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded outline-none focus:border-[#007acc] font-mono" />
+          </Field>
+          <div className="text-[10px] text-gray-500 leading-relaxed">
+            Document .md files are read from Input Dir and analysis output goes to Output Dir.
+            Paths are relative to the project root.
           </div>
         </Section>
 
