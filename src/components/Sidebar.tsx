@@ -164,15 +164,12 @@ export function Sidebar({ folderRoot, onFileOpen }: SidebarProps) {
         </div>
       )}
 
-      {panel === "explorer" ? (
-        <div className="flex-1 overflow-hidden">
-          <FileTree root={folderRoot} entries={rootEntries} onFileOpen={onFileOpen} />
-        </div>
-      ) : (
-        <div className="flex-1 overflow-hidden">
-          <WorkspaceSearch onSearch={handleSearch} onReplace={handleReplace} />
-        </div>
-      )}
+      <div className={panel === "explorer" ? "flex-1 overflow-hidden flex flex-col" : "hidden"}>
+        <FileTree root={folderRoot} entries={rootEntries} onFileOpen={onFileOpen} />
+      </div>
+      <div className={panel === "search" ? "flex-1 overflow-hidden flex flex-col" : "hidden"}>
+        <WorkspaceSearch onSearch={handleSearch} onReplace={handleReplace} />
+      </div>
     </div>
   );
 }
