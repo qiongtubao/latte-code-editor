@@ -5,7 +5,7 @@ mod settings;
 mod settings_commands;
 mod workspace;
 mod debug;
-
+mod ai;
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -89,6 +89,8 @@ pub fn run() {
             // debug
             crate::debug::commands::debug_dump_backend_state,
             crate::debug::commands::debug_purge_now,
+            // ai
+            crate::ai::commands::ai_review,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

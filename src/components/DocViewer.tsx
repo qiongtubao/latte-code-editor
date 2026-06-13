@@ -3,9 +3,10 @@
  * Flow nodes that carry a `codeRef` are clickable — they dispatch a
  * custom "doc-navigate" event that App.tsx handles to open the file.
  */
-import { useMemo, useCallback } from "react";
-import { parseFlowDiagrams, renderFlowSvg, FlowDiagram } from "../utils/flowParser";
-
+import { useMemo, useCallback, useState } from "react";
+import { parseFlowDiagrams, renderFlowSvg } from "../utils/flowParser";
+import type { FlowDiagram } from "../utils/flowParser";
+import { aiReview } from "../api/ai";
 interface Props {
   content: string;
   filePath?: string;
@@ -13,7 +14,8 @@ interface Props {
 
 export function DocViewer({ content, filePath }: Props) {
   const diagrams = useMemo(() => parseFlowDiagrams(content), [content]);
-
+  const [aiResult, setAiResult] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const handleSvgClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
@@ -39,8 +41,24 @@ export function DocViewer({ content, filePath }: Props) {
   return (
     <div className="flex-1 overflow-y-auto p-4 text-sm" onClick={handleSvgClick}>
       {filePath && (
-        <div className="text-xs text-gray-500 mb-2 font-mono truncate">
-          {filePath.split("/").pop()}
+        <div className="text-xs text-gray-500 mb-2 font-mono truncate flex items-center justify-between">
+          <span>{filePath.split("/").pop()}</span>
+          <button
+            onClick={async () => {
+              setAiLoading(true);
+              setAiResult(null);
+              const r = await aiReview(content.slice(0, 4000));
+              setAiResult(r.message);
+              setAiLoading(false);
+            }}
+            disabled={aiLoading}
+            className="px-2 py-0.5 bg-[#007acc] text-white rounded text-[10px] hover:bg-[#005a9e] disabled:opacity-50"
+          >{aiLoading ? "..." : "AI Review"}</button>
+        </div>
+      )}
+      {aiResult && (
+        <div className="mb-3 p-2 bg-[#1a3a1a] border border-green-800 rounded text-xs text-gray-300 whitespace-pre-wrap">
+          {aiResult}
         </div>
       )}
       {parts.map((part, i) => (
