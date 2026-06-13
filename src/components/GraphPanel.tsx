@@ -28,10 +28,11 @@ export function GraphPanel() {
   const layoutVersionRef = useRef(0);
   const [displayMode, setDisplayMode] = useState<GraphDisplayMode>("main");
   const [displayLabel, setDisplayLabel] = useState("");
+  const [graphMode, setGraphMode] = useState<"code" | "docs">("code");
   const [rebuilding, setRebuilding] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<GraphNode[]>([]);
   const [searchTextResults, setSearchTextResults] = useState<SearchMatch[]>([]);
+  const [searchResults, setSearchResults] = useState<GraphNode[]>([]);
   const [searchTab, setSearchTab] = useState<"symbols" | "files" | "text">("symbols");
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
@@ -312,11 +313,19 @@ export function GraphPanel() {
       <div className="px-3 py-1.5 text-xs text-gray-400 border-b border-gray-700 bg-[#252526]">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
-            <span className="font-medium text-gray-300 mr-1">Code Graph</span>
+            <button
+              onClick={() => setGraphMode("code")}
+              className={`px-2 py-0.5 rounded cursor-pointer transition-colors text-xs font-medium ${graphMode === "code" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}
+            >Code Graph</button>
+            <button
+              onClick={() => setGraphMode("docs")}
+              className={`px-2 py-0.5 rounded cursor-pointer transition-colors text-xs font-medium ${graphMode === "docs" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}
+            >Doc Graph</button>
+            {graphMode === "code" && (<>
             {(["main", "full"] as const).map((m) => (
               <button key={m} onClick={() => switchMode(m)} className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${displayMode === m ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}>{m === "main" ? "Main" : "Full"}</button>
             ))}
-            {displayMode === "focus" && <span className="flex items-center gap-1 ml-1"><span className="px-1.5 py-0.5 bg-[#094771] text-blue-200 rounded text-[10px]">Focus</span><button onClick={() => switchMode("main")} className="px-1 py-0.5 bg-[#3a3a3a] text-gray-300 rounded cursor-pointer text-[10px] hover:bg-[#4a4a4a]">×</button></span>}
+            </>)}
           </div>
           <div className="flex items-center gap-2">
             <span className="text-gray-500">{displayLabel || `${nodeCount}n`}</span>
@@ -369,8 +378,9 @@ export function GraphPanel() {
 
       {/* Canvas */}
       <div ref={containerRef} className="flex-1 relative">
+        {graphMode === "code" && (<>
         {loading && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">Loading graph…</div>}
-        {error && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm px-4 text-center"><p className="text-yellow-400 mb-1">⚠ No graph data</p><p className="text-xs">{error}</p></div>}
+        {error && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm px-4 text-center"><p className="text-yellow-400 mb-1">No graph data</p><p className="text-xs">{error}</p></div>}
         {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length > 0 && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">Layout… ({filteredData.nodes.length} nodes)</div>}
         {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">No nodes to display</div>}
         {hasWorker && (
@@ -379,6 +389,16 @@ export function GraphPanel() {
             highlightedNodeIds={highlightedNodeIds}
             onNodeClick={handleNodeClick} onNodeHover={setHoveredNode}
             onNodeContextMenu={handleNodeContextMenu} />
+        )}
+        </>)}
+        {graphMode === "docs" && (
+          <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+            <div className="text-center">
+              <p className="text-4xl mb-2">📄</p>
+              <p>Doc Graph — open the <b>📄 Docs</b> tab in the sidebar</p>
+              <p className="text-xs mt-1">Document nodes will appear here as [[wikilinks]] are resolved</p>
+            </div>
+          </div>
         )}
 
         {contextMenu && (
