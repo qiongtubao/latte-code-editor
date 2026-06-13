@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { FileTree } from "./FileTree";
 import { WorkspaceSearch } from "./WorkspaceSearch";
+import { DocPanel } from "./DocPanel";
 import { buildCodeGraph, listDirectory, searchInFiles, replaceInFiles } from "../api/commands";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import type { FsEntry } from "../api/commands";
@@ -11,8 +12,7 @@ interface SidebarProps {
   folderRoot: string | null;
   onFileOpen: (path: string) => void;
 }
-
-type SidebarPanel = "explorer" | "search";
+type SidebarPanel = "explorer" | "search" | "docs";
 
 /**
  * 侧边栏：按当前 active workspace 显示项目根目录的文件树 + 搜索面板
@@ -155,8 +155,17 @@ export function Sidebar({ folderRoot, onFileOpen }: SidebarProps) {
         >
           🔍 Search
         </button>
+        <button
+          onClick={() => setPanel("docs")}
+          className={`flex items-center gap-1 px-3 py-1.5 cursor-pointer border-b-[2px] transition-colors ${
+            panel === "docs"
+              ? "border-[#007acc] text-gray-200"
+              : "border-transparent text-gray-500 hover:text-gray-300"
+          }`}
+        >
+          📄 Docs
+        </button>
       </div>
-
       {building && (
         <div className="px-3 py-1.5 text-xs text-yellow-400 border-b border-gray-700 bg-[#1e1e1e] flex items-center gap-2">
           <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
@@ -169,6 +178,9 @@ export function Sidebar({ folderRoot, onFileOpen }: SidebarProps) {
       </div>
       <div className={panel === "search" ? "flex-1 overflow-hidden flex flex-col" : "hidden"}>
         <WorkspaceSearch onSearch={handleSearch} onReplace={handleReplace} />
+      </div>
+      <div className={panel === "docs" ? "flex-1 overflow-hidden flex flex-col" : "hidden"}>
+        <DocPanel onDocOpen={onFileOpen} folderRoot={folderRoot} />
       </div>
     </div>
   );

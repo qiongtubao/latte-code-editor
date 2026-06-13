@@ -61,7 +61,9 @@ function App() {
     if (activeId) useGraphStore.getState().requestReload();
   }, [activeId]);
 
+
   const folderRoot = activeMeta?.project_root ?? null;
+
   const hasOutline = !!(
     filePath &&
     graphData?.nodes.some((n) => n.file_path === filePath && n.kind !== "file")
@@ -78,6 +80,18 @@ function App() {
     },
     [openFileOrSwitch],
   );
+
+  // Listen for doc-navigate events (DocViewer flow diagram → code jump)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { file: string; line: number } | undefined;
+      if (!detail?.file) return;
+      const absPath = folderRoot ? `${folderRoot}/${detail.file}` : detail.file;
+      handleFileOpen(absPath).catch(console.error);
+    };
+    window.addEventListener("doc-navigate", handler);
+    return () => window.removeEventListener("doc-navigate", handler);
+  }, [folderRoot, handleFileOpen]);
 
   // Global keyboard shortcuts
   useEffect(() => {
