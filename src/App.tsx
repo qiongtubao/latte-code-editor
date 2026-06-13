@@ -91,6 +91,7 @@ function App() {
       } else if (e.ctrlKey && e.shiftKey && e.key === "f") {
         e.preventDefault();
         setSidebarOpen(true);
+        window.dispatchEvent(new CustomEvent("focus-search"));
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "D" || e.key === "d")) {
         e.preventDefault();
         const next = !useDebugStore.getState().isOn;
