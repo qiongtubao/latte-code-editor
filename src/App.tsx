@@ -281,6 +281,7 @@ function App() {
       {injectOpen && (
         <DebugEventInjectModal onClose={() => setInjectOpen(false)} />
       )}
+      <QuickOpenModal />
     </div>
   );
 }
