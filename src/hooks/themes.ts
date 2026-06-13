@@ -69,6 +69,7 @@ const themeHighlights: Record<EditorTheme, HighlightStyle> = {
     { tag: t.function(t.variableName), color: "#a6e22e" },
     { tag: t.typeName, color: "#66d9ef" },
     { tag: t.operator, color: "#f92672" },
+    { tag: t.macroName, color: "#a6e22e", fontStyle: "italic" },
   ]),
   dracula: HighlightStyle.define([
     { tag: t.keyword, color: "#ff79c6" },
@@ -77,6 +78,7 @@ const themeHighlights: Record<EditorTheme, HighlightStyle> = {
     { tag: t.number, color: "#bd93f9" },
     { tag: t.function(t.variableName), color: "#50fa7b" },
     { tag: t.typeName, color: "#8be9fd" },
+    { tag: t.macroName, color: "#50fa7b", fontStyle: "italic" },
   ]),
   oneDark: HighlightStyle.define([
     { tag: t.keyword, color: "#c678dd" },
@@ -85,6 +87,7 @@ const themeHighlights: Record<EditorTheme, HighlightStyle> = {
     { tag: t.number, color: "#d19a66" },
     { tag: t.function(t.variableName), color: "#61afef" },
     { tag: t.typeName, color: "#e5c07b" },
+    { tag: t.macroName, color: "#61afef", fontStyle: "italic" },
   ]),
   solarizedLight: HighlightStyle.define([
     { tag: t.keyword, color: "#859900" },
@@ -93,6 +96,7 @@ const themeHighlights: Record<EditorTheme, HighlightStyle> = {
     { tag: t.number, color: "#d33682" },
     { tag: t.function(t.variableName), color: "#268bd2" },
     { tag: t.typeName, color: "#b58900" },
+    { tag: t.macroName, color: "#268bd2", fontStyle: "italic" },
   ]),
   githubLight: HighlightStyle.define([
     { tag: t.keyword, color: "#d73a49" },
@@ -101,6 +105,7 @@ const themeHighlights: Record<EditorTheme, HighlightStyle> = {
     { tag: t.number, color: "#005cc5" },
     { tag: t.function(t.variableName), color: "#6f42c1" },
     { tag: t.typeName, color: "#22863a" },
+    { tag: t.macroName, color: "#6f42c1", fontStyle: "italic" },
   ]),
 };
 
