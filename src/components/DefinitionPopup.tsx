@@ -60,6 +60,7 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
     } catch (e) {
       console.error("Cannot jump to definition:", e);
     }
+    onClose();
   }, [onClose]);
 
   const nodeColor = (kind: string): string => {
@@ -118,7 +119,7 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
     <div ref={popupRef} style={style}>
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-1.5 text-xs border-b border-gray-700 bg-[#333] select-none">
-        <span className="text-gray-300 font-medium">
+        <span className="text-white font-medium">
           {loading
             ? "Searching..."
             : results.length >= 200
@@ -162,14 +163,14 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-gray-100 font-medium truncate">
+                  <span className="text-white font-medium truncate">
                     {node.name}
                   </span>
-                  <span className="text-gray-400 flex-shrink-0">
+                  <span className="text-gray-300 flex-shrink-0">
                     {kindLabel(node.kind)}
                   </span>
                 </div>
-                <div className="text-gray-400 truncate mt-0.5">
+                <div className="text-gray-300 truncate mt-0.5">
                   {node.file_path}:{node.start_line}
                 </div>
                 {node.signature && (
