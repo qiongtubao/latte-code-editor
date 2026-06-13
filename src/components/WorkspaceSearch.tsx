@@ -109,7 +109,13 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
 
       {/* Results count */}
       <div className="px-2 py-1 text-gray-500 text-[10px] border-b border-gray-700">
-        {loading ? "Searching..." : results.length > 0 ? `${results.length} results in ${grouped.size} files` : ""}
+        {loading
+          ? "Searching..."
+          : results.length > 0
+            ? results.length >= 500
+              ? `${results.length}+ results in ${grouped.size} files — narrowed or use a glob to see all`
+              : `${results.length} results in ${grouped.size} files`
+            : ""}
       </div>
 
       {/* Results list */}

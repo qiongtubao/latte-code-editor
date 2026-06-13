@@ -347,7 +347,7 @@ pub async fn search_in_files(
     ];
     let opts = super::search::SearchOptions {
         query,
-        max_results: 100,
+        max_results: 500,
         exclude_dirs,
         include_glob,
         exclude_glob,
