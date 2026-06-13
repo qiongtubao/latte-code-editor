@@ -162,18 +162,18 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-gray-200 font-medium truncate">
+                  <span className="text-gray-100 font-medium truncate">
                     {node.name}
                   </span>
-                  <span className="text-gray-500 flex-shrink-0">
+                  <span className="text-gray-400 flex-shrink-0">
                     {kindLabel(node.kind)}
                   </span>
                 </div>
-                <div className="text-gray-500 truncate mt-0.5">
+                <div className="text-gray-400 truncate mt-0.5">
                   {node.file_path}:{node.start_line}
                 </div>
                 {node.signature && (
-                  <div className="text-gray-500 font-mono truncate mt-0.5 opacity-70">
+                  <div className="text-gray-400 font-mono truncate mt-0.5">
                     {node.signature}
                   </div>
                 )}
