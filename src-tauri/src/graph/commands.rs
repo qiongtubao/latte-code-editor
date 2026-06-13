@@ -85,7 +85,7 @@ pub async fn graph_find_definitions(
 ) -> Result<SearchResponse, String> {
     let graph_dir = resolve_graph_dir(&window, &registry).await?;
     let nodes = tokio::task::spawn_blocking(move || {
-        codegraph::find_definitions(&graph_dir, &name, 50)
+        codegraph::find_definitions(&graph_dir, &name, 200)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?

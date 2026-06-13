@@ -119,7 +119,11 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-1.5 text-xs border-b border-gray-700 bg-[#333] select-none">
         <span className="text-gray-300 font-medium">
-          {loading ? "Searching..." : `${results.length} definition(s) for "${word}"`}
+          {loading
+            ? "Searching..."
+            : results.length >= 200
+              ? `${results.length}+ definitions for "${word}" — refine the search to narrow`
+              : `${results.length} definition(s) for "${word}"`}
         </span>
         <button
           onClick={onClose}
