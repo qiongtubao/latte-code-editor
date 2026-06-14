@@ -1,6 +1,7 @@
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useGraphSettings } from "../hooks/useGraphSettings";
 import { LspStatusBar } from "./LspStatusBar";
+import { screenshotWindow } from "../api/screenshot";
 
 export function StatusBar({
   onToggleSettings,
@@ -74,6 +75,7 @@ export function StatusBar({
           {autoUpdate ? "Auto" : "Manual"}
         </button>
         <button onClick={onToggleSettings} className="opacity-80 hover:opacity-100 cursor-pointer" title="Settings">⚙</button>
+        <button onClick={() => screenshotWindow().then((r) => alert(`Screenshot saved: ${r.path}`)).catch((e) => alert(`Screenshot failed: ${String(e)}`))} className="opacity-80 hover:opacity-100 cursor-pointer" title="Screenshot (Ctrl+Alt+S)">📷</button>
       </div>
       </div>
     </div>
