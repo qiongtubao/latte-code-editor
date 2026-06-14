@@ -446,12 +446,34 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
         </>)}
         {graphMode === "docs" && docSimRender && filteredDocSim && (
           <>
-            <div className="px-3 py-1.5 text-xs border-b border-gray-700 bg-[#252526] flex items-center gap-2">
-              <input type="text" value={docSearchQuery} onChange={(e) => setDocSearchQuery(e.target.value)}
-                placeholder="Search docs by title..."
-                className="flex-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc]" />
-              {docSearchQuery && <button onClick={() => setDocSearchQuery("")} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">✕</button>}
-              <span className="text-gray-500 text-[10px] shrink-0">{filteredDocSim.nodes.length}/{docSimRender.nodes.length}</span>
+            <div className="relative">
+              <div className="px-3 py-1.5 text-xs border-b border-gray-700 bg-[#252526] flex items-center gap-2">
+                <input type="text" value={docSearchQuery} onChange={(e) => setDocSearchQuery(e.target.value)}
+                  placeholder="Search docs by title..."
+                  className="flex-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc]" />
+                {docSearchQuery && <button onClick={() => setDocSearchQuery("")} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">✕</button>}
+                <span className="text-gray-500 text-[10px] shrink-0">{filteredDocSim.nodes.length}/{docSimRender.nodes.length}</span>
+              </div>
+              {/* Search dropdown: match titles */}
+              {docSearchQuery.trim().length > 0 && docSimRender && (() => {
+                const q = docSearchQuery.trim().toLowerCase();
+                const matches = docSimRender.nodes.filter((n) =>
+                  n.id.toLowerCase().includes(q) || (n as unknown as { label?: string }).label?.toLowerCase().includes(q)
+                ).slice(0, 8);
+                if (matches.length === 0) return null;
+                return (
+                  <div className="absolute left-3 right-3 top-full z-20 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl mt-0.5 max-h-48 overflow-y-auto">
+                    {matches.map((n) => (
+                      <div key={n.id} onClick={() => setDocSearchQuery(n.id.split("/").pop() ?? n.id)}
+                        className="px-3 py-1.5 text-xs cursor-pointer hover:bg-[#094771] text-gray-200 border-b border-gray-800 last:border-0 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: NODE_COLORS[n.group] ?? "#808080" }} />
+                        <span className="truncate">{(n as unknown as { label?: string }).label ?? n.id}</span>
+                        <span className="text-gray-500 text-[10px] shrink-0 ml-auto">{n.id}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
             <CanvasGraph simNodes={filteredDocSim.nodes} simEdges={filteredDocSim.edges}
               selectedNodeId={null} hoveredNodeId={null} highlightedNodeIds={new Set()}
