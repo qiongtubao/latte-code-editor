@@ -211,5 +211,4 @@ mod tests {
         }
         assert!(r.suggested_docs.len() > 5);
     }
-
 }

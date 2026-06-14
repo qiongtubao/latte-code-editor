@@ -6,7 +6,7 @@ import { createDebugLogger } from "../utils/debug/logger";
 import { registerDebugEvent } from "../utils/debug/inject";
 
 const log = createDebugLogger("editor");
-export type TabState = "code" | "large-file" | "loading" | "empty";
+export type TabState = "code" | "markdown" | "large-file" | "loading" | "empty";
 
 export interface TabFile {
   result: FileResult;
@@ -80,7 +80,8 @@ function deriveActive(state: WorkspaceEditor): DerivedFields {
   return {
     openFile: active.result,
     currentContent: active.currentContent,
-    tabState: active.result.is_large_file ? "large-file" : "code",
+    tabState: active.result.is_large_file ? "large-file" : 
+              active.result.path.endsWith(".md") ? "markdown" : "code",
     modified: active.result.is_modified,
     filePath: active.result.path,
     activeIndex: safeIdx,

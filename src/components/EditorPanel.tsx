@@ -3,9 +3,9 @@ import { useEditorStore } from "../hooks/useEditorStore";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { LargeFileViewer } from "./LargeFileViewer";
 import { EmptyState } from "./EmptyState";
+import { DocViewer } from "./DocViewer";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { openFile, saveFile } from "../api/commands";
-
 interface EditorPanelProps {
   onCtrlClick?: (word: string, x: number, y: number) => void;
 }
@@ -124,6 +124,10 @@ export function EditorPanel({ onCtrlClick }: EditorPanelProps) {
       case "large-file":
         return (
           <LargeFileViewer content={currentContent} fileName={filePath || ""} />
+        );
+      case "markdown":
+        return (
+          <DocViewer content={currentContent} filePath={filePath || undefined} />
         );
       case "code":
         return (
