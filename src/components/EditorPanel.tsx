@@ -131,15 +131,14 @@ export function EditorPanel({ onCtrlClick }: EditorPanelProps) {
           <div className="h-full flex flex-col">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-gray-700 text-xs">
               <button
-                onClick={() => { console.log("[EditorPanel] setMarkdownMode('preview')"); setMarkdownMode("preview"); }}
+                onClick={() => setMarkdownMode("preview")}
                 className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "preview" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-300 hover:bg-[#4a4a4a]"}`}
               >Preview</button>
               <button
-                onClick={() => { console.log("[EditorPanel] setMarkdownMode('source')"); setMarkdownMode("source"); }}
+                onClick={() => setMarkdownMode("source")}
                 className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "source" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-300 hover:bg-[#4a4a4a]"}`}
               >Source</button>
               <span className="text-gray-500 ml-auto">{filePath?.split("/").pop()}</span>
-              <span className="text-gray-600">mode: {markdownMode}</span>
             </div>
             <div className="flex-1 overflow-hidden">
               {markdownMode === "preview" ? (

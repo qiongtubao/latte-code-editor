@@ -103,7 +103,7 @@ function projectFrom(
     return {
       tabs: [], activeIndex: 0, openFile: null, currentContent: "",
       tabState: "empty", modified: false, filePath: null,
-      cursorWord: "", targetLine: null, targetColumn: null,
+      cursorWord: "", targetLine: null, targetColumn: null, markdownMode: "preview",
     };
   }
   const ws = byWorkspace[wsId] ?? emptyEditor();
@@ -113,6 +113,7 @@ function projectFrom(
     cursorWord: ws.cursorWord, targetLine: ws.targetLine, targetColumn: ws.targetColumn,
     openFile: derived.openFile, currentContent: derived.currentContent,
     tabState: derived.tabState, modified: derived.modified, filePath: derived.filePath,
+    markdownMode: derived.markdownMode,
   };
 }
 
@@ -285,11 +286,9 @@ export const useEditorStore = create<EditorStore>((set) => {
     },
     setMarkdownMode: (mode) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-      console.log("[useEditorStore] setMarkdownMode", { mode, wsId });
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyEditor();
-        console.log("[useEditorStore] setMarkdownMode before", { oldMode: ws.markdownMode, newMode: mode });
         return mutate(s.byWorkspace, wsId, { ...ws, markdownMode: mode });
       });
     },
