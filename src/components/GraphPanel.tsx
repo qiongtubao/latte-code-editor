@@ -38,8 +38,17 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   const [searchTab, setSearchTab] = useState<"symbols" | "files" | "text">("symbols");
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
-  const [docSimRender, setDocSimRender] = useState<{ nodes: SimRenderNode[]; edges: { source: string; target: string; kind: string }[] } | null>(null);
   const [focusMeta, setFocusMeta] = useState<{ total: number; callers: number; callees: number; truncated: boolean } | null>(null);
+  const [docSimRender, setDocSimRender] = useState<{ nodes: SimRenderNode[]; edges: { source: string; target: string; kind: string }[] } | null>(null);
+  const [docRefreshKey, setDocRefreshKey] = useState(0);
+
+  // Reset doc sim when switching to docs mode
+  useEffect(() => {
+    if (graphMode === "docs") {
+      setDocSimRender(null);
+      setDocRefreshKey((k) => k + 1);
+    }
+  }, [graphMode]);
 
   // Load graph data
   // 载入当前 active workspace 的图谱数据。loadVersion 变化时（包括切 workspace、显式 reload）重跑。
@@ -412,31 +421,28 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
             onNodeContextMenu={handleNodeContextMenu} />
         )}
         </>)}
-        {graphMode === "docs" && (
-          <>
-            <DocGraphView
-              folderRoot={folderRoot}
-              onOpen={(path) => openFile(path).then((f) => useEditorStore.getState().openFileOrSwitch(f))}
-              onDocSim={(nodes, edges) => setDocSimRender(nodes.length > 0 ? { nodes, edges } : null)}
-            />
-            {docSimRender && (
-              <CanvasGraph
-                simNodes={docSimRender.nodes}
-                simEdges={docSimRender.edges}
-                selectedNodeId={null}
-                hoveredNodeId={null}
-                highlightedNodeIds={new Set()}
-                onNodeClick={(id) => {
-                  const node = docSimRender.nodes.find((n) => n.id === id);
-                  if (node && (node as unknown as { path?: string }).path) {
-                    const path = (node as unknown as { path: string }).path;
-                    openFile(path).then((f) => useEditorStore.getState().openFileOrSwitch(f));
-                  }
-                }}
-                onNodeHover={() => {}}
-              />
-            )}
-          </>
+        {graphMode === "docs" && docSimRender && (
+          <CanvasGraph
+            simNodes={docSimRender.nodes}
+            simEdges={docSimRender.edges}
+            selectedNodeId={null}
+            hoveredNodeId={null}
+            highlightedNodeIds={new Set()}
+            onNodeClick={(id) => {
+              const node = docSimRender.nodes.find((n) => n.id === id);
+              if (node && (node as unknown as { path?: string }).path) {
+                openFile((node as unknown as { path: string }).path).then((f) => useEditorStore.getState().openFileOrSwitch(f));
+              }
+            }}
+            onNodeHover={() => {}}
+          />
+        )}
+        {graphMode === "docs" && !docSimRender && (
+          <DocGraphView
+            folderRoot={folderRoot}
+            onOpen={(path) => openFile(path).then((f) => useEditorStore.getState().openFileOrSwitch(f))}
+            onDocSim={(nodes, edges) => setDocSimRender(nodes.length > 0 ? { nodes, edges } : null)}
+          />
         )}
 
         {contextMenu && (
