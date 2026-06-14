@@ -20,6 +20,8 @@ export interface SimRenderEdge {
   source: string | { id: string };
   target: string | { id: string };
   kind: string;
+  /** Optional strength 0..1. Drives line thickness + alpha. Default 0.5. */
+  weight?: number;
 }
 
 export interface GraphRenderer {
@@ -57,7 +59,8 @@ export const NODE_COLORS: Record<number, string> = {
   7: "#808080", // other
 };
 
-// Edge color by kind
+// Edge color by kind. New doc-graph kinds are added at the end with
+// per-kind weights; the renderer uses `weight` to modulate line thickness.
 export const EDGE_COLORS: Record<string, string> = {
   contains: "#555",
   calls: "#4ec9b0",
@@ -65,4 +68,15 @@ export const EDGE_COLORS: Record<string, string> = {
   inherits: "#dcdcaa",
   implements: "#569cd6",
   references: "#808080",
+  // Doc graph kinds — warm = strong, cool = weak
+  "source-shared": "#ff7043",   // actual code dep — warmest, most opaque
+  wikilink: "#4ea1ff",          // explicit [[link]] — cool blue
+  "same-group": "#9e9e9e",      // same dir — neutral gray
+};
+
+/** Per-kind edge weight. Higher weight = stronger association. */
+export const EDGE_WEIGHTS: Record<string, number> = {
+  "source-shared": 1.0,
+  wikilink: 0.7,
+  "same-group": 0.35,
 };

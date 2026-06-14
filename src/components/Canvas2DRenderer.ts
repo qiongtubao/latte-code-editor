@@ -106,7 +106,11 @@ export class Canvas2DRenderer implements GraphRenderer {
       if (!sNode || !tNode) continue;
 
       const edgeColor = EDGE_COLORS[e.kind] ?? "#555";
-      const edgeWidth = e.kind === "calls" ? 1.5 : e.kind === "imports" ? 1.2 : 0.8;
+      // weight: explicit number on the edge; falls back to kind-based default
+      const weight = typeof (e as { weight?: number }).weight === "number"
+        ? (e as { weight: number }).weight
+        : (e.kind === "calls" ? 1.0 : e.kind === "imports" ? 0.85 : 0.5);
+      const baseWidth = 0.4 + weight * 1.6;   // 0.4..2.0
       const isHighlighted =
         (selectedNodeId != null && (s === selectedNodeId || t === selectedNodeId)) ||
         (hoveredNodeId != null && (s === hoveredNodeId || t === hoveredNodeId));
@@ -115,14 +119,14 @@ export class Canvas2DRenderer implements GraphRenderer {
       ctx.beginPath();
       ctx.moveTo(sNode.x, sNode.y);
       ctx.lineTo(tNode.x, tNode.y);
-      ctx.strokeStyle = isHighlighted ? "#e0e0e0" : edgeColor;
-      ctx.lineWidth = isHighlighted ? edgeWidth * 2 : edgeWidth;
-      ctx.globalAlpha = dim ? 0.08 : isHighlighted ? 0.9 : 0.35;
+      ctx.strokeStyle = isHighlighted ? "#ffffff" : edgeColor;
+      ctx.lineWidth = isHighlighted ? baseWidth * 2 : baseWidth;
+      // Stronger association → more opaque
+      ctx.globalAlpha = dim ? 0.06 : isHighlighted ? 0.95 : (0.25 + weight * 0.55);
       ctx.stroke();
-      ctx.globalAlpha = 1;
-      // ... arrow drawing ...
-      if (dim) continue; // skip arrows for dimmed edges
-      if ((e.kind === "calls" || e.kind === "imports") && edgeWidth >= 0.8) {
+      // Arrow head
+      if (dim) continue;
+      if (e.kind === "calls" || e.kind === "imports" || e.kind === "wikilink" || e.kind === "source-shared") {
         const angle = Math.atan2(tNode.y - sNode.y, tNode.x - sNode.x);
         const tR = Math.min(16, Math.max(6, 4 + Math.sqrt((this.nodeDegrees.get(t) ?? 1)) * 1.5));
         const arrowLen = 8;

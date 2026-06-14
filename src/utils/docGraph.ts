@@ -9,13 +9,19 @@ export interface DocSimNode {
   docType: string;
   path: string;
 }
-
 export interface DocSimEdge {
   source: string;
   target: string;
   kind: string;
+  /** Strength 0..1. Drives line thickness + alpha. Higher = stronger association. */
+  weight: number;
 }
 
+const KIND_WEIGHT: Record<string, number> = {
+  "source-shared": 1.0,  // strongest: actual code dependency
+  wikilink: 0.75,        // explicit [[link]]
+  "same-group": 0.4,     // weakest: same dir only
+};
 interface DocFile {
   name: string;
   path: string;
@@ -86,8 +92,9 @@ export async function buildDocSim(
     const key = `${from}→${to}#${kind}`;
     if (seen.has(key)) return;
     seen.add(key);
-    edges.push({ source: from, target: to, kind });
+    edges.push({ source: from, target: to, kind, weight: KIND_WEIGHT[kind] ?? 0.5 });
   };
+
 
   // Index by basename for relative wikilink resolution
   const byBasename = new Map<string, string[]>();
