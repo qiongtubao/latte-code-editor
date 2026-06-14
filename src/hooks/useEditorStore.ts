@@ -59,6 +59,7 @@ interface EditorStore {
   reset: () => void;
   refreshCurrentFile: () => Promise<void>;
   toggleMarkdownMode: () => void;
+  setMarkdownMode: (mode: "preview" | "source") => void;
 }
 
 interface DerivedFields {
@@ -280,6 +281,14 @@ export const useEditorStore = create<EditorStore>((set) => {
         const ws = s.byWorkspace[wsId] ?? emptyEditor();
         const newMode = ws.markdownMode === "preview" ? "source" : "preview";
         return mutate(s.byWorkspace, wsId, { ...ws, markdownMode: newMode });
+      });
+    },
+    setMarkdownMode: (mode) => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) return;
+      set((s) => {
+        const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        return mutate(s.byWorkspace, wsId, { ...ws, markdownMode: mode });
       });
     },
   };

@@ -18,7 +18,7 @@ export function EditorPanel({ onCtrlClick }: EditorPanelProps) {
     tabState,
     filePath,
     markdownMode,
-    toggleMarkdownMode,
+    setMarkdownMode,
   } = useEditorStore();
   const handleOpenFile = useCallback(async () => {
     const selected = await dialogOpen({
@@ -131,25 +131,27 @@ export function EditorPanel({ onCtrlClick }: EditorPanelProps) {
           <div className="h-full flex flex-col">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-gray-700 text-xs">
               <button
-                onClick={toggleMarkdownMode}
+                onClick={() => setMarkdownMode("preview")}
                 className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "preview" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-300 hover:bg-[#4a4a4a]"}`}
               >Preview</button>
               <button
-                onClick={toggleMarkdownMode}
+                onClick={() => setMarkdownMode("source")}
                 className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "source" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-300 hover:bg-[#4a4a4a]"}`}
               >Source</button>
               <span className="text-gray-500 ml-auto">{filePath?.split("/").pop()}</span>
             </div>
-            {markdownMode === "preview" ? (
-              <DocViewer content={currentContent} filePath={filePath || undefined} />
-            ) : (
-              <CodeMirrorEditor
-                onCtrlClick={onCtrlClick}
-                content={currentContent}
-                filePath={filePath}
-                onChange={handleChange}
-              />
-            )}
+            <div className="flex-1 overflow-hidden">
+              {markdownMode === "preview" ? (
+                <DocViewer content={currentContent} filePath={filePath || undefined} />
+              ) : (
+                <CodeMirrorEditor
+                  onCtrlClick={onCtrlClick}
+                  content={currentContent}
+                  filePath={filePath}
+                  onChange={handleChange}
+                />
+              )}
+            </div>
           </div>
         );
       case "code":
