@@ -532,6 +532,7 @@ function DocGraphView({
 
   const refresh = useCallback(async () => {
     if (!folderRoot) { setGroups([]); onDocSim([], []); return; }
+    setLoading(true);
     try {
       const abs = folderRoot.endsWith("/") ? folderRoot + docsInputDir : `${folderRoot}/${docsInputDir}`;
 
@@ -589,6 +590,7 @@ function DocGraphView({
 
   return (
     <div className="flex-1 overflow-y-auto p-3 text-xs">
+      {loading && <div className="mb-3 p-2 bg-[#094771] text-blue-200 rounded">Building doc graph...</div>}
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="text-gray-300 font-medium">Document Graph</div>
