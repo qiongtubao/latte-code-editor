@@ -19,6 +19,7 @@ interface WorkspaceEditor {
   cursorWord: string;
   targetLine: number | null;
   targetColumn: number | null;
+  markdownMode: "preview" | "source";
 }
 
 function emptyEditor(): WorkspaceEditor {
@@ -28,6 +29,7 @@ function emptyEditor(): WorkspaceEditor {
     cursorWord: "",
     targetLine: null,
     targetColumn: null,
+    markdownMode: "preview",
   };
 }
 
@@ -44,6 +46,7 @@ interface EditorStore {
   cursorWord: string;
   targetLine: number | null;
   targetColumn: number | null;
+  markdownMode: "preview" | "source";
 
   openFileOrSwitch: (file: FileResult, targetLine?: number | null) => void;
   setContent: (content: string) => void;
@@ -55,6 +58,7 @@ interface EditorStore {
   evictWorkspace: (workspaceId: string) => void;
   reset: () => void;
   refreshCurrentFile: () => Promise<void>;
+  toggleMarkdownMode: () => void;
 }
 
 interface DerivedFields {
@@ -64,13 +68,14 @@ interface DerivedFields {
   modified: boolean;
   filePath: string | null;
   activeIndex: number;
+  markdownMode: "preview" | "source";
 }
 
 function deriveActive(state: WorkspaceEditor): DerivedFields {
   if (state.tabs.length === 0) {
     return {
       openFile: null, currentContent: "", tabState: "empty",
-      modified: false, filePath: null, activeIndex: 0,
+      modified: false, filePath: null, activeIndex: 0, markdownMode: "preview",
     };
   }
   const safeIdx = state.activeIndex < state.tabs.length
@@ -85,6 +90,7 @@ function deriveActive(state: WorkspaceEditor): DerivedFields {
     modified: active.result.is_modified,
     filePath: active.result.path,
     activeIndex: safeIdx,
+    markdownMode: state.markdownMode,
   };
 }
 
@@ -136,7 +142,7 @@ export const useEditorStore = create<EditorStore>((set) => {
     byWorkspace: {},
     tabs: [], activeIndex: 0, openFile: null, currentContent: "",
     tabState: "empty", modified: false, filePath: null,
-    cursorWord: "", targetLine: null, targetColumn: null,
+    cursorWord: "", targetLine: null, targetColumn: null, markdownMode: "preview",
     openFileOrSwitch: (file, targetLine = null) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) { console.warn("[useEditorStore] openFileOrSwitch without active workspace"); return; }
@@ -265,6 +271,16 @@ export const useEditorStore = create<EditorStore>((set) => {
       } catch (e) {
         console.error("[refreshCurrentFile] Failed to refresh file:", e);
       }
+    },
+
+    toggleMarkdownMode: () => {
+      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!wsId) return;
+      set((s) => {
+        const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        const newMode = ws.markdownMode === "preview" ? "source" : "preview";
+        return mutate(s.byWorkspace, wsId, { ...ws, markdownMode: newMode });
+      });
     },
   };
 });
