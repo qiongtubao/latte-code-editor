@@ -485,19 +485,27 @@ function DocGraphView({
 
   const refresh = useCallback(async () => {
     if (!folderRoot) { setGroups([]); onDocSim([], []); return; }
-    setLoading(true);
-    setError(null);
     try {
       const abs = folderRoot.endsWith("/") ? folderRoot + docsInputDir : `${folderRoot}/${docsInputDir}`;
-      const entries = await listDirectory(abs).catch((e: unknown) => {
-        setError(String(e));
-        return [];
-      });
-      const flat = (entries as { name: string; path: string; is_dir: boolean }[]).filter((e) => !e.name.startsWith("."));
+
+      // Recursively list all .md files in the docs directory
+      const allFiles: { name: string; path: string; is_dir: boolean }[] = [];
+      const queue = [abs];
+      while (queue.length > 0) {
+        const dir = queue.pop()!;
+        const entries = await listDirectory(dir).catch(() => []);
+        for (const e of entries as { name: string; path: string; is_dir: boolean }[]) {
+          if (e.name.startsWith(".")) continue;
+          if (e.is_dir) { queue.push(e.path); }
+          else if (e.name.endsWith(".md")) { allFiles.push(e); }
+        }
+      }
+
       const map: Record<string, { name: string; path: string; is_dir: boolean }[]> = {};
-      for (const e of flat) {
-        const key = e.is_dir ? e.name : "(files)";
-        (map[key] ??= []).push(e);
+      for (const e of allFiles) {
+        const rel = e.path.replace(abs + "/", "").split("/");
+        const dirName = rel.length > 1 ? rel[0] : "(root)";
+        (map[dirName] ??= []).push(e);
       }
       const sorted = Object.entries(map)
         .filter(([, v]) => v.length > 0)
@@ -510,10 +518,9 @@ function DocGraphView({
 
       // Build doc sim for the graph canvas
       await import("../utils/docGraph").then(async ({ buildDocSim }) => {
-        const sim = await buildDocSim(flat, async (p) => {
-          try {
-            return await invoke<string>("get_file_content", { path: p });
-          } catch { return ""; }
+        const sim = await buildDocSim(allFiles, async (p) => {
+          try { return await invoke<string>("get_file_content", { path: p }); }
+          catch { return ""; }
         });
         onDocSim(sim.nodes, sim.edges);
       });
