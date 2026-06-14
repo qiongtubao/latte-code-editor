@@ -3,6 +3,8 @@ import { useGraphStore } from "../hooks/useGraphStore";
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useSettingsStore } from "../hooks/useSettingsStore";
 import { CanvasGraph } from "./CanvasGraph";
+import type { SimRenderNode } from "./graphRenderer";
+import { invoke } from "@tauri-apps/api/core";
 import { graphGetData, graphSearch } from "../api/graphCommands";
 import { openFile, listDirectory, buildCodeGraph, searchInFiles, type SearchMatch } from "../api/commands";
 import {
@@ -36,6 +38,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   const [searchTab, setSearchTab] = useState<"symbols" | "files" | "text">("symbols");
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+  const [docSimRender, setDocSimRender] = useState<{ nodes: SimRenderNode[]; edges: { source: string; target: string; kind: string }[] } | null>(null);
   const [focusMeta, setFocusMeta] = useState<{ total: number; callers: number; callees: number; truncated: boolean } | null>(null);
 
   // Load graph data
@@ -410,7 +413,30 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
         )}
         </>)}
         {graphMode === "docs" && (
-          <DocGraphView folderRoot={folderRoot} onOpen={(path) => openFile(path).then((f) => useEditorStore.getState().openFileOrSwitch(f))} />
+          <>
+            <DocGraphView
+              folderRoot={folderRoot}
+              onOpen={(path) => openFile(path).then((f) => useEditorStore.getState().openFileOrSwitch(f))}
+              onDocSim={(nodes, edges) => setDocSimRender(nodes.length > 0 ? { nodes, edges } : null)}
+            />
+            {docSimRender && (
+              <CanvasGraph
+                simNodes={docSimRender.nodes}
+                simEdges={docSimRender.edges}
+                selectedNodeId={null}
+                hoveredNodeId={null}
+                highlightedNodeIds={new Set()}
+                onNodeClick={(id) => {
+                  const node = docSimRender.nodes.find((n) => n.id === id);
+                  if (node && (node as unknown as { path?: string }).path) {
+                    const path = (node as unknown as { path: string }).path;
+                    openFile(path).then((f) => useEditorStore.getState().openFileOrSwitch(f));
+                  }
+                }}
+                onNodeHover={() => {}}
+              />
+            )}
+          </>
         )}
 
         {contextMenu && (
@@ -437,14 +463,22 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   );
 }
 
-function DocGraphView({ folderRoot, onOpen }: { folderRoot: string | null; onOpen: (path: string) => void }) {
+function DocGraphView({
+  folderRoot,
+  onOpen,
+  onDocSim,
+}: {
+  folderRoot: string | null;
+  onOpen: (path: string) => void;
+  onDocSim: (nodes: SimRenderNode[], edges: { source: string; target: string; kind: string }[]) => void;
+}) {
   const docsInputDir = useSettingsStore((s) => s.docsInputDir);
   const [groups, setGroups] = useState<{ type: string; entries: { name: string; path: string; is_dir: boolean }[] }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!folderRoot) { setGroups([]); return; }
+    if (!folderRoot) { setGroups([]); onDocSim([], []); return; }
     setLoading(true);
     setError(null);
     try {
@@ -453,9 +487,9 @@ function DocGraphView({ folderRoot, onOpen }: { folderRoot: string | null; onOpe
         setError(String(e));
         return [];
       });
+      const flat = (entries as { name: string; path: string; is_dir: boolean }[]).filter((e) => !e.name.startsWith("."));
       const map: Record<string, { name: string; path: string; is_dir: boolean }[]> = {};
-      for (const e of entries as { name: string; path: string; is_dir: boolean }[]) {
-        if (e.name.startsWith(".")) continue;
+      for (const e of flat) {
         const key = e.is_dir ? e.name : "(files)";
         (map[key] ??= []).push(e);
       }
@@ -467,10 +501,21 @@ function DocGraphView({ folderRoot, onOpen }: { folderRoot: string | null; onOpe
           entries: entries.sort((a, b) => a.name.localeCompare(b.name)),
         }));
       setGroups(sorted);
+
+      // Build doc sim for the graph canvas
+      await import("../utils/docGraph").then(async ({ buildDocSim }) => {
+        const sim = await buildDocSim(flat, async (p) => {
+          try {
+            return await invoke<string>("get_file_content", { path: p });
+          } catch { return ""; }
+        });
+        onDocSim(sim.nodes, sim.edges);
+      });
     } finally {
       setLoading(false);
     }
-  }, [folderRoot, docsInputDir]);
+  }, [folderRoot, docsInputDir, onDocSim]);
+
 
   useEffect(() => { refresh(); }, [refresh]);
 
