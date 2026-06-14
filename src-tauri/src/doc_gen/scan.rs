@@ -79,6 +79,14 @@ fn classify_file(path: &Path) -> Option<(String, String, String)> {
     None
 }
 
+
+fn plural_dir(doc_type: &str) -> String {
+    match doc_type {
+        "entity" => "entities".to_string(),
+        _ => format!("{doc_type}s"),
+    }
+}
+
 fn capitalize(s: &str) -> String {
     let mut chars = s.chars().peekable();
     while let Some(&c) = chars.peek() {
@@ -97,7 +105,6 @@ pub fn scan_project(project_root: &Path) -> ScanResult {
     let mut by_title: HashSet<String> = HashSet::new();
     let mut source_files = 0usize;
     let mut suggested_docs: Vec<DocSuggestion> = Vec::new();
-
     for entry in WalkDir::new(project_root).into_iter().filter_map(Result::ok) {
         if !entry.file_type().is_file() { continue; }
         let path = entry.path();
@@ -119,7 +126,7 @@ pub fn scan_project(project_root: &Path) -> ScanResult {
                 let slug = title.to_lowercase().replace([' ', '_'], "-");
                 suggested_docs.push(DocSuggestion {
                     title,
-                    rel_path: format!("{doc_type}s/{slug}.md"),
+                    rel_path: format!("{}/{slug}.md", plural_dir(&doc_type)),
                     doc_type,
                     sources: vec![rel_str],
                     reason,
@@ -204,4 +211,5 @@ mod tests {
         }
         assert!(r.suggested_docs.len() > 5);
     }
+
 }
