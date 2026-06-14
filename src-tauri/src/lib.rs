@@ -8,6 +8,7 @@ mod debug;
 mod ai;
 use std::sync::Arc;
 mod doc_gen;
+mod screenshot;
 use tauri::Manager;
 
 use crate::graph::incremental::IncrementalHub;
@@ -95,6 +96,8 @@ pub fn run() {
             // doc_gen
             crate::doc_gen::commands::scan_project_for_docs,
             crate::doc_gen::commands::write_doc_stub,
+            // screenshot
+            crate::screenshot::screenshot_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

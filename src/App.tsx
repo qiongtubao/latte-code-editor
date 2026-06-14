@@ -11,6 +11,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { WorkspaceTabs } from "./components/WorkspaceTabs";
 import { QuickOpenModal } from "./components/QuickOpenModal";
 import { openFile } from "./api/commands";
+import { screenshotWindow } from "./api/screenshot";
 import { useEditorStore } from "./hooks/useEditorStore";
 import { useGraphStore } from "./hooks/useGraphStore";
 import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
@@ -48,6 +49,13 @@ function App() {
   const [defPopup, setDefPopup] = useState<{ word: string; x: number; y: number } | null>(
     null,
   );
+  const [toast, setToast] = useState<string | null>(null);
+  // Auto-dismiss toast after 4s
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
     hydrateDebug();
@@ -156,12 +164,17 @@ function App() {
           )
           .catch((e) => console.error("latte:debug-snapshot-backend-error", String(e)));
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "M" || e.key === "m")) {
+      } else if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === "S" || e.key === "s")) {
+        // Screenshot the main window to ~/Pictures/latte-screenshots/
+        e.preventDefault();
+        screenshotWindow()
+          .then((r) => setToast(`Screenshot saved: ${r.path}`))
+          .catch((err) => setToast(`Screenshot failed: ${String(err)}`));
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [openQuickOpen]);
-
   return (
     <div className="flex flex-col h-screen">
       <WorkspaceTabs />
@@ -297,6 +310,14 @@ function App() {
         <DebugEventInjectModal onClose={() => setInjectOpen(false)} />
       )}
       <QuickOpenModal />
+      {toast && (
+        <div
+          onClick={() => setToast(null)}
+          className="fixed bottom-12 right-4 z-50 max-w-md px-4 py-2 bg-[#094771] text-blue-100 rounded shadow-lg cursor-pointer text-xs"
+        >
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
