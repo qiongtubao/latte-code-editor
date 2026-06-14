@@ -707,11 +707,14 @@ export class WebGPURenderer implements GraphRenderer {
       const sIdx = idToIndex.get(s) ?? 0;
       const tIdx = idToIndex.get(t) ?? 0;
 
-      const baseColor = EDGE_COLORS[e.kind] ?? "#555";
-      // Per-edge weight (buildDocSim sets this for doc graph edges)
-      const w = typeof (e as { weight?: number }).weight === "number"
-        ? (e as { weight: number }).weight
-        : (e.kind === "calls" ? 1.0 : e.kind === "imports" ? 0.85 : 0.5);
+      let baseColor = EDGE_COLORS[e.kind] ?? "#888";
+      // Per-edge weight (buildDocSim sets this for doc graph edges).
+      // Debug: if no weight, render red so we can spot missing-weight bugs.
+      const hasWeight = typeof (e as { weight?: number }).weight === "number";
+      const w = hasWeight ? (e as { weight: number }).weight : 0.5;
+      if (!hasWeight) baseColor = "#ff3333";
+
+
       const isHighlighted =
         (selectedNodeId != null && (s === selectedNodeId || t === selectedNodeId)) ||
         (hoveredNodeId != null && (s === hoveredNodeId || t === hoveredNodeId));

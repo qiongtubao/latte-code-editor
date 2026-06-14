@@ -105,12 +105,17 @@ export class Canvas2DRenderer implements GraphRenderer {
       const tNode = nodeMap.get(t);
       if (!sNode || !tNode) continue;
 
-      const edgeColor = EDGE_COLORS[e.kind] ?? "#555";
       // weight: explicit number on the edge; falls back to kind-based default
-      const weight = typeof (e as { weight?: number }).weight === "number"
+      const hasWeight = typeof (e as { weight?: number }).weight === "number";
+      const weight = hasWeight
         ? (e as { weight: number }).weight
-        : (e.kind === "calls" ? 1.0 : e.kind === "imports" ? 0.85 : 0.5);
-      const baseWidth = 0.4 + weight * 1.6;   // 0.4..2.0
+        : 0.5;
+      const baseWidth = 0.6 + weight * 1.8;   // 0.6..2.4
+      // If weight is not present at all, use a debug red to make missing weight obvious
+      const edgeColor = hasWeight
+        ? (EDGE_COLORS[e.kind] ?? "#888")
+        : "#ff3333";
+
       const isHighlighted =
         (selectedNodeId != null && (s === selectedNodeId || t === selectedNodeId)) ||
         (hoveredNodeId != null && (s === hoveredNodeId || t === hoveredNodeId));
