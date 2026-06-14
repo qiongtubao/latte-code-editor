@@ -41,6 +41,8 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   const [focusMeta, setFocusMeta] = useState<{ total: number; callers: number; callees: number; truncated: boolean } | null>(null);
   const [docSimRender, setDocSimRender] = useState<{ nodes: SimRenderNode[]; edges: { source: string; target: string; kind: string; weight: number }[] } | null>(null);
   const [docRefreshKey, setDocRefreshKey] = useState(0);
+  const [docSearchQuery, setDocSearchQuery] = useState("");
+
 
   // Reset doc sim when switching to docs mode
   useEffect(() => {
@@ -50,8 +52,33 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
     }
   }, [graphMode]);
 
-  // Load graph data
-  // 载入当前 active workspace 的图谱数据。loadVersion 变化时（包括切 workspace、显式 reload）重跑。
+  // Filtered doc sim: when docSearchQuery is non-empty, restrict the canvas
+  // to nodes whose label/id/path matches + their 1-hop neighbours. Edges
+  // are kept only between surviving nodes.
+  const filteredDocSim = useMemo(() => {
+    if (!docSimRender) return null;
+    const q = docSearchQuery.trim().toLowerCase();
+    if (q.length === 0) return docSimRender;
+    const matched = new Set<string>();
+    for (const n of docSimRender.nodes) {
+      if (n.id.toLowerCase().includes(q) || (n.label ?? "").toLowerCase().includes(q)) {
+        matched.add(n.id);
+      }
+    }
+    if (matched.size === 0) return { nodes: [], edges: [] };
+    // 1-hop expansion
+    const expanded = new Set(matched);
+    for (const e of docSimRender.edges) {
+      if (matched.has(e.source) || matched.has(e.target)) {
+        expanded.add(e.source);
+        expanded.add(e.target);
+      }
+    }
+    return {
+      nodes: docSimRender.nodes.filter((n) => expanded.has(n.id)),
+      edges: docSimRender.edges.filter((e) => expanded.has(e.source) && expanded.has(e.target)),
+    };
+  }, [docSimRender, docSearchQuery]);
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -396,53 +423,38 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
         {searchTextResults.length > 0 && (
           <div className="mt-1 max-h-24 overflow-y-auto bg-[#333] border border-gray-700 rounded text-xs">
             {searchTextResults.slice(0, 20).map((r, i) => (
-              <div key={i} onClick={() => handleSearchTextClick(r)} className="flex items-center gap-2 px-2 py-0.5 cursor-pointer hover:bg-[#094771]">
-                <span style={{ color: "#86efac" }} className="shrink-0 w-16 truncate">{r.file_path.split("/").pop()}</span>
-                <span style={{ color: "#93c5fd" }} className="shrink-0 font-medium w-10 text-right">{r.line_number}</span>
-                <span className="text-gray-300 truncate">{r.line_content}</span>
-              </div>
+              <div key={i} className="px-2 py-0.5 text-gray-300 truncate">{r.file_path}:{r.line_number} — {r.line_content}</div>
             ))}
           </div>
         )}
-      </div>
 
-      {/* Canvas */}
-      <div ref={containerRef} className="flex-1 relative">
-        {graphMode === "code" && (<>
-        {loading && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">Loading graph…</div>}
-        {error && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm px-4 text-center"><p className="text-yellow-400 mb-1">No graph data</p><p className="text-xs">{error}</p></div>}
-        {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length > 0 && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">Layout… ({filteredData.nodes.length} nodes)</div>}
-        {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">No nodes to display</div>}
-        {hasWorker && (
-          <CanvasGraph simNodes={simNodes} simEdges={simEdges}
-            selectedNodeId={selectedNodeId} hoveredNodeId={hoveredNodeId}
-            highlightedNodeIds={highlightedNodeIds}
-            onNodeClick={handleNodeClick} onNodeHover={setHoveredNode}
-            onNodeContextMenu={handleNodeContextMenu} />
-        )}
-        </>)}
-        {graphMode === "docs" && docSimRender && (
-          <CanvasGraph
-            simNodes={docSimRender.nodes}
-            simEdges={docSimRender.edges}
-            selectedNodeId={null}
-            hoveredNodeId={null}
-            highlightedNodeIds={new Set()}
-            onNodeClick={(id) => {
-              const node = docSimRender.nodes.find((n) => n.id === id);
-              if (node && (node as unknown as { path?: string }).path) {
-                openFile((node as unknown as { path: string }).path).then((f) => useEditorStore.getState().openFileOrSwitch(f));
-              }
-            }}
-            onNodeHover={() => {}}
-          />
+        {/* Doc graph: search bar + canvas */}
+        {graphMode === "docs" && docSimRender && filteredDocSim && (
+          <>
+            <div className="px-3 py-1.5 text-xs border-b border-gray-700 bg-[#252526] flex items-center gap-2">
+              <input type="text" value={docSearchQuery} onChange={(e) => setDocSearchQuery(e.target.value)}
+                placeholder="Search docs by title..."
+                className="flex-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc]" />
+              {docSearchQuery && (
+                <button onClick={() => setDocSearchQuery("")} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">✕</button>
+              )}
+              <span className="text-gray-500 text-[10px] shrink-0">{filteredDocSim.nodes.length}/{docSimRender.nodes.length}</span>
+            </div>
+            <CanvasGraph simNodes={filteredDocSim.nodes} simEdges={filteredDocSim.edges}
+              selectedNodeId={null} hoveredNodeId={null} highlightedNodeIds={new Set()}
+              onNodeClick={(id) => {
+                const node = docSimRender.nodes.find((n) => n.id === id);
+                if (node && (node as unknown as { path?: string }).path) {
+                  openFile((node as unknown as { path: string }).path).then((f) => useEditorStore.getState().openFileOrSwitch(f));
+                }
+              }}
+              onNodeHover={() => {}} />
+          </>
         )}
         {graphMode === "docs" && !docSimRender && (
-          <DocGraphView
-            folderRoot={folderRoot}
+          <DocGraphView folderRoot={folderRoot}
             onOpen={(path) => openFile(path).then((f) => useEditorStore.getState().openFileOrSwitch(f))}
-            onDocSim={(nodes, edges) => setDocSimRender(nodes.length > 0 ? { nodes, edges } : null)}
-          />
+            onDocSim={(nodes, edges) => setDocSimRender(nodes.length > 0 ? { nodes, edges } : null)} />
         )}
 
         {contextMenu && (

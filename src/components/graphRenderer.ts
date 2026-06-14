@@ -14,6 +14,8 @@ export interface SimRenderNode {
   vx: number;
   vy: number;
   group: number;
+  /** Optional display label, used by doc-graph. */
+  label?: string;
 }
 
 export interface SimRenderEdge {
