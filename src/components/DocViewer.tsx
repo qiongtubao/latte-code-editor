@@ -6,6 +6,7 @@
 import { useMemo, useCallback, useState } from "react";
 import { parseFlowDiagrams, renderFlowSvg } from "../utils/flowParser";
 import type { FlowDiagram } from "../utils/flowParser";
+import { markdownToHtml } from "../utils/markdown";
 import { aiReview } from "../api/ai";
 interface Props {
   content: string;
@@ -84,7 +85,7 @@ function splitContent(
     // Text before this fence
     const before = raw.slice(lastIdx, m.index);
     if (before.trim()) {
-      parts.push(<div key={`t${lastIdx}`} dangerouslySetInnerHTML={{ __html: mdToHtml(before) }} />);
+      parts.push(<div key={`t${lastIdx}`} dangerouslySetInnerHTML={{ __html: markdownToHtml(before) }} />);
     }
     // Replace fence with SVG
     if (di < diagrams.length) {
@@ -110,7 +111,7 @@ function splitContent(
   // Trailing text
   const trailing = raw.slice(lastIdx);
   if (trailing.trim()) {
-    parts.push(<div key={`t${lastIdx}`} dangerouslySetInnerHTML={{ __html: mdToHtml(trailing) }} />);
+    parts.push(<div key={`t${lastIdx}`} dangerouslySetInnerHTML={{ __html: markdownToHtml(trailing) }} />);
   }
 
   if (parts.length === 0 && !raw.trim()) {
@@ -119,24 +120,3 @@ function splitContent(
   return parts;
 }
 
-/** Minimal markdown → HTML converter (headings, bold, italic, code, links, paragraphs). */
-function mdToHtml(md: string): string {
-  let html = md;
-  // Headings
-  html = html.replace(/^#### (.+)$/gm, "<h4 class='text-sm font-semibold mt-3 mb-1 text-gray-200'>$1</h4>");
-  html = html.replace(/^### (.+)$/gm, "<h3 class='text-base font-semibold mt-3 mb-1 text-gray-200'>$1</h3>");
-  html = html.replace(/^## (.+)$/gm, "<h2 class='text-lg font-semibold mt-4 mb-2 text-gray-100 border-b border-gray-700 pb-1'>$1</h2>");
-  html = html.replace(/^# (.+)$/gm, "<h1 class='text-xl font-bold mt-4 mb-2 text-white'>$1</h1>");
-  // Bold + italic
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
-  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, "<code class='bg-[#333] px-1 rounded text-xs text-gray-300 font-mono'>$1</code>");
-  // Wikilinks → plain text (no sidebar navigation yet)
-  html = html.replace(/\[\[([^\]]+)\]\]/g, "<span class='text-blue-400 underline cursor-default'>$1</span>");
-  // Paragraphs (double newline)
-  html = html.replace(/\n\s*\n/g, "</p><p class='mb-2 leading-relaxed text-gray-300'>");
-  html = "<p class='mb-2 leading-relaxed text-gray-300'>" + html + "</p>";
-  return html;
-}
