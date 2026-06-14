@@ -22,6 +22,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Arc::new(WorkspaceRegistry::new()))
         .setup(|app| {
             // Initialise debug-mode logging (no-op unless LATTE_DEBUG=1).

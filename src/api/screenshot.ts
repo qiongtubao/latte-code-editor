@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 
 export interface ScreenshotResult {
   path: string;
@@ -12,24 +13,16 @@ export async function screenshotWindow(): Promise<ScreenshotResult> {
 }
 
 /**
- * Copy a screenshot to the system clipboard so the user can paste it
- * directly into chat / browser / editor. Falls back to text-only if
- * the browser doesn't support image clipboard.
+ * Copy a screenshot to the system clipboard via Tauri's native clipboard
+ * plugin. The browser's navigator.clipboard.write() doesn't always work
+ * for binary data inside a Tauri webview, so we use the Rust side.
  */
 export async function copyScreenshotToClipboard(result: ScreenshotResult): Promise<boolean> {
-  if (!navigator.clipboard || typeof ClipboardItem === "undefined") {
-    return false;
-  }
   try {
-    const bin = atob(result.data_base64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const blob = new Blob([bytes], { type: "image/png" });
-    const item = new ClipboardItem({ "image/png": blob });
-    await navigator.clipboard.write([item]);
+    await writeImage(result.data_base64);
     return true;
   } catch (e) {
-    console.error("clipboard write failed:", e);
+    console.error("clipboard writeImage failed:", e);
     return false;
   }
 }

@@ -16,6 +16,7 @@
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",
     "@lezer/highlight": "1",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "d3-force": "^3.0.0",
     "d3-scale": "^4.0.2",
     "react": "^19.0.0",
