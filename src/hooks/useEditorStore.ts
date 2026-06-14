@@ -285,9 +285,11 @@ export const useEditorStore = create<EditorStore>((set) => {
     },
     setMarkdownMode: (mode) => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+      console.log("[useEditorStore] setMarkdownMode", { mode, wsId });
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyEditor();
+        console.log("[useEditorStore] setMarkdownMode before", { oldMode: ws.markdownMode, newMode: mode });
         return mutate(s.byWorkspace, wsId, { ...ws, markdownMode: mode });
       });
     },
