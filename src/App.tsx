@@ -68,6 +68,15 @@ function App() {
   useEffect(() => {
     if (activeId) useGraphStore.getState().requestReload();
   }, [activeId]);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (typeof detail === "string") setToast(detail);
+    };
+    window.addEventListener("latte-toast", handler);
+    return () => window.removeEventListener("latte-toast", handler);
+  }, []);
+
 
 
   const folderRoot = activeMeta?.project_root ?? null;
@@ -132,6 +141,13 @@ function App() {
         lastRRef.current = now;
         void import("./utils/debug/inject").then((m) => m.replayLastAction());
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) {
+        // Screenshot the main window to ~/Pictures/latte-screenshots/
+        e.preventDefault();
+        screenshotWindow()
+          .then((r) => setToast(`Screenshot saved: ${r.path}`))
+          .catch((err) => setToast(`Screenshot failed: ${String(err)}`));
+      } else if ((e.ctrlKey || e.metaKey) && e.altKey && e.shiftKey && (e.key === "S" || e.key === "s")) {
+        // Debug snapshot (dumps store state to console) — moved to Ctrl+Alt+Shift+S
         if (!useDebugStore.getState().isOn) return;
         e.preventDefault();
         const now = Date.now();
@@ -164,12 +180,8 @@ function App() {
           )
           .catch((e) => console.error("latte:debug-snapshot-backend-error", String(e)));
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "M" || e.key === "m")) {
-      } else if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === "S" || e.key === "s")) {
-        // Screenshot the main window to ~/Pictures/latte-screenshots/
-        e.preventDefault();
-        screenshotWindow()
-          .then((r) => setToast(`Screenshot saved: ${r.path}`))
-          .catch((err) => setToast(`Screenshot failed: ${String(err)}`));
+      } else if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === "P" || e.key === "p")) {
+        // Reserved for future
       }
     };
     window.addEventListener("keydown", handler);

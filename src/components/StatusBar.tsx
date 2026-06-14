@@ -74,8 +74,7 @@ export function StatusBar({
           <span>{autoUpdate ? "⚡" : "⏸"}</span>
           {autoUpdate ? "Auto" : "Manual"}
         </button>
-        <button onClick={onToggleSettings} className="opacity-80 hover:opacity-100 cursor-pointer" title="Settings">⚙</button>
-        <button onClick={() => screenshotWindow().then((r) => alert(`Screenshot saved: ${r.path}`)).catch((e) => alert(`Screenshot failed: ${String(e)}`))} className="opacity-80 hover:opacity-100 cursor-pointer" title="Screenshot (Ctrl+Alt+S)">📷</button>
+        <button onClick={async () => { try { const r = await screenshotWindow(); window.dispatchEvent(new CustomEvent("latte-toast", { detail: `Screenshot: ${r.path}` })); } catch (e) { window.dispatchEvent(new CustomEvent("latte-toast", { detail: `Failed: ${String(e)}` })); } }} className="opacity-80 hover:opacity-100 cursor-pointer" title="Screenshot (Ctrl+Shift+S)">📷</button>
       </div>
       </div>
     </div>
