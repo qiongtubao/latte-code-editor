@@ -158,25 +158,48 @@ export function FileTree({ root, entries, onFileOpen }: FileTreeProps) {
     return items;
   };
 
+  const [rootExpanded, setRootExpanded] = useState(true);
+
+  const handleRootContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY, entry: { name: root, path: root, is_dir: true, is_symlink: false } });
+  }, [root]);
+
   return (
     <div key={refreshVersion} className="h-full overflow-y-auto text-sm" style={{ background: "#252526" }}>
-      <div className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-400 border-b border-gray-700">
-        <span>📂</span>
-        <span className="truncate">{rootName}</span>
+      <div
+        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-400 border-b border-gray-700 cursor-pointer select-none hover:bg-[#2a2a2a]"
+        onClick={() => setRootExpanded((v) => !v)}
+        onContextMenu={handleRootContextMenu}
+        title={`${root} — click to collapse, right-click for menu`}
+      >
+        <span className="w-3 inline-block text-center">{rootExpanded ? "▾" : "▸"}</span>
+        <span>{rootExpanded ? "📂" : "📁"}</span>
+        <span className="truncate flex-1">{rootName}</span>
+        <button
+          onClick={(e) => { e.stopPropagation(); setRefreshVersion((v) => v + 1); }}
+          className="text-gray-500 hover:text-gray-300 px-1"
+          title="Refresh"
+        >↻</button>
       </div>
 
-      {entries.length === 0 && (
-        <div className="text-gray-500 text-xs px-3 py-2 italic">empty folder</div>
+      {rootExpanded && (
+        <>
+          {entries.length === 0 && (
+            <div className="text-gray-500 text-xs px-3 py-2 italic">empty folder</div>
+          )}
+          {entries.map((entry) => (
+            <FileTreeItem
+              key={entry.path}
+              entry={entry}
+              depth={0}
+              onFileOpen={onFileOpen}
+              onContextMenu={handleContextMenu}
+            />
+          ))}
+        </>
       )}
-      {entries.map((entry) => (
-        <FileTreeItem
-          key={entry.path}
-          entry={entry}
-          depth={0}
-          onFileOpen={onFileOpen}
-          onContextMenu={handleContextMenu}
-        />
-      ))}
 
       {ctxMenu && (
         <ContextMenu
