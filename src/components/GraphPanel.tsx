@@ -4,7 +4,7 @@ import { useEditorStore } from "../hooks/useEditorStore";
 import { useSettingsStore } from "../hooks/useSettingsStore";
 import { CanvasGraph } from "./CanvasGraph";
 import { graphGetData, graphSearch } from "../api/graphCommands";
-import { openFile, buildCodeGraph, searchInFiles, type SearchMatch } from "../api/commands";
+import { openFile, listDirectory, buildCodeGraph, searchInFiles, type SearchMatch } from "../api/commands";
 import {
   getDefaultSubgraph, detectCommunities, extractFocusSubgraph,
   type RawNode, type RawEdge,
@@ -13,7 +13,7 @@ import type { GraphNode, SimResult, GraphDisplayMode } from "../hooks/graphTypes
 import { nodeKindToGroup } from "../hooks/graphTypes";
 import { NODE_COLORS } from "./graphRenderer";
 
-export function GraphPanel() {
+export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }) {
   const {
     graphData, loading, error, simNodes, simEdges,
     selectedNodeId, hoveredNodeId, highlightedNodeIds, loadVersion,
@@ -410,13 +410,7 @@ export function GraphPanel() {
         )}
         </>)}
         {graphMode === "docs" && (
-          <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-            <div className="text-center">
-              <p className="text-4xl mb-2">📄</p>
-              <p>Doc Graph — open the <b>📄 Docs</b> tab in the sidebar</p>
-              <p className="text-xs mt-1">Document nodes will appear here as [[wikilinks]] are resolved</p>
-            </div>
-          </div>
+          <DocGraphView folderRoot={folderRoot} onOpen={(path) => openFile(path).then((f) => useEditorStore.getState().openFileOrSwitch(f))} />
         )}
 
         {contextMenu && (
@@ -439,6 +433,86 @@ export function GraphPanel() {
         {displayMode === "focus" && focusMeta && <span className="text-gray-400">{focusMeta.callers} callers · {focusMeta.callees} callees{focusMeta.truncated && <span className="text-yellow-500 ml-1">(truncated from {focusMeta.total})</span>}</span>}
         <span className="text-gray-600 ml-auto">{nodeCount}n / {edgeCount}e</span>
       </div>
+    </div>
+  );
+}
+
+function DocGraphView({ folderRoot, onOpen }: { folderRoot: string | null; onOpen: (path: string) => void }) {
+  const docsInputDir = useSettingsStore((s) => s.docsInputDir);
+  const [groups, setGroups] = useState<{ type: string; entries: { name: string; path: string; is_dir: boolean }[] }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!folderRoot) { setGroups([]); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const abs = folderRoot.endsWith("/") ? folderRoot + docsInputDir : `${folderRoot}/${docsInputDir}`;
+      const entries = await listDirectory(abs).catch((e: unknown) => {
+        setError(String(e));
+        return [];
+      });
+      const map: Record<string, { name: string; path: string; is_dir: boolean }[]> = {};
+      for (const e of entries as { name: string; path: string; is_dir: boolean }[]) {
+        if (e.name.startsWith(".")) continue;
+        const key = e.is_dir ? e.name : "(files)";
+        (map[key] ??= []).push(e);
+      }
+      const sorted = Object.entries(map)
+        .filter(([, v]) => v.length > 0)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([type, entries]) => ({
+          type,
+          entries: entries.sort((a, b) => a.name.localeCompare(b.name)),
+        }));
+      setGroups(sorted);
+    } finally {
+      setLoading(false);
+    }
+  }, [folderRoot, docsInputDir]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  if (!folderRoot) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+        Open a workspace first to see docs.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-3 text-xs">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-gray-300 font-medium">Document Graph</div>
+          <div className="text-gray-500 text-[10px]">From {docsInputDir} · {groups.reduce((s, g) => s + g.entries.length, 0)} files</div>
+        </div>
+        <button onClick={refresh} className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded text-[10px]">↻ refresh</button>
+      </div>
+      {loading && <div className="text-gray-500 text-center py-4">Loading…</div>}
+      {error && <div className="text-yellow-400 text-center py-4">⚠ {error}</div>}
+      {!loading && !error && groups.length === 0 && (
+        <div className="text-gray-500 text-center py-8">No docs found in {docsInputDir}</div>
+      )}
+      {groups.map((g) => (
+        <div key={g.type} className="mb-3">
+          <div className="text-[10px] uppercase text-gray-500 font-semibold tracking-wider mb-1 sticky top-0 bg-[#1e1e1e] py-1">{g.type}</div>
+          <div className="grid grid-cols-2 gap-1">
+            {g.entries.map((e) => (
+              <div
+                key={e.path}
+                onClick={() => !e.is_dir && onOpen(e.path)}
+                className={`p-2 bg-[#2a2a2a] hover:bg-[#333] rounded border border-gray-700 ${e.is_dir ? "opacity-50 cursor-default" : "cursor-pointer"}`}
+              >
+                <div className="text-gray-300 truncate">{e.is_dir ? "📁" : "📄"} {e.name}</div>
+                <div className="text-[10px] text-gray-500 truncate">{e.path.split("/").slice(-2).join("/")}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

@@ -273,7 +273,7 @@ function App() {
 
             {(activePanel === "graph" || activePanel === "split") && (
               <div className="flex-1 overflow-hidden">
-                <GraphPanel />
+                <GraphPanel folderRoot={folderRoot} />
               </div>
             )}
           </div>
