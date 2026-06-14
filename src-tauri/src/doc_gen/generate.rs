@@ -1,10 +1,8 @@
 //! Doc generation: produce a stub .md file for a DocSuggestion.
-
 use std::path::Path;
-
 use crate::doc_gen::scan::DocSuggestion;
 
-pub fn render_stub(sug: &DocSuggestion) -> String {
+pub fn render_stub(sug: &DocSuggestion, related: &[DocSuggestion]) -> String {
     let mut out = String::new();
     out.push_str("---\n");
     out.push_str(&format!("type: {}\n", sug.doc_type));
@@ -30,21 +28,31 @@ pub fn render_stub(sug: &DocSuggestion) -> String {
     out.push_str("TODO: AI will fill this in (or edit by hand).\n\n");
     out.push_str("## Key concepts\n\n");
     out.push_str("TODO.\n\n");
-    out.push_str("## Related\n\n");
-    out.push_str("<!-- link to other docs here -->\n");
+    if !related.is_empty() {
+        out.push_str("## Related\n\n");
+        for r in related {
+            // Use only the basename id (e.g. "entities/string" → "string" matches via flat id resolution)
+            let target = r.rel_path.trim_end_matches(".md");
+            let label = &r.title;
+            out.push_str(&format!("- [[{target}|{label}]]\n"));
+        }
+        out.push_str("\n");
+    } else {
+        out.push_str("## Related\n\n");
+        out.push_str("<!-- link to other docs here -->\n");
+    }
     out
 }
 
 /// Write a stub to `<docs_root>/<rel_path>`. Returns the absolute path.
-pub fn write_stub(docs_root: &Path, sug: &DocSuggestion) -> Result<String, String> {
+pub fn write_stub(docs_root: &Path, sug: &DocSuggestion, related: &[DocSuggestion]) -> Result<String, String> {
     let target = docs_root.join(&sug.rel_path);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
     }
-    std::fs::write(&target, render_stub(sug)).map_err(|e| format!("write: {e}"))?;
+    std::fs::write(&target, render_stub(sug, related)).map_err(|e| format!("write: {e}"))?;
     Ok(target.to_string_lossy().to_string())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,11 +68,32 @@ mod tests {
             sources: vec!["src/t_string.c".into()],
             reason: "Redis data type".into(),
         };
-        let out = render_stub(&sug);
+        let out = render_stub(&sug, &[]);
         assert!(out.contains("type: entity"));
         assert!(out.contains("title: String"));
         assert!(out.contains("src/t_string.c"));
         assert!(out.contains("## Source files"));
+    }
+
+    #[test]
+    fn render_stub_includes_related_links() {
+        let sug = DocSuggestion {
+            title: "String".into(),
+            doc_type: "entity".into(),
+            rel_path: "entities/string.md".into(),
+            sources: vec!["src/t_string.c".into()],
+            reason: "Redis data type".into(),
+        };
+        let related = vec![DocSuggestion {
+            title: "List".into(),
+            doc_type: "entity".into(),
+            rel_path: "entities/list.md".into(),
+            sources: vec!["src/t_list.c".into()],
+            reason: "Redis data type".into(),
+        }];
+        let out = render_stub(&sug, &related);
+        assert!(out.contains("## Related"));
+        assert!(out.contains("[[entities/list|List]]"));
     }
 
     #[test]
@@ -77,7 +106,7 @@ mod tests {
             sources: vec!["src/dict.c".into()],
             reason: "data structure".into(),
         };
-        let path = write_stub(dir.path(), &sug).unwrap();
+        let path = write_stub(dir.path(), &sug, &[]).unwrap();
         assert!(std::path::Path::new(&path).exists());
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("title: Dict"));

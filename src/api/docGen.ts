@@ -26,6 +26,14 @@ export async function scanProjectForDocs(projectRoot: string): Promise<ScanResul
   return invoke<ScanResult>("scan_project_for_docs", { projectRoot });
 }
 
-export async function writeDocStub(docsRoot: string, suggestion: DocSuggestion): Promise<string> {
-  return invoke<string>("write_doc_stub", { docsRoot, suggestion });
+export async function writeDocStub(
+  docsRoot: string,
+  suggestion: DocSuggestion,
+  allSuggestions?: DocSuggestion[],
+): Promise<string> {
+  return invoke<string>("write_doc_stub", {
+    docsRoot,
+    suggestion,
+    allSuggestions: allSuggestions ?? null,
+  });
 }

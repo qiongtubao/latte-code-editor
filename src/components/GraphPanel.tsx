@@ -561,7 +561,7 @@ function DocGraphView({
                   );
                   if (ok) {
                     Promise.all(result.suggested_docs.map((s) =>
-                      writeDocStub(`${folderRoot}/${docsInputDir}`, s).catch(() => "")
+                      writeDocStub(`${folderRoot}/${docsInputDir}`, s, result.suggested_docs).catch(() => "")
                     )).then(() => refresh());
                   }
                 }).catch((e) => setError(String(e)));
