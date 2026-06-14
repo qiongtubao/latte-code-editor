@@ -7,6 +7,7 @@ mod workspace;
 mod debug;
 mod ai;
 use std::sync::Arc;
+mod doc_gen;
 use tauri::Manager;
 
 use crate::graph::incremental::IncrementalHub;
@@ -91,11 +92,13 @@ pub fn run() {
             crate::debug::commands::debug_purge_now,
             // ai
             crate::ai::commands::ai_review,
+            // doc_gen
+            crate::doc_gen::commands::scan_project_for_docs,
+            crate::doc_gen::commands::write_doc_stub,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
 /// 启动时初始化：从 app_data_dir 读 state.json 恢复 workspace 列表
 async fn init_workspaces(app: tauri::AppHandle) {
     let registry: tauri::State<Arc<WorkspaceRegistry>> = app.state();
