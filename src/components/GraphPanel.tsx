@@ -489,7 +489,30 @@ function DocGraphView({ folderRoot, onOpen }: { folderRoot: string | null; onOpe
           <div className="text-gray-300 font-medium">Document Graph</div>
           <div className="text-gray-500 text-[10px]">From {docsInputDir} · {groups.reduce((s, g) => s + g.entries.length, 0)} files</div>
         </div>
-        <button onClick={refresh} className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded text-[10px]">↻ refresh</button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={async () => {
+              if (!folderRoot) return;
+              import("../api/docGen").then(({ scanProjectForDocs, writeDocStub }) => {
+                scanProjectForDocs(folderRoot).then((result) => {
+                  const names = result.suggested_docs.slice(0, 40).map(d => d.title).join(", ");
+                  const ok = window.confirm(
+                    `Found ${result.suggested_docs.length} doc suggestions.\n\n` +
+                    `Top: ${names}\n\n` +
+                    `Generate all to ${docsInputDir}?`
+                  );
+                  if (ok) {
+                    Promise.all(result.suggested_docs.map((s) =>
+                      writeDocStub(`${folderRoot}/${docsInputDir}`, s).catch(() => "")
+                    )).then(() => refresh());
+                  }
+                }).catch((e) => setError(String(e)));
+              });
+            }}
+            className="px-2 py-0.5 bg-[#007acc] hover:bg-[#005a9e] text-white rounded text-[10px]"
+          >🔍 Scan</button>
+          <button onClick={refresh} className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded text-[10px]">↻</button>
+        </div>
       </div>
       {loading && <div className="text-gray-500 text-center py-4">Loading…</div>}
       {error && <div className="text-yellow-400 text-center py-4">⚠ {error}</div>}
