@@ -427,40 +427,31 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
             ))}
           </div>
         )}
+      </div>
 
-        {/* Doc graph: search bar + canvas */}
+      {/* Canvas container */}
+      <div ref={containerRef} className="flex-1 relative">
+        {graphMode === "code" && (<>
+        {loading && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">Loading graph…</div>}
+        {error && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm px-4 text-center"><p className="text-yellow-400 mb-1">No graph data</p><p className="text-xs">{error}</p></div>}
+        {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length > 0 && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">Layout… ({filteredData.nodes.length} nodes)</div>}
+        {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">No nodes to display</div>}
+        {hasWorker && (
+          <CanvasGraph simNodes={simNodes} simEdges={simEdges}
+            selectedNodeId={selectedNodeId} hoveredNodeId={hoveredNodeId}
+            highlightedNodeIds={highlightedNodeIds}
+            onNodeClick={handleNodeClick} onNodeHover={setHoveredNode}
+            onNodeContextMenu={handleNodeContextMenu} />
+        )}
+        </>)}
         {graphMode === "docs" && docSimRender && filteredDocSim && (
           <>
-            <div className="relative">
-              <div className="px-3 py-1.5 text-xs border-b border-gray-700 bg-[#252526] flex items-center gap-2">
-                <input type="text" value={docSearchQuery} onChange={(e) => setDocSearchQuery(e.target.value)}
-                  placeholder="Search docs by title..."
-                  className="flex-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc]" />
-                {docSearchQuery && (
-                  <button onClick={() => setDocSearchQuery("")} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">✕</button>
-                )}
-                <span className="text-gray-500 text-[10px] shrink-0">{filteredDocSim.nodes.length}/{docSimRender.nodes.length}</span>
-              </div>
-              {/* Search dropdown: match titles */}
-              {docSearchQuery.trim().length > 0 && docSimRender && (() => {
-                const q = docSearchQuery.trim().toLowerCase();
-                const matches = docSimRender.nodes.filter((n) =>
-                  n.id.toLowerCase().includes(q) || (n as unknown as { label?: string }).label?.toLowerCase().includes(q)
-                ).slice(0, 8);
-                if (matches.length === 0) return null;
-                return (
-                  <div className="absolute left-3 right-3 top-full z-20 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl mt-0.5 max-h-48 overflow-y-auto">
-                    {matches.map((n) => (
-                      <div key={n.id} onClick={() => setDocSearchQuery(n.id.split("/").pop() ?? n.id)}
-                        className="px-3 py-1.5 text-xs cursor-pointer hover:bg-[#094771] text-gray-200 border-b border-gray-800 last:border-0 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: NODE_COLORS[n.group] ?? "#808080" }} />
-                        <span className="truncate">{(n as unknown as { label?: string }).label ?? n.id}</span>
-                        <span className="text-gray-500 text-[10px] shrink-0 ml-auto">{n.id}</span>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
+            <div className="px-3 py-1.5 text-xs border-b border-gray-700 bg-[#252526] flex items-center gap-2">
+              <input type="text" value={docSearchQuery} onChange={(e) => setDocSearchQuery(e.target.value)}
+                placeholder="Search docs by title..."
+                className="flex-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc]" />
+              {docSearchQuery && <button onClick={() => setDocSearchQuery("")} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">✕</button>}
+              <span className="text-gray-500 text-[10px] shrink-0">{filteredDocSim.nodes.length}/{docSimRender.nodes.length}</span>
             </div>
             <CanvasGraph simNodes={filteredDocSim.nodes} simEdges={filteredDocSim.edges}
               selectedNodeId={null} hoveredNodeId={null} highlightedNodeIds={new Set()}
@@ -478,19 +469,19 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
             onOpen={(path) => openFile(path).then((f) => useEditorStore.getState().openFileOrSwitch(f))}
             onDocSim={(nodes, edges) => setDocSimRender(nodes.length > 0 ? { nodes, edges } : null)} />
         )}
-
-        {contextMenu && (
-          <>
-            <div className="absolute inset-0 z-10" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
-            <div className="absolute z-20 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl py-1 text-xs min-w-[140px]" style={{ left: contextMenu.x, top: contextMenu.y }}>
-              <div className="px-3 py-1 text-gray-500 border-b border-gray-700 truncate max-w-[200px]">{filteredData?.nodes.find((x) => x.id === contextMenu.nodeId)?.name ?? contextMenu.nodeId}</div>
-              <button onClick={handleContextJumpToCode} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>📄</span><span>Jump to Code</span></button>
-              <button onClick={handleContextExpand} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>🔍</span><span>Expand as Center</span></button>
-              <button onClick={handleContextCopyName} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>📋</span><span>Copy Name</span></button>
-            </div>
-          </>
-        )}
       </div>
+
+      {contextMenu && (
+        <>
+          <div className="absolute inset-0 z-10" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
+          <div className="absolute z-20 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl py-1 text-xs min-w-[140px]" style={{ left: contextMenu.x, top: contextMenu.y }}>
+            <div className="px-3 py-1 text-gray-500 border-b border-gray-700 truncate max-w-[200px]">{filteredData?.nodes.find((x) => x.id === contextMenu.nodeId)?.name ?? contextMenu.nodeId}</div>
+            <button onClick={handleContextJumpToCode} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>📄</span><span>Jump to Code</span></button>
+            <button onClick={handleContextExpand} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>🔍</span><span>Expand as Center</span></button>
+            <button onClick={handleContextCopyName} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>📋</span><span>Copy Name</span></button>
+          </div>
+        </>
+      )}
 
       {/* Bottom bar */}
       <div className="px-3 py-1.5 text-xs text-gray-500 border-t border-gray-700 bg-[#252526] flex flex-wrap gap-3 items-center">
