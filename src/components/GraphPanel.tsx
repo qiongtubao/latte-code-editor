@@ -39,7 +39,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [focusMeta, setFocusMeta] = useState<{ total: number; callers: number; callees: number; truncated: boolean } | null>(null);
-  const [docSimRender, setDocSimRender] = useState<{ nodes: SimRenderNode[]; edges: { source: string; target: string; kind: string }[] } | null>(null);
+  const [docSimRender, setDocSimRender] = useState<{ nodes: SimRenderNode[]; edges: { source: string; target: string; kind: string; weight: number }[] } | null>(null);
   const [docRefreshKey, setDocRefreshKey] = useState(0);
 
   // Reset doc sim when switching to docs mode
@@ -476,7 +476,7 @@ function DocGraphView({
 }: {
   folderRoot: string | null;
   onOpen: (path: string) => void;
-  onDocSim: (nodes: SimRenderNode[], edges: { source: string; target: string; kind: string }[]) => void;
+  onDocSim: (nodes: SimRenderNode[], edges: { source: string; target: string; kind: string; weight: number }[]) => void;
 }) {
   const docsInputDir = useSettingsStore((s) => s.docsInputDir);
   const [groups, setGroups] = useState<{ type: string; entries: { name: string; path: string; is_dir: boolean }[] }[]>([]);

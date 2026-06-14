@@ -708,7 +708,10 @@ export class WebGPURenderer implements GraphRenderer {
       const tIdx = idToIndex.get(t) ?? 0;
 
       const baseColor = EDGE_COLORS[e.kind] ?? "#555";
-      const baseWidth = e.kind === "calls" ? 1.5 : e.kind === "imports" ? 1.2 : 0.8;
+      // Per-edge weight (buildDocSim sets this for doc graph edges)
+      const w = typeof (e as { weight?: number }).weight === "number"
+        ? (e as { weight: number }).weight
+        : (e.kind === "calls" ? 1.0 : e.kind === "imports" ? 0.85 : 0.5);
       const isHighlighted =
         (selectedNodeId != null && (s === selectedNodeId || t === selectedNodeId)) ||
         (hoveredNodeId != null && (s === hoveredNodeId || t === hoveredNodeId));
@@ -716,13 +719,12 @@ export class WebGPURenderer implements GraphRenderer {
 
       let alpha: number;
       if (dim) alpha = 0.05;
-      else if (isHighlighted) alpha = 0.85;
-      else alpha = 0.32;
+      else if (isHighlighted) alpha = 0.95;
+      else alpha = 0.25 + w * 0.55;
 
-      const color = isHighlighted ? hexToRgba("#e0e0e0", 1) : hexToRgba(baseColor, 1);
-      const width = isHighlighted ? baseWidth * 2 : baseWidth;
+      const color = isHighlighted ? hexToRgba("#ffffff", 1) : hexToRgba(baseColor, 1);
+      const width = isHighlighted ? (0.4 + w * 1.6) * 2 : (0.4 + w * 1.6);
 
-      // layout: srcIdx(1u) + dstIdx(1u) + color(4f) + width(1f) + alpha(1f) + pad(2f) = 32 bytes
       const base = i * (EDGE_VERTEX_STRIDE / 4);
       u32[base + 0] = sIdx;
       u32[base + 1] = tIdx;
