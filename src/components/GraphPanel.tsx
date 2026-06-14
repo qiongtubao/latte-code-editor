@@ -310,42 +310,60 @@ export function GraphPanel() {
 
   return (
     <div className="flex flex-col h-full" style={{ background: "#1e1e1e" }}>
-      <div className="px-3 py-1.5 text-xs text-gray-400 border-b border-gray-700 bg-[#252526]">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setGraphMode("code")}
-              className={`px-2 py-0.5 rounded cursor-pointer transition-colors text-xs font-medium ${graphMode === "code" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}
-            >Code Graph</button>
-            <button
-              onClick={() => setGraphMode("docs")}
-              className={`px-2 py-0.5 rounded cursor-pointer transition-colors text-xs font-medium ${graphMode === "docs" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}
-            >Doc Graph</button>
-            {graphMode === "code" && (<>
-            {(["main", "full"] as const).map((m) => (
-              <button key={m} onClick={() => switchMode(m)} className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${displayMode === m ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}>{m === "main" ? "Main" : "Full"}</button>
-            ))}
-            </>)}
-          </div>
+      <div className="text-xs text-gray-400 border-b border-gray-700 bg-[#252526]">
+        {/* Major view selector: Code Graph | Doc Graph */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
           <div className="flex items-center gap-2">
-            <span className="text-gray-500">{displayLabel || `${nodeCount}n`}</span>
-            <button onClick={handleZoomFit} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">⊞</button>
-            <button onClick={handleRebuild} disabled={rebuilding} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer disabled:opacity-50 text-xs">{rebuilding ? "⟳" : "↻"}</button>
+            <span className="text-[10px] uppercase text-gray-500 font-semibold tracking-wider">View</span>
+            <div className="flex bg-[#1e1e1e] rounded p-0.5">
+              <button
+                onClick={() => setGraphMode("code")}
+                className={`px-3 py-1 rounded text-xs font-medium cursor-pointer transition-colors ${graphMode === "code" ? "bg-[#007acc] text-white shadow" : "text-gray-400 hover:text-gray-200"}`}
+              >{'\u{1F4BB}'} Code Graph</button>
+              <button
+                onClick={() => setGraphMode("docs")}
+                className={`px-3 py-1 rounded text-xs font-medium cursor-pointer transition-colors ${graphMode === "docs" ? "bg-[#007acc] text-white shadow" : "text-gray-400 hover:text-gray-200"}`}
+              >{'\u{1F4C4}'} Doc Graph</button>
+            </div>
           </div>
-        </div>
-
-        {/* Search */}
-        <div className="flex items-center gap-1 mt-1.5">
-          {(["symbols", "files", "text"] as const).map((tab) => (
-            <button key={tab} onClick={() => { setSearchTab(tab); setSearchResults([]); setSearchTextResults([]); }} className={`px-2 py-0.5 rounded text-[10px] cursor-pointer ${searchTab === tab ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400"}`}>{tab}</button>
-          ))}
-          <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
-            placeholder={`Search ${searchTab}...`}
-            className="flex-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc]" />
-          {(searchResults.length > 0 || searchTextResults.length > 0) && (
-            <button onClick={() => { setSearchResults([]); setSearchTextResults([]); setSearchQuery(""); }} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">×</button>
+          {graphMode === "code" && (
+            <div className="flex items-center gap-1">
+              {(["main", "full"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => switchMode(m)}
+                  className={`px-2 py-0.5 rounded cursor-pointer transition-colors text-[10px] ${displayMode === m ? "bg-[#3a3a3a] text-gray-200" : "text-gray-500 hover:text-gray-300"}`}
+                >{m === "main" ? "Main" : "Full"}</button>
+              ))}
+              {displayMode === "focus" && (
+                <span className="flex items-center gap-1 ml-1">
+                  <span className="px-1.5 py-0.5 bg-[#094771] text-blue-200 rounded text-[10px]">Focus</span>
+                  <button onClick={() => switchMode("main")} className="px-1 py-0.5 bg-[#3a3a3a] text-gray-300 rounded cursor-pointer text-[10px] hover:bg-[#4a4a4a]">×</button>
+                </span>
+              )}
+              <span className="text-gray-500 text-[10px] ml-1">{displayLabel || `${nodeCount}n`}</span>
+              <button onClick={handleZoomFit} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">⊞</button>
+              <button onClick={handleRebuild} disabled={rebuilding} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer disabled:opacity-50 text-xs">{rebuilding ? "⟳" : "↻"}</button>
+            </div>
+          )}
+          {graphMode === "docs" && (
+            <button className="text-[10px] text-gray-500 hover:text-gray-300 px-2 py-0.5" disabled>↻ refresh docs</button>
           )}
         </div>
+        {/* Search (code mode only) */}
+        {graphMode === "code" && (
+          <div className="flex items-center gap-1 px-3 py-1.5">
+            {(["symbols", "files", "text"] as const).map((tab) => (
+              <button key={tab} onClick={() => { setSearchTab(tab); setSearchResults([]); setSearchTextResults([]); }} className={`px-2 py-0.5 rounded text-[10px] cursor-pointer ${searchTab === tab ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400"}`}>{tab}</button>
+            ))}
+            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
+              placeholder={`Search ${searchTab}...`}
+              className="flex-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc]" />
+            {(searchResults.length > 0 || searchTextResults.length > 0) && (
+              <button onClick={() => { setSearchResults([]); setSearchTextResults([]); setSearchQuery(""); }} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">×</button>
+            )}
+          </div>
+        )}
 
         {/* Search results */}
         {searchResults.length > 0 && (
