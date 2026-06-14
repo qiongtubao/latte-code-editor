@@ -1,7 +1,7 @@
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useGraphSettings } from "../hooks/useGraphSettings";
 import { LspStatusBar } from "./LspStatusBar";
-import { screenshotWindow } from "../api/screenshot";
+import { screenshotWindow, copyScreenshotToClipboard } from "../api/screenshot";
 
 export function StatusBar({
   onToggleSettings,
@@ -74,7 +74,7 @@ export function StatusBar({
           <span>{autoUpdate ? "⚡" : "⏸"}</span>
           {autoUpdate ? "Auto" : "Manual"}
         </button>
-        <button onClick={async () => { try { const r = await screenshotWindow(); window.dispatchEvent(new CustomEvent("latte-toast", { detail: `Screenshot: ${r.path}` })); } catch (e) { window.dispatchEvent(new CustomEvent("latte-toast", { detail: `Failed: ${String(e)}` })); } }} className="opacity-80 hover:opacity-100 cursor-pointer" title="Screenshot (Ctrl+Shift+S)">📷</button>
+        <button onClick={async () => { try { const r = await screenshotWindow(); const copied = await copyScreenshotToClipboard(r); window.dispatchEvent(new CustomEvent("latte-toast", { detail: copied ? `Copied! ${r.path}` : `Saved: ${r.path}` })); } catch (e) { window.dispatchEvent(new CustomEvent("latte-toast", { detail: `Failed: ${String(e)}` })); } }} className="opacity-80 hover:opacity-100 cursor-pointer" title="Screenshot to clipboard (Ctrl+Shift+S)">📷</button>
       </div>
       </div>
     </div>

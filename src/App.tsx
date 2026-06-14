@@ -11,7 +11,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { WorkspaceTabs } from "./components/WorkspaceTabs";
 import { QuickOpenModal } from "./components/QuickOpenModal";
 import { openFile } from "./api/commands";
-import { screenshotWindow } from "./api/screenshot";
+import { screenshotWindow, copyScreenshotToClipboard } from "./api/screenshot";
 import { useEditorStore } from "./hooks/useEditorStore";
 import { useGraphStore } from "./hooks/useGraphStore";
 import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
@@ -141,10 +141,13 @@ function App() {
         lastRRef.current = now;
         void import("./utils/debug/inject").then((m) => m.replayLastAction());
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) {
-        // Screenshot the main window to ~/Pictures/latte-screenshots/
+        // Screenshot the main window to ~/Pictures/latte-screenshots/ + clipboard
         e.preventDefault();
         screenshotWindow()
-          .then((r) => setToast(`Screenshot saved: ${r.path}`))
+          .then(async (r) => {
+            const copied = await copyScreenshotToClipboard(r);
+            setToast(copied ? `Screenshot copied to clipboard! (${r.path})` : `Screenshot saved: ${r.path}`);
+          })
           .catch((err) => setToast(`Screenshot failed: ${String(err)}`));
       } else if ((e.ctrlKey || e.metaKey) && e.altKey && e.shiftKey && (e.key === "S" || e.key === "s")) {
         // Debug snapshot (dumps store state to console) — moved to Ctrl+Alt+Shift+S

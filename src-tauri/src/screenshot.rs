@@ -1,3 +1,4 @@
+use base64::Engine;
 use serde::Serialize;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -6,13 +7,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct ScreenshotResult {
     pub path: String,
     pub size_bytes: u64,
+    /// base64-encoded PNG (for clipboard copy in the frontend)
+    pub data_base64: String,
 }
 
 /// Capture a screenshot using the platform's native screenshot tool,
 /// save to ~/Pictures/latte-screenshots/screenshot-<ts>.png
 #[tauri::command]
 pub async fn screenshot_window() -> Result<ScreenshotResult, String> {
-    // Output directory
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "cannot determine home directory".to_string())?;
@@ -99,9 +101,13 @@ pub async fn screenshot_window() -> Result<ScreenshotResult, String> {
         }
     }
 
-    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    // Read the file and base64-encode for clipboard use in the frontend
+    let bytes = std::fs::read(&path).map_err(|e| format!("read file failed: {}", e))?;
+    let size = bytes.len() as u64;
+    let data_base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(ScreenshotResult {
         path: path.to_string_lossy().to_string(),
         size_bytes: size,
+        data_base64,
     })
 }
