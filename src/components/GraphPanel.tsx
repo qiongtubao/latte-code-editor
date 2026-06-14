@@ -463,14 +463,23 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
                 if (matches.length === 0) return null;
                 return (
                   <div className="absolute left-3 right-3 top-full z-20 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl mt-0.5 max-h-48 overflow-y-auto">
-                    {matches.map((n) => (
-                      <div key={n.id} onClick={() => setDocSearchQuery(n.id.split("/").pop() ?? n.id)}
-                        className="px-3 py-1.5 text-xs cursor-pointer hover:bg-[#094771] text-gray-200 border-b border-gray-800 last:border-0 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: NODE_COLORS[n.group] ?? "#808080" }} />
-                        <span className="truncate">{(n as unknown as { label?: string }).label ?? n.id}</span>
-                        <span className="text-gray-500 text-[10px] shrink-0 ml-auto">{n.id}</span>
-                      </div>
-                    ))}
+                    {matches.map((n) => {
+                      const node = n as unknown as { path?: string; label?: string };
+                      return (
+                        <div key={n.id}
+                          onClick={() => {
+                            setDocSearchQuery(n.id.split("/").pop() ?? n.id);
+                            if (node.path) {
+                              openFile(node.path).then((f) => useEditorStore.getState().openFileOrSwitch(f));
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs cursor-pointer hover:bg-[#094771] text-gray-200 border-b border-gray-800 last:border-0 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: NODE_COLORS[n.group] ?? "#808080" }} />
+                          <span className="truncate">{node.label ?? n.id}</span>
+                          <span className="text-gray-500 text-[10px] shrink-0 ml-auto">{n.id}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })()}
