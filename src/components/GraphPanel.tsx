@@ -574,13 +574,13 @@ function DocGraphView({
       setGroups(sorted);
 
       // Build doc sim for the graph canvas
-      await import("../utils/docGraph").then(async ({ buildDocSim }) => {
-        const sim = await buildDocSim(allFiles, async (p) => {
-          try { return await invoke<string>("get_file_content", { path: p }); }
-          catch { return ""; }
-        });
-        onDocSim(sim.nodes, sim.edges);
+      const { buildDocSim } = await import("../utils/docGraph");
+      const sim = await buildDocSim(allFiles, async (p) => {
+        try { return await invoke<string>("get_file_content", { path: p }); }
+        catch { return ""; }
       });
+      console.log("[DocGraphView] buildDocSim:", allFiles.length, "files ->", sim.nodes.length, "nodes,", sim.edges.length, "edges");
+      onDocSim(sim.nodes, sim.edges);
     } finally {
       setLoading(false);
     }
