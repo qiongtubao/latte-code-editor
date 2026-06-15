@@ -65,3 +65,25 @@ pub struct RoleInfo {
     pub category: String,
     pub default_model_tier: String,
 }
+
+/// Model info for display in UI.
+#[derive(Clone, Serialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub max_tokens: u32,
+    pub context_window: u32,
+    pub supports_vision: bool,
+    pub supports_thinking: bool,
+}
+
+/// Response for chat_get_role_config
+#[derive(Clone, Serialize)]
+pub struct RoleConfigResponse {
+    pub default_model: String,
+    pub roles: Vec<RoleInfo>,
+    pub workflows: Vec<WorkflowInfo>,
+    pub models_path: String,
+    pub roles_path: String,
+}

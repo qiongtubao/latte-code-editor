@@ -16,17 +16,31 @@ export function ChatPanel({ onClose }: Props) {
     selectedWorkflow,
     availableWorkflows,
     availableRoles,
+    availableModels,
+    defaultModel,
+    roleModels,
+    modelsPath,
+    rolesPath,
+    configPanelOpen,
     setWorkflow,
     loadWorkflows,
+    loadModels,
+    loadRoleConfig,
     sendMessage,
     cancelDiscussion,
     clearChat,
+    setRoleModel,
+    setDefaultModel,
+    openConfigFile,
+    toggleConfigPanel,
   } = useChatStore();
   const [input, setInput] = useState("");
 
   useEffect(() => {
     loadWorkflows();
-  }, [loadWorkflows]);
+    loadModels();
+    loadRoleConfig();
+  }, [loadWorkflows, loadModels, loadRoleConfig]);
 
   const handleFileClick = async (path: string) => {
     try {
@@ -73,6 +87,13 @@ export function ChatPanel({ onClose }: Props) {
         </select>
         <div className="ml-auto flex items-center gap-2">
           <button
+            onClick={toggleConfigPanel}
+            title="Configuration"
+            className="text-gray-400 hover:text-gray-200 text-xs px-1"
+          >
+            ⚙️
+          </button>
+          <button
             onClick={clearChat}
             title="Clear chat"
             className="text-gray-400 hover:text-gray-200 text-xs px-1"
@@ -101,6 +122,73 @@ export function ChatPanel({ onClose }: Props) {
               {r.icon} {r.id}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Config Panel */}
+      {configPanelOpen && (
+        <div className="px-3 py-2 bg-[#252526] border-b border-gray-700 text-xs">
+          <div className="font-semibold text-gray-200 mb-2">⚙️ 模型配置</div>
+          
+          <div className="mb-2">
+            <label className="text-gray-400 block mb-1">默认模型:</label>
+            <select
+              value={defaultModel}
+              onChange={(e) => setDefaultModel(e.target.value)}
+              className="w-full px-2 py-1 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
+            >
+              {availableModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.provider})
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="mb-2">
+            <div className="text-gray-400 mb-1">角色模型:</div>
+            <div className="max-h-40 overflow-y-auto space-y-1">
+              {availableRoles.map((role) => (
+                <div key={role.id} className="flex items-center gap-2">
+                  <span className="w-20 text-gray-300 truncate">
+                    {role.icon} {role.id}
+                  </span>
+                  <select
+                    value={roleModels[role.id] || defaultModel}
+                    onChange={(e) => setRoleModel(role.id, e.target.value)}
+                    className="flex-1 px-1 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
+                  >
+                    {availableModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          <div className="flex gap-2 text-[10px]">
+            <button
+              onClick={() => openConfigFile("models")}
+              className="px-2 py-1 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded"
+            >
+              📄 models.yaml
+            </button>
+            <button
+              onClick={() => openConfigFile("roles")}
+              className="px-2 py-1 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded"
+            >
+              📄 roles.yaml
+            </button>
+          </div>
+          
+          <div className="mt-2 text-[10px] text-gray-500">
+            配置文件:<br/>
+            {modelsPath}<br/>
+            {rolesPath}
+          </div>
         </div>
       )}
 

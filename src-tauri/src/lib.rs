@@ -104,6 +104,11 @@ pub fn run() {
             crate::chat_panel::commands::chat_start_discussion,
             crate::chat_panel::commands::chat_continue,
             crate::chat_panel::commands::chat_cancel,
+            crate::chat_panel::commands::chat_list_models,
+            crate::chat_panel::commands::chat_get_role_config,
+            crate::chat_panel::commands::chat_set_role_model,
+            crate::chat_panel::commands::chat_set_default_model,
+            crate::chat_panel::commands::chat_open_config,
             // screenshot
             crate::screenshot::screenshot_window,
         ])
