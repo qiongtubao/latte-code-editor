@@ -1,19 +1,70 @@
 //! Manages a running chat discussion session.
 //!
-//! Currently in **stub mode** by default — it emits realistic-looking
-//! responses for each role without actually calling any LLM. This lets
-//! the UI be developed and demoed without API keys.
+//! **Two modes**:
+//! - **Live mode** (default when API keys are present): uses real LLMs via
+//!   `latte-agent-orchestrator`. Each agent turn is streamed to the
+//!   frontend as a `chat:turn` event.
+//! - **Stub mode** (fallback when no API keys): emits realistic per-role
+//!   templated responses. Useful for UI development without LLM credentials.
 //!
-//! To enable real LLM calls, set `LATTE_CHAT_LIVE=1` and ensure API
-//! keys are configured in `latte-rs-agents/config/models.toml`.
+//! Use `LATTE_CHAT_LIVE=0` env var to force stub mode for testing.
 
+use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
+use latte_agent_core::agent::{Agent, AgentRunner};
+use latte_agent_core::config::AgentConfig;
+use latte_agent_core::model_resolver::{ModelResolver, ModelTier};
+use latte_agent_orchestrator::orchestrator::{DiscussionConfig, DiscussionOrchestrator};
+use latte_agent_orchestrator::{ConsensusMethod, DiscussionWorkflow, WorkflowStep};
+use latte_ai::params::GenerateParams;
+
+use super::config::agents_config_root;
 use super::types::*;
 
-/// A role stub response. Multi-paragraph, includes a `<file_edit>`
-/// tag at the bottom so the UI can demo the clickable file link.
+/// Workflow presets. Maps a friendly name → (workflow_id, default roles,
+/// max_rounds, display label). The user picks one of these in the UI.
+pub const WORKFLOW_PRESETS: &[(&str, &str, &[&str], usize, &str)] = &[
+    (
+        "plan",
+        "design_brainstorm",
+        &["pm", "architect", "programmer", "designer", "manager"],
+        2,
+        "🗺️ Plan — design and architect",
+    ),
+    (
+        "code",
+        "code_review",
+        &["programmer", "reviewer", "security", "tester"],
+        1,
+        "💻 Code — review and refactor",
+    ),
+    (
+        "debug",
+        "bug_triage",
+        &["tester", "programmer", "security", "devops", "manager"],
+        2,
+        "🪲 Debug — triage and fix",
+    ),
+    (
+        "discuss",
+        "default_workflow",
+        &[
+            "pm",
+            "architect",
+            "programmer",
+            "tester",
+            "reviewer",
+            "devops",
+            "manager",
+        ],
+        3,
+        "💬 Discuss — full team discussion",
+    ),
+];
+
+/// A role stub response (used in stub mode only).
 const ROLE_TEMPLATES: &[(&str, &str, &str)] = &[
     (
         "pm",
@@ -83,8 +134,235 @@ pub fn default_role_ids() -> &'static [&'static str] {
     ]
 }
 
+/// Run a discussion — uses real LLM if API keys are configured, else stub.
+pub async fn run_discussion(
+    app: &AppHandle,
+    req: &StartDiscussionRequest,
+) -> Result<DiscussionPayload, String> {
+    // Check whether we have API keys available
+    let has_keys = has_any_api_key();
+    let force_stub = std::env::var("LATTE_CHAT_LIVE")
+        .map(|v| v == "0")
+        .unwrap_or(false);
+
+    if has_keys && !force_stub {
+        // Try real mode; if it fails, fall back to stub
+        match run_live_discussion(app, req).await {
+            Ok(payload) => Ok(payload),
+            Err(e) => {
+                eprintln!("[chat] live mode failed: {e}; falling back to stub");
+                run_stub_discussion(app, req).await
+            }
+        }
+    } else {
+        run_stub_discussion(app, req).await
+    }
+}
+
+/// Check if any of the supported API keys is in the environment.
+fn has_any_api_key() -> bool {
+    ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]
+        .iter()
+        .any(|k| std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false))
+}
+
+/// Resolve workflow id + roles from the user-friendly workflow name.
+fn resolve_workflow(req: &StartDiscussionRequest) -> (String, Vec<String>) {
+    let preset = WORKFLOW_PRESETS
+        .iter()
+        .find(|(name, _, _, _, _)| *name == req.workflow)
+        .or_else(|| {
+            // Also accept the raw discussion.toml id
+            if [
+                "default_workflow",
+                "workflows.design_brainstorm",
+                "workflows.code_review",
+                "workflows.bug_triage",
+            ]
+            .contains(&req.workflow.as_str())
+            {
+                Some(&WORKFLOW_PRESETS[3]) // discuss
+            } else {
+                None
+            }
+        });
+    if let Some((_, wf_id, default_roles, _, _)) = preset {
+        let roles = req
+            .custom_roles
+            .clone()
+            .unwrap_or_else(|| default_roles.iter().map(|s| s.to_string()).collect());
+        (wf_id.to_string(), roles)
+    } else {
+        // Fallback: use custom roles or all defaults
+        let roles = req
+            .custom_roles
+            .clone()
+            .unwrap_or_else(|| default_role_ids().iter().map(|s| s.to_string()).collect());
+        ("default_workflow".to_string(), roles)
+    }
+}
+
+/// Build a workflow definition that drives each selected role to speak
+/// once per round. We synthesize a simple "all roles speak" workflow
+/// rather than parsing discussion.toml — this gives a predictable
+/// structure for streaming and avoids depending on the TOML shape.
+fn build_workflow(roles: &[String], max_rounds: usize) -> DiscussionWorkflow {
+    let steps = roles
+        .iter()
+        .enumerate()
+        .map(|(i, role)| WorkflowStep {
+            id: format!("step_{}", i),
+            description: format!("{} speaks", role),
+            speakers: vec![role.clone()],
+            prompt: format!(
+                "You are a **{role}** in a multi-agent team discussion.\n\
+                 Topic: {{topic}}\n\
+                 Previous discussion:\n{{transcript}}\n\n\
+                 Share your perspective as the {role}. Be concrete: list decisions, \
+                 file paths to edit, or risks. When you propose code changes, wrap them \
+                 in <file_edit path=\"...\">description</file_edit> tags so the UI can \
+                 render them as clickable links.",
+                role = role
+            ),
+            hooks: vec![],
+            output_key: None,
+        })
+        .collect();
+    DiscussionWorkflow {
+        name: "code-editor-chat".into(),
+        description: "In-editor multi-agent chat".into(),
+        steps,
+        max_rounds,
+        context_token_budget: 32000,
+    }
+}
+
+/// Run a real LLM-backed discussion. Loads configs from
+/// `latte-rs-agents/config/` and streams turns via `chat:turn` events.
+async fn run_live_discussion(
+    app: &AppHandle,
+    req: &StartDiscussionRequest,
+) -> Result<DiscussionPayload, String> {
+    let config_root = agents_config_root();
+    let agents_path = config_root.join("agents.toml");
+    let models_path = config_root.join("models.toml");
+
+    if !agents_path.exists() {
+        return Err(format!(
+            "agents.toml not found at {}",
+            agents_path.display()
+        ));
+    }
+
+    // Load and merge configs
+    let mut agent_config =
+        AgentConfig::load(agents_path.to_str().unwrap()).map_err(|e| e.to_string())?;
+    if models_path.exists() {
+        let models_config =
+            AgentConfig::load(models_path.to_str().unwrap()).map_err(|e| e.to_string())?;
+        agent_config.models = models_config.models;
+    } else {
+        return Err("models.toml not found".to_string());
+    }
+
+    // Build resolver
+    let resolver = ModelResolver::from_config(&agent_config).map_err(|e| e.to_string())?;
+
+    // Resolve roles and create agents
+    let default_params = GenerateParams::default();
+    let (workflow_id, roles) = resolve_workflow(req);
+    let max_rounds = req.max_rounds.unwrap_or(1).max(1);
+    let mut agents: HashMap<String, AgentRunner> = HashMap::new();
+    for role_name in &roles {
+        let template = agent_config
+            .roles
+            .get(role_name)
+            .ok_or_else(|| format!("role '{}' not in config", role_name))?;
+        let role = template.resolve(&default_params).await.map_err(|e| e.to_string())?;
+        let model = resolver
+            .resolve(&role.id, ModelTier::Standard)
+            .map_err(|e| e.to_string())?;
+        let agent = Agent::new(role_name.clone(), role, model, default_params.clone())
+            .map_err(|e| e.to_string())?;
+        agents.insert(role_name.clone(), AgentRunner::new(agent));
+    }
+
+    // Build orchestrator config
+    let mut variables = HashMap::new();
+    variables.insert("topic".into(), req.topic.clone());
+    let config = DiscussionConfig {
+        workflow: build_workflow(&roles, max_rounds),
+        consensus: ConsensusMethod::NoConsensus,
+        max_rounds: Some(max_rounds),
+        context_token_budget: 32000,
+        variables,
+    };
+    // Stash workflow_id for debugging
+    let _ = workflow_id;
+
+    // Run with streaming callback
+    let mut orchestrator = DiscussionOrchestrator::new(agents, config).map_err(|e| e.to_string())?;
+    let result = orchestrator
+        .run_with_events(|turn| {
+            // Emit each turn as it completes
+            let payload = TurnPayload {
+                agent: turn.agent.clone(),
+                role_id: turn.role_id.clone(),
+                // Look up the icon from the role metadata we have
+                icon: lookup_icon(&turn.role_id),
+                response: turn.response.clone(),
+                round: turn.round,
+                step_id: turn.step_id.clone(),
+                turn_number: turn.turn_number,
+            };
+            let _ = app.emit("chat:turn", &payload);
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Convert DiscussionResult → DiscussionPayload
+    let rounds: Vec<RoundPayload> = result
+        .rounds
+        .iter()
+        .map(|r| RoundPayload {
+            number: r.number,
+            turns: r
+                .turns
+                .iter()
+                .map(|t| TurnPayload {
+                    agent: t.agent.clone(),
+                    role_id: t.role_id.clone(),
+                    icon: lookup_icon(&t.role_id),
+                    response: t.response.clone(),
+                    round: t.round,
+                    step_id: t.step_id.clone(),
+                    turn_number: t.turn_number,
+                })
+                .collect(),
+            consensus_reached: r.consensus_reached,
+        })
+        .collect();
+
+    Ok(DiscussionPayload {
+        rounds,
+        consensus_reached: result.consensus_reached,
+        summary: None,
+        total_input_tokens: result.total_usage.input_tokens,
+        total_output_tokens: result.total_usage.output_tokens,
+        stub: false,
+    })
+}
+
+fn lookup_icon(role_id: &str) -> String {
+    ROLE_TEMPLATES
+        .iter()
+        .find(|(id, _, _)| *id == role_id)
+        .map(|(_, icon, _)| icon.to_string())
+        .unwrap_or_else(|| "💬".to_string())
+}
+
 /// Run a discussion in stub mode — emit fake but realistic turns.
-pub async fn run_stub_discussion(
+async fn run_stub_discussion(
     app: &AppHandle,
     req: &StartDiscussionRequest,
 ) -> Result<DiscussionPayload, String> {
@@ -97,10 +375,7 @@ pub async fn run_stub_discussion(
     } else {
         req.topic.clone()
     };
-    let roles = req
-        .custom_roles
-        .clone()
-        .unwrap_or_else(|| default_role_ids().iter().map(|s| s.to_string()).collect());
+    let (_, roles) = resolve_workflow(req);
 
     let total_rounds = req.max_rounds.unwrap_or(1).max(1);
     let mut rounds: Vec<RoundPayload> = Vec::new();
@@ -110,7 +385,6 @@ pub async fn run_stub_discussion(
     for round_num in 0..total_rounds {
         let mut turns: Vec<TurnPayload> = Vec::new();
         for (idx, role_id) in roles.iter().enumerate() {
-            // Find the template for this role
             let template = ROLE_TEMPLATES
                 .iter()
                 .find(|(id, _, _)| *id == role_id)
@@ -136,13 +410,10 @@ pub async fn run_stub_discussion(
                 step_id: format!("step_{}", idx),
                 turn_number: turns.len(),
             };
-            // Estimate token counts (very rough): 1 token ≈ 4 chars
             total_input_tokens += (topic_pretty.len() / 4) as u32 + 200;
             total_output_tokens += (response.len() / 4) as u32;
-            // Emit the streaming event to the frontend
             let _ = app.emit("chat:turn", &turn);
             turns.push(turn);
-            // Small artificial delay so the streaming UX is visible
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
         rounds.push(RoundPayload {
@@ -163,10 +434,6 @@ pub async fn run_stub_discussion(
 }
 
 fn slugify(s: &str) -> String {
-    // Keep ASCII alphanumerics and a small set of common chars; map
-    // everything else (including CJK / punctuation) to '-'. The result
-    // may be empty if the input is all non-ASCII — fall back to
-    // "topic" so downstream path templates stay valid.
     let raw: String = s
         .chars()
         .map(|c| {

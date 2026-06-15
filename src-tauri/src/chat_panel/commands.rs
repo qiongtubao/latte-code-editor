@@ -2,69 +2,44 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter};
 
 use super::config::{load_role_metadata, load_workflow_info};
-use super::session::{run_stub_discussion, default_role_ids};
+use super::session::{default_role_ids, run_discussion, WORKFLOW_PRESETS};
 use super::types::*;
 
 static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
 
-/// List available workflows.
+/// List the user-facing workflow presets (Plan / Code / Debug / Discuss).
 #[tauri::command]
 pub async fn chat_list_workflows() -> Result<Vec<WorkflowInfo>, String> {
-    let workflows = load_workflow_info();
-    let roles = load_role_metadata();
-    let mut out = Vec::new();
-    for (id, name, _steps_raw) in workflows {
-        // Pull the default roles from the workflow step config
-        let default_roles = match id.as_str() {
-            "default_workflow" => vec![
-                "pm".to_string(),
-                "architect".to_string(),
-                "programmer".to_string(),
-                "tester".to_string(),
-                "reviewer".to_string(),
-                "security".to_string(),
-                "manager".to_string(),
-            ],
-            "workflows.requirements_review" => vec![
-                "pm".into(),
-                "architect".into(),
-                "programmer".into(),
-                "tester".into(),
-                "manager".into(),
-            ],
-            "workflows.code_review" => vec![
-                "programmer".into(),
-                "reviewer".into(),
-                "security".into(),
-                "tester".into(),
-            ],
-            "workflows.design_brainstorm" => vec![
-                "pm".into(),
-                "architect".into(),
-                "programmer".into(),
-                "designer".into(),
-                "reviewer".into(),
-                "security".into(),
-                "devops".into(),
-            ],
-            "workflows.bug_triage" => vec![
-                "tester".into(),
-                "programmer".into(),
-                "security".into(),
-                "devops".into(),
-                "manager".into(),
-            ],
-            _ => default_role_ids().iter().map(|s| s.to_string()).collect(),
-        };
-        out.push(WorkflowInfo {
-            id: id.clone(),
-            name,
-            description: format!("Workflow: {}", id),
-            default_roles,
+    let mut out: Vec<WorkflowInfo> = WORKFLOW_PRESETS
+        .iter()
+        .map(|(id, _wf_id, default_roles, _rounds, label)| WorkflowInfo {
+            id: id.to_string(),
+            name: label.to_string(),
+            description: match *id {
+                "plan" => "Multi-perspective design and architecture discussion".to_string(),
+                "code" => "Code review, refactoring, and security/style checks".to_string(),
+                "debug" => "Triage, root-cause analysis, and fix proposals".to_string(),
+                "discuss" => "Full team discussion: requirements → design → review → decide"
+                    .to_string(),
+                _ => String::new(),
+            },
+            default_roles: default_roles.iter().map(|s| s.to_string()).collect(),
             steps: vec![],
-        });
+        })
+        .collect();
+    // Also include any workflows defined in discussion.toml that aren't
+    // already covered by the presets, so users can pick the raw ids.
+    for (raw_id, _name, _) in load_workflow_info() {
+        if !out.iter().any(|w| w.id == raw_id) {
+            out.push(WorkflowInfo {
+                id: raw_id.clone(),
+                name: raw_id.clone(),
+                description: format!("Raw workflow from discussion.toml: {}", raw_id),
+                default_roles: default_role_ids().iter().map(|s| s.to_string()).collect(),
+                steps: vec![],
+            });
+        }
     }
-    let _ = roles; // not used here, but available
     Ok(out)
 }
 
@@ -87,7 +62,7 @@ pub async fn chat_list_roles() -> Result<Vec<RoleInfo>, String> {
 }
 
 /// Start a new discussion. Returns the session id and emits `chat:turn`
-/// events as each agent responds. Currently runs in stub mode.
+/// events as each agent responds. Uses real LLM if API keys are present.
 #[tauri::command]
 pub async fn chat_start_discussion(
     app: AppHandle,
@@ -96,9 +71,7 @@ pub async fn chat_start_discussion(
     let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
     let req = request.clone();
 
-    // Stub mode: emit fake but realistic turns. The `chat:turn` events
-    // are emitted from inside `run_stub_discussion`.
-    let result = run_stub_discussion(&app, &req).await;
+    let result = run_discussion(&app, &req).await;
     match result {
         Ok(payload) => {
             let _ = app.emit("chat:complete", &payload);
@@ -111,7 +84,6 @@ pub async fn chat_start_discussion(
 }
 
 /// Send a follow-up message in an existing discussion.
-/// Currently also runs stub mode (one more round) for demo purposes.
 #[tauri::command]
 pub async fn chat_continue(
     app: AppHandle,
@@ -119,11 +91,13 @@ pub async fn chat_continue(
 ) -> Result<(), String> {
     let req = StartDiscussionRequest {
         topic: request.message,
-        workflow: "default_workflow".into(),
+        // Follow-ups default to "discuss" (full team) — users can switch
+        // via the workflow selector before sending.
+        workflow: "discuss".into(),
         custom_roles: None,
         max_rounds: Some(1),
     };
-    let result = run_stub_discussion(&app, &req).await;
+    let result = run_discussion(&app, &req).await;
     match result {
         Ok(payload) => {
             let _ = app.emit("chat:complete", &payload);
@@ -135,10 +109,8 @@ pub async fn chat_continue(
     Ok(())
 }
 
-/// Cancel a running discussion. In stub mode this is a no-op since
-/// turns complete synchronously. Real-mode would use a CancellationToken.
+/// Cancel a running discussion. Currently a no-op stub.
 #[tauri::command]
 pub async fn chat_cancel(session_id: usize) -> Result<(), String> {
-    // No-op for stub mode
     Ok(())
 }
