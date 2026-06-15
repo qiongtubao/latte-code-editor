@@ -337,26 +337,21 @@ function App() {
                 }}
               />
             )}
-
-            {(activePanel === "graph" || activePanel === "split") && (
+            {(activePanel === "graph" || activePanel === "split") && !chatOpen && (
               <div className="flex-1 overflow-hidden">
                 <GraphPanel folderRoot={folderRoot} />
+              </div>
+            )}
+            {chatOpen && (
+              <div
+                className="flex-1 overflow-hidden border-l border-gray-700"
+              >
+                <ChatPanel onClose={() => setChatOpen(false)} />
               </div>
             )}
           </div>
         </div>
       </div>
-      {chatOpen && (
-        <div
-          className="flex-shrink-0 border-l border-gray-700"
-          style={{ width: chatWidth, minWidth: 300, maxWidth: 800 }}
-        >
-          <ChatPanel onClose={() => setChatOpen(false)} />
-        </div>
-      )}
-      {lspManagerOpen && (
-        <LspManagerPanel onClose={() => setLspManagerOpen(false)} />
-      )}
       <DebugBar
         onOpenInject={() => setInjectOpen(true)}
         onSnapshot={async () => {
