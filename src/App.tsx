@@ -10,6 +10,7 @@ import { DefinitionPopup } from "./components/DefinitionPopup";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { WorkspaceTabs } from "./components/WorkspaceTabs";
 import { QuickOpenModal } from "./components/QuickOpenModal";
+import { ChatPanel } from "./components/ChatPanel";
 import { openFile } from "./api/commands";
 import { screenshotWindow, copyScreenshotToClipboard } from "./api/screenshot";
 import { useEditorStore } from "./hooks/useEditorStore";
@@ -17,11 +18,16 @@ import { useGraphStore } from "./hooks/useGraphStore";
 import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
+import { useChatStore } from "./hooks/useChatStore";
+import type { ChatTurn } from "./hooks/useChatStore";
+import { useLspStore } from "./hooks/useLspStore";
 import { LspManagerPanel } from "./components/LspManagerPanel";
 import { DebugBar } from "./components/DebugBar";
 import { DebugEventInjectModal } from "./components/DebugEventInjectModal";
 import { useDebugStore } from "./utils/debug/store";
+import { replayLastAction } from "./utils/debug/inject";
 import { invoke } from "./api/ipcDebug";
+import { listen } from "@tauri-apps/api/event";
 type ActivePanel = "editor" | "graph" | "split";
 function App() {
   const [activePanel, setActivePanel] = useState<ActivePanel>("split");
@@ -32,11 +38,16 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lspManagerOpen, setLspManagerOpen] = useState(false);
   const [injectOpen, setInjectOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatWidth, setChatWidth] = useState(400);
   const hydrateDebug = useDebugStore((s) => s.hydrate);
   const setDebugOn = useDebugStore((s) => s.setOn);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastRRef = useRef(0);
   const lastSRef = useRef(0);
+  const addTurn = useChatStore((s) => s.addTurn);
+  const setChatComplete = useChatStore((s) => s.setComplete);
+  const setChatError = useChatStore((s) => s.setError);
   const { openFileOrSwitch } = useEditorStore();
   const { filePath } = useEditorStore();
   const { graphData } = useGraphStore();
@@ -77,7 +88,28 @@ function App() {
     return () => window.removeEventListener("latte-toast", handler);
   }, []);
 
-
+  // Listen for chat events from the multi-agent chat panel
+  useEffect(() => {
+    const unlistens: Array<Promise<() => void>> = [];
+    unlistens.push(
+      listen<ChatTurn>("chat:turn", (e) => {
+        addTurn(e.payload);
+      }),
+    );
+    unlistens.push(
+      listen<unknown>("chat:complete", () => {
+        setChatComplete();
+      }),
+    );
+    unlistens.push(
+      listen<string>("chat:error", (e) => {
+        setChatError(e.payload);
+      }),
+    );
+    return () => {
+      for (const p of unlistens) p.then((fn) => fn());
+    };
+  }, [addTurn, setChatComplete, setChatError]);
 
   const folderRoot = activeMeta?.project_root ?? null;
 
@@ -139,7 +171,7 @@ function App() {
         const now = Date.now();
         if (now - lastRRef.current < 250) return;
         lastRRef.current = now;
-        void import("./utils/debug/inject").then((m) => m.replayLastAction());
+        replayLastAction();
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) {
         // Screenshot the main window to ~/Pictures/latte-screenshots/ + clipboard
         e.preventDefault();
@@ -166,17 +198,15 @@ function App() {
           },
         };
         console.info("latte:debug-snapshot", JSON.stringify(snap, null, 2));
-        import("./hooks/useLspStore").then(({ useLspStore }) => {
-          const s = useLspStore.getState();
-          console.info(
-            "latte:debug-snapshot-lsp",
-            JSON.stringify(
-              { status: s.status, settings: s.settings, error: s.error },
-              null,
-              2,
-            ),
-          );
-        });
+        const s = useLspStore.getState();
+        console.info(
+          "latte:debug-snapshot-lsp",
+          JSON.stringify(
+            { status: s.status, settings: s.settings, error: s.error },
+            null,
+            2,
+          ),
+        );
         invoke<unknown>("debug_dump_backend_state")
           .then((b) =>
             console.info("latte:debug-snapshot-backend", JSON.stringify(b, null, 2)),
@@ -185,6 +215,9 @@ function App() {
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "M" || e.key === "m")) {
       } else if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === "P" || e.key === "p")) {
         // Reserved for future
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "L" || e.key === "l")) {
+        e.preventDefault();
+        setChatOpen((v) => !v);
       }
     };
     window.addEventListener("keydown", handler);
@@ -220,8 +253,14 @@ function App() {
         >
           Split
         </button>
+        <button
+          onClick={() => setChatOpen((v) => !v)}
+          className={`px-3 py-1.5 border-l border-gray-700 cursor-pointer transition-colors ${chatOpen ? "bg-[#1e1e1e] text-white" : "text-gray-400 hover:text-gray-200"}`}
+          title="Toggle Chat Panel (Ctrl+Shift+L)"
+        >
+          💬 Chat
+        </button>
       </div>
-
       {defPopup && (
         <DefinitionPopup
           word={defPopup.word}
@@ -307,6 +346,14 @@ function App() {
           </div>
         </div>
       </div>
+      {chatOpen && (
+        <div
+          className="flex-shrink-0 border-l border-gray-700"
+          style={{ width: chatWidth, minWidth: 300, maxWidth: 800 }}
+        >
+          <ChatPanel onClose={() => setChatOpen(false)} />
+        </div>
+      )}
       {lspManagerOpen && (
         <LspManagerPanel onClose={() => setLspManagerOpen(false)} />
       )}

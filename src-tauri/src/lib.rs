@@ -8,6 +8,7 @@ mod debug;
 mod ai;
 use std::sync::Arc;
 mod doc_gen;
+mod chat_panel;
 mod screenshot;
 use tauri::Manager;
 
@@ -97,6 +98,12 @@ pub fn run() {
             // doc_gen
             crate::doc_gen::commands::scan_project_for_docs,
             crate::doc_gen::commands::write_doc_stub,
+            // chat panel (multi-agent)
+            crate::chat_panel::commands::chat_list_workflows,
+            crate::chat_panel::commands::chat_list_roles,
+            crate::chat_panel::commands::chat_start_discussion,
+            crate::chat_panel::commands::chat_continue,
+            crate::chat_panel::commands::chat_cancel,
             // screenshot
             crate::screenshot::screenshot_window,
         ])
