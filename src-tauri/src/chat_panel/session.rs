@@ -28,7 +28,7 @@ const ROLE_TEMPLATES: &[(&str, &str, &str)] = &[
     (
         "programmer",
         "💻",
-        "## Implementation Plan\n\nFor **{topic}**, here's the rough implementation:\n\n```ts\n// src/lib/{slug}.ts\nexport function implement() {{\n  // 1. Add a Zustand store action\n  // 2. Wire up the Tauri command\n  // 3. Update the React component to subscribe\n}}\n```\n\n**Effort estimate**: ~2-3 hours for a clean implementation including tests.\n\n**Modules to touch**:\n- `src/hooks/use{Topic}Store.ts` — new store\n- `src/api/{slug}.ts` — Tauri invoke wrapper\n- `src/components/{Topic}Panel.tsx` — UI\n\n<file_edit path=\"src/lib/{slug}.ts\">Implement {topic}</file_edit>",
+        "## Implementation Plan\n\nFor **{topic}**, here's the rough implementation:\n\n```ts\n// src/lib/{slug}.ts\nexport function implement() {\n  // 1. Add a Zustand store action\n  // 2. Wire up the Tauri command\n  // 3. Update the React component to subscribe\n}\n```\n\n**Effort estimate**: ~2-3 hours for a clean implementation including tests.\n\n**Modules to touch**:\n- `src/hooks/use{Topic}Store.ts` — new store\n- `src/api/{slug}.ts` — Tauri invoke wrapper\n- `src/components/{Topic}Panel.tsx` — UI\n\n<file_edit path=\"src/lib/{slug}.ts\">Implement {topic}</file_edit>",
     ),
     (
         "tester",
@@ -48,7 +48,7 @@ const ROLE_TEMPLATES: &[(&str, &str, &str)] = &[
     (
         "security",
         "🛡️",
-        "## Security Review\n\nFor **{topic}**:\n\n- **Input validation**: any user-typed message flows into the AI prompt — needs length cap and content sanitization\n- **Command injection risk**: the file paths in `<file_edit>` tags come from AI output; must validate they don't escape `folderRoot`\n- **PII risk**: agent responses may include snippets of user code — don't log full responses to a third-party service\n\n**Recommendations**:\n- Add a 4KB cap on `topic` and follow-up `message`\n- Resolve `file_edit` paths via `Path::join` + canonicalize + assert `starts_with(folderRoot)`\n- Use Tauri's built-in command argument validation\n\n<file_edit path=\"src/chat_panel/validation.ts\">Add input validation for chat</file_edit>",
+        "## Security Review\n\nFor **{topic}**:\n\n- **Input validation**: any user-typed message flows into the AI prompt — needs length cap and content sanitization\n- **Command injection risk**: the file paths in `<file_edit>` tags come from AI output; must validate they don't escape `folderRoot`\n- **PII risk**: agent responses may include snippets of user code — don't log full responses to a third-party service\n\n**Recommendations**:\n- Add a 4KB cap on `topic` and follow-up `message`\n- Resolve file_edit paths via `Path::join` + canonicalize + assert `starts_with(folderRoot)`\n- Use Tauri's built-in command argument validation\n\n<file_edit path=\"src/chat_panel/validation.ts\">Add input validation for chat</file_edit>",
     ),
     (
         "designer",
@@ -89,11 +89,13 @@ pub async fn run_stub_discussion(
     req: &StartDiscussionRequest,
 ) -> Result<DiscussionPayload, String> {
     let slug = slugify(&req.topic);
-    let topic = req.topic.clone();
-    let topic_pretty = if topic.is_empty() {
+    let topic_pretty = if req.topic.is_empty() {
         "the topic".to_string()
+    } else if req.topic.chars().count() > 80 {
+        let truncated: String = req.topic.chars().take(77).collect();
+        format!("{}...", truncated)
     } else {
-        topic.clone()
+        req.topic.clone()
     };
     let roles = req
         .custom_roles
@@ -135,7 +137,7 @@ pub async fn run_stub_discussion(
                 turn_number: turns.len(),
             };
             // Estimate token counts (very rough): 1 token ≈ 4 chars
-            total_input_tokens += (topic.len() / 4) as u32 + 200;
+            total_input_tokens += (topic_pretty.len() / 4) as u32 + 200;
             total_output_tokens += (response.len() / 4) as u32;
             // Emit the streaming event to the frontend
             let _ = app.emit("chat:turn", &turn);
@@ -161,13 +163,32 @@ pub async fn run_stub_discussion(
 }
 
 fn slugify(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
-        .collect::<String>()
+    // Keep ASCII alphanumerics and a small set of common chars; map
+    // everything else (including CJK / punctuation) to '-'. The result
+    // may be empty if the input is all non-ASCII — fall back to
+    // "topic" so downstream path templates stay valid.
+    let raw: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let cleaned: String = raw
         .split('-')
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>()
-        .join("-")
+        .join("-");
+    if cleaned.is_empty() {
+        "topic".to_string()
+    } else if cleaned.chars().count() > 48 {
+        cleaned.chars().take(48).collect()
+    } else {
+        cleaned
+    }
 }
 
 fn capitalize(s: &str) -> String {
