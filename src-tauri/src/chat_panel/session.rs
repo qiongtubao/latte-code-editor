@@ -135,28 +135,38 @@ pub fn default_role_ids() -> &'static [&'static str] {
 }
 
 /// Run a discussion — uses real LLM if API keys are configured, else stub.
+///
+/// **Error handling**: Real LLM failures are surfaced to the user as errors.
+/// Stub mode is only used when no API keys are present or `LATTE_CHAT_LIVE=0`.
 pub async fn run_discussion(
     app: &AppHandle,
     req: &StartDiscussionRequest,
 ) -> Result<DiscussionPayload, String> {
-    // Check whether we have API keys available
-    let has_keys = has_any_api_key();
     let force_stub = std::env::var("LATTE_CHAT_LIVE")
         .map(|v| v == "0")
         .unwrap_or(false);
 
-    if has_keys && !force_stub {
-        // Try real mode; if it fails, fall back to stub
-        match run_live_discussion(app, req).await {
-            Ok(payload) => Ok(payload),
-            Err(e) => {
-                eprintln!("[chat] live mode failed: {e}; falling back to stub");
-                run_stub_discussion(app, req).await
-            }
-        }
-    } else {
-        run_stub_discussion(app, req).await
+    if force_stub {
+        return run_stub_discussion(app, req).await;
     }
+
+    // Real mode: check prerequisites first
+    let has_keys = has_any_api_key();
+    if !has_keys {
+        return Err(
+            "未配置 API 密钥。请设置环境变量 ANTHROPIC_API_KEY、OPENAI_API_KEY 或 DEEPSEEK_API_KEY。\n\
+             \n\
+             示例:\n\
+             export ANTHROPIC_API_KEY=sk-...\n\
+             \n\
+             或强制使用 stub 模式:\n\
+             export LATTE_CHAT_LIVE=0"
+                .to_string(),
+        );
+    }
+
+    // Run real LLM discussion; propagate errors to the caller
+    run_live_discussion(app, req).await
 }
 
 /// Check if any of the supported API keys is in the environment.
@@ -249,24 +259,77 @@ async fn run_live_discussion(
 
     if !agents_path.exists() {
         return Err(format!(
-            "agents.toml not found at {}",
+            "配置文件未找到: agents.toml\n\
+             路径: {}\n\
+             \n\
+             请确保 latte-rs-agents 仓库位于正确位置。",
             agents_path.display()
         ));
     }
 
-    // Load and merge configs
-    let mut agent_config =
-        AgentConfig::load(agents_path.to_str().unwrap()).map_err(|e| e.to_string())?;
-    if models_path.exists() {
-        let models_config =
-            AgentConfig::load(models_path.to_str().unwrap()).map_err(|e| e.to_string())?;
-        agent_config.models = models_config.models;
-    } else {
-        return Err("models.toml not found".to_string());
+    if !models_path.exists() {
+        return Err(format!(
+            "配置文件未找到: models.toml\n\
+             路径: {}\n\
+             \n\
+             models.toml 定义了模型配置和 API 密钥。\n\
+             请复制示例文件并填入您的 API 密钥:\n\
+             cp {}/models.toml.example {}/models.toml\n\
+             然后编辑 models.toml 填入 API 密钥。",
+            models_path.display(),
+            config_root.display(),
+            config_root.display()
+        ));
     }
 
+    // Load and merge configs
+    let mut agent_config = match AgentConfig::load(agents_path.to_str().unwrap()) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return Err(format!(
+                "配置文件解析失败: agents.toml\n\
+                 路径: {}\n\
+                 错误: {}\n\
+                 \n\
+                 请检查文件格式是否正确。",
+                agents_path.display(),
+                e
+            ));
+        }
+    };
+
+    let models_config = match AgentConfig::load(models_path.to_str().unwrap()) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return Err(format!(
+                "配置文件解析失败: models.toml\n\
+                 路径: {}\n\
+                 错误: {}\n\
+                 \n\
+                 请检查文件格式是否正确。",
+                models_path.display(),
+                e
+            ));
+        }
+    };
+    agent_config.models = models_config.models;
+
     // Build resolver
-    let resolver = ModelResolver::from_config(&agent_config).map_err(|e| e.to_string())?;
+    let resolver = match ModelResolver::from_config(&agent_config) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(format!(
+                "模型解析失败\n\
+                 配置文件: {}\n\
+                 错误: {}\n\
+                 \n\
+                 请检查 models.toml 中是否定义了有效的模型。\n\
+                 每个模型需要指定 provider (如 'anthropic', 'openai') 和 model_name。",
+                models_path.display(),
+                e
+            ));
+        }
+    };
 
     // Resolve roles and create agents
     let default_params = GenerateParams::default();
@@ -274,16 +337,59 @@ async fn run_live_discussion(
     let max_rounds = req.max_rounds.unwrap_or(1).max(1);
     let mut agents: HashMap<String, AgentRunner> = HashMap::new();
     for role_name in &roles {
-        let template = agent_config
-            .roles
-            .get(role_name)
-            .ok_or_else(|| format!("role '{}' not in config", role_name))?;
-        let role = template.resolve(&default_params).await.map_err(|e| e.to_string())?;
-        let model = resolver
-            .resolve(&role.id, ModelTier::Standard)
-            .map_err(|e| e.to_string())?;
-        let agent = Agent::new(role_name.clone(), role, model, default_params.clone())
-            .map_err(|e| e.to_string())?;
+        let template = agent_config.roles.get(role_name).ok_or_else(|| {
+            format!(
+                "角色 '{}' 未在 agents.toml 中定义\n\
+                 配置文件: {}\n\
+                 \n\
+                 可用角色: {}",
+                role_name,
+                agents_path.display(),
+                agent_config.roles.keys().cloned().collect::<Vec<_>>().join(", ")
+            )
+        })?;
+
+        let role = match template.resolve(&default_params).await {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(format!(
+                    "角色解析失败: {}\n\
+                     配置文件: {}\n\
+                     错误: {}",
+                    role_name,
+                    agents_path.display(),
+                    e
+                ));
+            }
+        };
+
+        let model = match resolver.resolve(&role.id, ModelTier::Standard) {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(format!(
+                    "模型解析失败: 角色 '{}' 需要模型\n\
+                     配置文件: {}\n\
+                     错误: {}\n\
+                     \n\
+                     请检查 models.toml 中是否为该 tier 定义了默认模型。",
+                    role_name,
+                    models_path.display(),
+                    e
+                ));
+            }
+        };
+
+        let agent = match Agent::new(role_name.clone(), role, model, default_params.clone()) {
+            Ok(a) => a,
+            Err(e) => {
+                return Err(format!(
+                    "Agent 创建失败: {}\n\
+                     错误: {}",
+                    role_name,
+                    e
+                ));
+            }
+        };
         agents.insert(role_name.clone(), AgentRunner::new(agent));
     }
 
@@ -301,14 +407,25 @@ async fn run_live_discussion(
     let _ = workflow_id;
 
     // Run with streaming callback
-    let mut orchestrator = DiscussionOrchestrator::new(agents, config).map_err(|e| e.to_string())?;
-    let result = orchestrator
+    let mut orchestrator = match DiscussionOrchestrator::new(agents, config) {
+        Ok(o) => o,
+        Err(e) => {
+            return Err(format!(
+                "Orchestrator 初始化失败\n\
+                 错误: {}\n\
+                 \n\
+                 这通常表示模型配置或角色配置有问题。",
+                e
+            ));
+        }
+    };
+
+    let result = match orchestrator
         .run_with_events(|turn| {
             // Emit each turn as it completes
             let payload = TurnPayload {
                 agent: turn.agent.clone(),
                 role_id: turn.role_id.clone(),
-                // Look up the icon from the role metadata we have
                 icon: lookup_icon(&turn.role_id),
                 response: turn.response.clone(),
                 round: turn.round,
@@ -318,7 +435,25 @@ async fn run_live_discussion(
             let _ = app.emit("chat:turn", &payload);
         })
         .await
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(format!(
+                "LLM 调用失败\n\
+                 配置文件: {}\n\
+                 错误: {}\n\
+                 \n\
+                 常见原因:\n\
+                 - API 密钥无效或已过期\n\
+                 - 网络连接问题\n\
+                 - 模型服务不可用\n\
+                 \n\
+                 请检查 models.toml 中的 API 密钥配置。",
+                models_path.display(),
+                e
+            ));
+        }
+    };
 
     // Convert DiscussionResult → DiscussionPayload
     let rounds: Vec<RoundPayload> = result

@@ -12,6 +12,7 @@ export function ChatPanel({ onClose }: Props) {
   const {
     messages,
     status,
+    errorMessage,
     selectedWorkflow,
     availableWorkflows,
     availableRoles,
@@ -105,6 +106,33 @@ export function ChatPanel({ onClose }: Props) {
 
       {/* Messages */}
       <MessageList messages={messages} status={status} onFileClick={handleFileClick} />
+
+      {/* Error display */}
+      {errorMessage && (
+        <div className="mx-3 mb-2 p-3 bg-red-900/30 border border-red-700 rounded text-sm text-red-200">
+          <div className="font-semibold mb-1">⚠️ 错误</div>
+          <div className="whitespace-pre-wrap text-xs mb-2">{errorMessage}</div>
+          {errorMessage.includes("配置文件") && (
+            <button
+              onClick={async () => {
+                // Extract path from error message
+                const pathMatch = errorMessage.match(/路径:\s*([^\s\n]+)/);
+                if (pathMatch && pathMatch[1]) {
+                  try {
+                    const file = await openFile(pathMatch[1]);
+                    useEditorStore.getState().openFileOrSwitch(file);
+                  } catch (e) {
+                    console.error("打开配置文件失败:", e);
+                  }
+                }
+              }}
+              className="px-2 py-1 bg-red-700 hover:bg-red-600 text-white text-xs rounded"
+            >
+              📄 打开配置文件
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Input */}
       <div className="px-3 py-2 bg-[#252526] border-t border-gray-700">
