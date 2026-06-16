@@ -1,144 +1,35 @@
 //! Manages a running chat discussion session.
 //!
-//! **Two modes**:
-//! - **Live mode** (default when API keys are present): uses real LLMs via
-//!   `latte-agent-orchestrator`. Each agent turn is streamed to the
-//!   frontend as a `chat:turn` event.
-//! - **Stub mode** (fallback when no API keys): emits realistic per-role
-//!   templated responses. Useful for UI development without LLM credentials.
+//! Two modes:
+//! - Live mode: uses real LLMs via latte-ai. Each agent turn is streamed.
+//! - Stub mode: emits templated responses (no LLM required).
 //!
-//! Use `LATTE_CHAT_LIVE=0` env var to force stub mode for testing.
+//! Set LATTE_CHAT_LIVE=0 to force stub mode.
 
-use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
-use latte_agent_core::agent::{Agent, AgentRunner};
-use latte_agent_core::config::AgentConfig;
-use latte_agent_core::model_resolver::{ModelResolver, ModelTier};
-use latte_agent_orchestrator::orchestrator::{DiscussionConfig, DiscussionOrchestrator};
-use latte_agent_orchestrator::{ConsensusMethod, DiscussionWorkflow, WorkflowStep};
-use latte_ai::params::GenerateParams;
-
-use super::config::agents_config_root;
 use super::global_config::{self, GlobalModelConfig, RoleConfig};
 use super::types::*;
 
-/// Workflow presets. Maps a friendly name → (workflow_id, default roles,
-/// max_rounds, display label). The user picks one of these in the UI.
-pub const WORKFLOW_PRESETS: &[(&str, &str, &[&str], usize, &str)] = &[
-    (
-        "plan",
-        "design_brainstorm",
-        &["pm", "architect", "programmer", "designer", "manager"],
-        2,
-        "🗺️ Plan — design and architect",
-    ),
-    (
-        "code",
-        "code_review",
-        &["programmer", "reviewer", "security", "tester"],
-        1,
-        "💻 Code — review and refactor",
-    ),
-    (
-        "debug",
-        "bug_triage",
-        &["tester", "programmer", "security", "devops", "manager"],
-        2,
-        "🪲 Debug — triage and fix",
-    ),
-    (
-        "discuss",
-        "default_workflow",
-        &[
-            "pm",
-            "architect",
-            "programmer",
-            "tester",
-            "reviewer",
-            "devops",
-            "manager",
-        ],
-        3,
-        "💬 Discuss — full team discussion",
-    ),
-];
+use latte_ai::client::AiClient;
+use latte_ai::models::{ApiType, Completion, Message, Model, Role as MessageRole};
+use latte_ai::params::GenerateParams;
 
-/// A role stub response (used in stub mode only).
-const ROLE_TEMPLATES: &[(&str, &str, &str)] = &[
-    (
-        "pm",
-        "📋",
-        "## Requirements Analysis\n\nAs **PM**, I've analyzed **{topic}** and identified the following:\n\n- **User story**: As a developer, I want {topic} so that the workflow is more efficient.\n- **Acceptance criteria**:\n  - [ ] The feature works without disrupting existing flows\n  - [ ] Documentation is updated\n  - [ ] Tests cover the main path\n- **Out of scope**: Performance optimization, multi-tenant support (v1)\n\nKey open question: do we need backward compatibility?\n\n<file_edit path=\"docs/{slug}.md\">Add requirements doc for {topic}</file_edit>",
-    ),
-    (
-        "architect",
-        "🏗️",
-        "## Architecture Review\n\nLooking at **{topic}** from a system-design perspective:\n\n1. **Module layout** — separate `core/` (logic) from `ui/` (presentation) to keep the dependency graph acyclic.\n2. **State management** — use the existing Zustand store pattern; don't introduce new state libs.\n3. **Async boundaries** — long-running ops go through Tauri commands (Rust), not browser fetches.\n\n**Risks**:\n- Tight coupling between the workflow engine and the file-system layer\n- Missing error boundaries in the React tree\n\n**Tradeoffs**: We could over-engineer with a plugin system now, but YAGNI — defer until we have 3+ use cases.\n\n<file_edit path=\"docs/architecture/{slug}.md\">Add architecture notes for {topic}</file_edit>",
-    ),
-    (
-        "programmer",
-        "💻",
-        "## Implementation Plan\n\nFor **{topic}**, here's the rough implementation:\n\n```ts\n// src/lib/{slug}.ts\nexport function implement() {\n  // 1. Add a Zustand store action\n  // 2. Wire up the Tauri command\n  // 3. Update the React component to subscribe\n}\n```\n\n**Effort estimate**: ~2-3 hours for a clean implementation including tests.\n\n**Modules to touch**:\n- `src/hooks/use{Topic}Store.ts` — new store\n- `src/api/{slug}.ts` — Tauri invoke wrapper\n- `src/components/{Topic}Panel.tsx` — UI\n\n<file_edit path=\"src/lib/{slug}.ts\">Implement {topic}</file_edit>",
-    ),
-    (
-        "tester",
-        "🧪",
-        "## Test Strategy\n\nFor **{topic}**, I see the following test surface:\n\n| Area | Type | Coverage |\n|------|------|----------|\n| Store state transitions | Unit | 100% |\n| Tauri command error paths | Integration | All error codes |\n| UI render paths | Component | Smoke + key states |\n\n**Edge cases to cover**:\n- Empty input\n- Concurrent updates (race conditions)\n- Workspace detachment during operation\n- Network failure mid-call\n\n**Regression risk**: The existing `useEditorStore` is heavily used; any change to it touches every open file.\n\n<file_edit path=\"src/lib/{slug}.test.ts\">Add tests for {topic}</file_edit>",
-    ),
-    (
-        "reviewer",
-        "🔍",
-        "## Code Review\n\nReviewing **{topic}**:\n\n**Positives**:\n- Good separation of concerns\n- Tests are co-located with the code\n- Naming is consistent with the rest of the codebase\n\n**Concerns**:\n- ⚠️ The `onClick` handler is inline and re-created on every render — extract to `useCallback`\n- ⚠️ Magic numbers in the style values — pull out to a const at the top\n- ⚠️ Missing `key` prop warning if we ever map over this list\n\n**Nitpicks**:\n- Prefer `as const` over `as TypeName` for literal types\n- Add a `displayName` for forwardRef compatibility\n\n<file_edit path=\"src/components/{Slug}Panel.tsx\">Apply review feedback for {topic}</file_edit>",
-    ),
-    (
-        "devops",
-        "🚀",
-        "## Operational Notes\n\nFor **{topic}** in production:\n\n- **Build time**: should not add >2s to `cargo build`\n- **Bundle size**: keep Tauri command count under 30 (currently at ~25)\n- **Logging**: emit a `chat:started` / `chat:completed` event pair for tracing\n\n**CI impact**: low — the new module is in `src/` only, no Rust changes.\n\n**Rollout**: feature-flag behind `LATTE_CHAT=1` so we can disable in the field if needed.\n\n<file_edit path=\".github/workflows/ci.yml\">Add CI step for chat feature</file_edit>",
-    ),
-    (
-        "security",
-        "🛡️",
-        "## Security Review\n\nFor **{topic}**:\n\n- **Input validation**: any user-typed message flows into the AI prompt — needs length cap and content sanitization\n- **Command injection risk**: the file paths in `<file_edit>` tags come from AI output; must validate they don't escape `folderRoot`\n- **PII risk**: agent responses may include snippets of user code — don't log full responses to a third-party service\n\n**Recommendations**:\n- Add a 4KB cap on `topic` and follow-up `message`\n- Resolve file_edit paths via `Path::join` + canonicalize + assert `starts_with(folderRoot)`\n- Use Tauri's built-in command argument validation\n\n<file_edit path=\"src/chat_panel/validation.ts\">Add input validation for chat</file_edit>",
-    ),
-    (
-        "designer",
-        "🎨",
-        "## UX Considerations\n\nFor **{topic}**:\n\n- **Discoverability**: the chat panel toggle should be in a visible button, not buried in a menu\n- **Loading state**: streaming responses need a clear \"typing...\" indicator per role\n- **Color coding**: use the role icons as visual anchors — emoji + name + colored border\n- **Keyboard nav**: `Ctrl+Shift+L` to toggle, `Enter` to send, `Shift+Enter` for newline\n\n**Mock wireframe**:\n\n```\n┌─────────────────────────┐\n│ 💬 Chat  [workflow ▼]   │\n├─────────────────────────┤\n│ 👤 User: design the API │\n│ 📋 PM: requirements...  │\n│ 🏗️ Architect: design...  │\n│ [💻 Programmer typing..]│\n├─────────────────────────┤\n│ [input........] [Send]  │\n└─────────────────────────┘\n```\n\n<file_edit path=\"docs/ux/chat-wireframe.md\">Wireframe for chat panel</file_edit>",
-    ),
-    (
-        "tech_writer",
-        "📝",
-        "## Documentation\n\nFor **{topic}**, the following docs need updating:\n\n- `README.md` — new \"Chat with AI agents\" section\n- `docs/chat-panel.md` — new file: usage, configuration, troubleshooting\n- `docs/superpowers/specs/` — design spec if significant\n\n**Style notes**:\n- Use the existing tone (terse, code-first)\n- Include a 30-second quickstart at the top\n- Link to the role catalog so users know what's available\n\n<file_edit path=\"docs/chat-panel.md\">Document chat panel</file_edit>",
-    ),
-    (
-        "manager",
-        "👔",
-        "## Decision\n\n**Verdict on {topic}**: ✅ proceed.\n\n**Reasoning**:\n- High user value, moderate implementation cost\n- No blocking dependencies (other than the AI model config)\n- Aligns with the Q3 roadmap\n\n**Timeline**: target 1 week for the full feature, with stub mode shipping first for early feedback.\n\n**Risks accepted**:\n- AI response quality varies by model — we ship with a default and let users override in `models.toml`\n- The 10-role catalog is fixed for v1; custom roles can come in v2\n\n**Next steps**:\n1. Merge the chat panel PR\n2. Demo to the team on Friday\n3. Plan iteration based on feedback\n\n<file_edit path=\"docs/manager-decision-{slug}.md\">Record decision on {topic}</file_edit>",
-    ),
+/// Workflow presets
+pub const WORKFLOW_PRESETS: &[(&str, &str, &[&str], usize, &str)] = &[
+    ("plan", "design_brainstorm", &["pm", "architect", "programmer", "designer", "manager"], 2, "🗺️ Plan — design and architect"),
+    ("code", "code_review", &["programmer", "reviewer", "security", "tester"], 1, "💻 Code — review and refactor"),
+    ("debug", "bug_triage", &["tester", "programmer", "security", "devops", "manager"], 2, "🪲 Debug — triage and fix"),
+    ("discuss", "default_workflow", &["pm", "architect", "programmer", "tester", "reviewer", "devops", "manager"], 3, "💬 Discuss — full team discussion"),
 ];
 
 /// Returns the list of role IDs we ship by default.
 pub fn default_role_ids() -> &'static [&'static str] {
-    &[
-        "pm",
-        "architect",
-        "programmer",
-        "tester",
-        "reviewer",
-        "devops",
-        "security",
-        "designer",
-        "tech_writer",
-        "manager",
-    ]
+    &["pm", "architect", "programmer", "tester", "reviewer", "devops", "security", "designer", "tech_writer", "manager"]
 }
 
 /// Run a discussion — uses real LLM if API keys are configured, else stub.
-///
-/// **Error handling**: Real LLM failures are surfaced to the user as errors.
-/// Stub mode is only used when no API keys are present or `LATTE_CHAT_LIVE=0`.
 pub async fn run_discussion(
     app: &AppHandle,
     req: &StartDiscussionRequest,
@@ -151,549 +42,238 @@ pub async fn run_discussion(
         return run_stub_discussion(app, req).await;
     }
 
-    // Real mode: load global config and check API keys
     let global_config = global_config::load_global_models();
     let roles_config = global_config::load_roles_config();
-    
-    // Check if any API key is configured (either in env or in config)
-    let has_keys = check_api_keys_available(&global_config);
-    if !has_keys {
+
+    if !global_config.has_api_key() {
         let models_path = global_config::global_models_path();
         return Err(format!(
-            "未配置 API 密钥。\n\
-             \n\
-             配置文件: {}\n\
-             \n\
-             请在配置文件中设置 API 密钥:\n\
-             1. 打开 ~/.latte/models.yaml\n\
-             2. 在 api_keys 部分填入密钥:\n\
-                  deepseek: YOUR_API_KEY_HERE\n\
-                  或使用环境变量: \"$DEEPSEEK_API_KEY\"\n\
-             \n\
-             或强制使用 stub 模式:\n\
-             export LATTE_CHAT_LIVE=0",
+            "未配置 API 密钥。\n\n配置文件: {}\n\n请在配置文件中设置 API 密钥:\n1. 打开 ~/.latte/models.yaml\n2. 在模型定义中填入 api_key:\n\n   models:\n     - id: deepseek-chat\n       api_key: YOUR_API_KEY_HERE\n\n或强制使用 stub 模式:\nexport LATTE_CHAT_LIVE=0",
             models_path.display()
         ));
     }
 
-    // Run real LLM discussion with global config
-    run_live_discussion_with_config(app, req, &global_config, &roles_config).await
+    run_live_discussion(app, req, &global_config, &roles_config).await
 }
 
-/// Check if any API key is available (in config or environment)
-fn check_api_keys_available(config: &GlobalModelConfig) -> bool {
-    // Check if any API key is configured and non-empty
-    for (provider, key) in &config.api_keys {
-        let expanded = global_config::expand_env_vars(key);
-        // If it doesn't start with ${, it means the env var was found
-        if !expanded.starts_with("${") && !expanded.is_empty() {
-            return true;
-        }
-    }
-    false
+struct RoleAgent {
+    id: String,
+    name: String,
+    icon: String,
+    system_prompt: String,
+    temperature: f64,
+    client: AiClient,
 }
 
-/// Check if any of the supported API keys is in the environment.
-fn has_any_api_key() -> bool {
-    ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]
-        .iter()
-        .any(|k| std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false))
-}
-
-/// Resolve workflow id + roles from the user-friendly workflow name.
-fn resolve_workflow(req: &StartDiscussionRequest) -> (String, Vec<String>) {
-    let preset = WORKFLOW_PRESETS
-        .iter()
-        .find(|(name, _, _, _, _)| *name == req.workflow)
-        .or_else(|| {
-            // Also accept the raw discussion.toml id
-            if [
-                "default_workflow",
-                "workflows.design_brainstorm",
-                "workflows.code_review",
-                "workflows.bug_triage",
-            ]
-            .contains(&req.workflow.as_str())
-            {
-                Some(&WORKFLOW_PRESETS[3]) // discuss
-            } else {
-                None
-            }
-        });
-    if let Some((_, wf_id, default_roles, _, _)) = preset {
-        let roles = req
-            .custom_roles
-            .clone()
-            .unwrap_or_else(|| default_roles.iter().map(|s| s.to_string()).collect());
-        (wf_id.to_string(), roles)
-    } else {
-        // Fallback: use custom roles or all defaults
-        let roles = req
-            .custom_roles
-            .clone()
-            .unwrap_or_else(|| default_role_ids().iter().map(|s| s.to_string()).collect());
-        ("default_workflow".to_string(), roles)
-    }
-}
-
-/// Build a workflow definition that drives each selected role to speak
-/// once per round. We synthesize a simple "all roles speak" workflow
-/// rather than parsing discussion.toml — this gives a predictable
-/// structure for streaming and avoids depending on the TOML shape.
-fn build_workflow(roles: &[String], max_rounds: usize) -> DiscussionWorkflow {
-    let steps = roles
-        .iter()
-        .enumerate()
-        .map(|(i, role)| WorkflowStep {
-            id: format!("step_{}", i),
-            description: format!("{} speaks", role),
-            speakers: vec![role.clone()],
-            prompt: format!(
-                "You are a **{role}** in a multi-agent team discussion.\n\
-                 Topic: {{topic}}\n\
-                 Previous discussion:\n{{transcript}}\n\n\
-                 Share your perspective as the {role}. Be concrete: list decisions, \
-                 file paths to edit, or risks. When you propose code changes, wrap them \
-                 in <file_edit path=\"...\">description</file_edit> tags so the UI can \
-                 render them as clickable links.",
-                role = role
-            ),
-            hooks: vec![],
-            output_key: None,
-        })
-        .collect();
-    DiscussionWorkflow {
-        name: "code-editor-chat".into(),
-        description: "In-editor multi-agent chat".into(),
-        steps,
-        max_rounds,
-        context_token_budget: 32000,
-    }
-}
-
-/// Run a real LLM-backed discussion. Loads configs from
-/// `latte-rs-agents/config/` and streams turns via `chat:turn` events.
+/// Run a real LLM-backed discussion.
 async fn run_live_discussion(
-    app: &AppHandle,
-    req: &StartDiscussionRequest,
-) -> Result<DiscussionPayload, String> {
-    let config_root = agents_config_root();
-    let agents_path = config_root.join("agents.toml");
-    let models_path = config_root.join("models.toml");
-
-    if !agents_path.exists() {
-        return Err(format!(
-            "配置文件未找到: agents.toml\n\
-             路径: {}\n\
-             \n\
-             请确保 latte-rs-agents 仓库位于正确位置。",
-            agents_path.display()
-        ));
-    }
-
-    if !models_path.exists() {
-        return Err(format!(
-            "配置文件未找到: models.toml\n\
-             路径: {}\n\
-             \n\
-             models.toml 定义了模型配置和 API 密钥。\n\
-             请复制示例文件并填入您的 API 密钥:\n\
-             cp {}/models.toml.example {}/models.toml\n\
-             然后编辑 models.toml 填入 API 密钥。",
-            models_path.display(),
-            config_root.display(),
-            config_root.display()
-        ));
-    }
-
-    // Load and merge configs
-    let mut agent_config = match AgentConfig::load(agents_path.to_str().unwrap()) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            return Err(format!(
-                "配置文件解析失败: agents.toml\n\
-                 路径: {}\n\
-                 错误: {}\n\
-                 \n\
-                 请检查文件格式是否正确。",
-                agents_path.display(),
-                e
-            ));
-        }
-    };
-
-    let models_config = match AgentConfig::load(models_path.to_str().unwrap()) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            return Err(format!(
-                "配置文件解析失败: models.toml\n\
-                 路径: {}\n\
-                 错误: {}\n\
-                 \n\
-                 请检查文件格式是否正确。",
-                models_path.display(),
-                e
-            ));
-        }
-    };
-    agent_config.models = models_config.models;
-
-    // Build resolver
-    let resolver = match ModelResolver::from_config(&agent_config) {
-        Ok(r) => r,
-        Err(e) => {
-            return Err(format!(
-                "模型解析失败\n\
-                 配置文件: {}\n\
-                 错误: {}\n\
-                 \n\
-                 请检查 models.toml 中是否定义了有效的模型。\n\
-                 每个模型需要指定 provider (如 'anthropic', 'openai') 和 model_name。",
-                models_path.display(),
-                e
-            ));
-        }
-    };
-
-    // Resolve roles and create agents
-    let default_params = GenerateParams::default();
-    let (workflow_id, roles) = resolve_workflow(req);
-    let max_rounds = req.max_rounds.unwrap_or(1).max(1);
-    let mut agents: HashMap<String, AgentRunner> = HashMap::new();
-    for role_name in &roles {
-        let template = agent_config.roles.get(role_name).ok_or_else(|| {
-            format!(
-                "角色 '{}' 未在 agents.toml 中定义\n\
-                 配置文件: {}\n\
-                 \n\
-                 可用角色: {}",
-                role_name,
-                agents_path.display(),
-                agent_config.roles.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
-        })?;
-
-        let role = match template.resolve(&default_params).await {
-            Ok(r) => r,
-            Err(e) => {
-                return Err(format!(
-                    "角色解析失败: {}\n\
-                     配置文件: {}\n\
-                     错误: {}",
-                    role_name,
-                    agents_path.display(),
-                    e
-                ));
-            }
-        };
-
-        let model = match resolver.resolve(&role.id, ModelTier::Standard) {
-            Ok(m) => m,
-            Err(e) => {
-                return Err(format!(
-                    "模型解析失败: 角色 '{}' 需要模型\n\
-                     配置文件: {}\n\
-                     错误: {}\n\
-                     \n\
-                     请检查 models.toml 中是否为该 tier 定义了默认模型。",
-                    role_name,
-                    models_path.display(),
-                    e
-                ));
-            }
-        };
-
-        let agent = match Agent::new(role_name.clone(), role, model, default_params.clone()) {
-            Ok(a) => a,
-            Err(e) => {
-                return Err(format!(
-                    "Agent 创建失败: {}\n\
-                     错误: {}",
-                    role_name,
-                    e
-                ));
-            }
-        };
-        agents.insert(role_name.clone(), AgentRunner::new(agent));
-    }
-
-    // Build orchestrator config
-    let mut variables = HashMap::new();
-    variables.insert("topic".into(), req.topic.clone());
-    let config = DiscussionConfig {
-        workflow: build_workflow(&roles, max_rounds),
-        consensus: ConsensusMethod::NoConsensus,
-        max_rounds: Some(max_rounds),
-        context_token_budget: 32000,
-        variables,
-    };
-    // Stash workflow_id for debugging
-    let _ = workflow_id;
-
-    // Run with streaming callback
-    let mut orchestrator = match DiscussionOrchestrator::new(agents, config) {
-        Ok(o) => o,
-        Err(e) => {
-            return Err(format!(
-                "Orchestrator 初始化失败\n\
-                 错误: {}\n\
-                 \n\
-                 这通常表示模型配置或角色配置有问题。",
-                e
-            ));
-        }
-    };
-
-    let result = match orchestrator
-        .run_with_events(|turn| {
-            // Emit each turn as it completes
-            let payload = TurnPayload {
-                agent: turn.agent.clone(),
-                role_id: turn.role_id.clone(),
-                icon: lookup_icon(&turn.role_id),
-                response: turn.response.clone(),
-                round: turn.round,
-                step_id: turn.step_id.clone(),
-                turn_number: turn.turn_number,
-            };
-            let _ = app.emit("chat:turn", &payload);
-        })
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return Err(format!(
-                "LLM 调用失败\n\
-                 配置文件: {}\n\
-                 错误: {}\n\
-                 \n\
-                 常见原因:\n\
-                 - API 密钥无效或已过期\n\
-                 - 网络连接问题\n\
-                 - 模型服务不可用\n\
-                 \n\
-                 请检查 models.toml 中的 API 密钥配置。",
-                models_path.display(),
-                e
-            ));
-        }
-    };
-
-    // Convert DiscussionResult → DiscussionPayload
-    let rounds: Vec<RoundPayload> = result
-        .rounds
-        .iter()
-        .map(|r| RoundPayload {
-            number: r.number,
-            turns: r
-                .turns
-                .iter()
-                .map(|t| TurnPayload {
-                    agent: t.agent.clone(),
-                    role_id: t.role_id.clone(),
-                    icon: lookup_icon(&t.role_id),
-                    response: t.response.clone(),
-                    round: t.round,
-                    step_id: t.step_id.clone(),
-                    turn_number: t.turn_number,
-                })
-                .collect(),
-            consensus_reached: r.consensus_reached,
-        })
-        .collect();
-
-    Ok(DiscussionPayload {
-        rounds,
-        consensus_reached: result.consensus_reached,
-        summary: None,
-        total_input_tokens: result.total_usage.input_tokens,
-        total_output_tokens: result.total_usage.output_tokens,
-        stub: false,
-    })
-}
-
-/// Run a real LLM-backed discussion using global config files.
-/// This is the new preferred path that reads from ~/.latte/models.yaml
-async fn run_live_discussion_with_config(
     app: &AppHandle,
     req: &StartDiscussionRequest,
     global_config: &GlobalModelConfig,
     roles_config: &RoleConfig,
 ) -> Result<DiscussionPayload, String> {
-    use latte_ai::client::AiClient;
-    use latte_ai::params::GenerateParams;
-    
-    // Build AI client from config
-    let (default_model_id, default_model_def) = global_config
-        .models
-        .get(&global_config.default_model)
-        .map(|m| (global_config.default_model.clone(), m.clone()))
-        .or_else(|| global_config.models.iter().next().map(|(k, v)| (k.clone(), v.clone())))
-        .ok_or_else(|| "models.yaml 中没有定义任何模型".to_string())?;
-    
-    // Expand API key from env or use direct value
-    let api_key = global_config
-        .api_keys
-        .get(&default_model_def.provider)
-        .map(|k| global_config::expand_env_vars(k))
-        .filter(|k| !k.starts_with("${"))
-        .ok_or_else(|| {
-            format!(
-                "Provider '{}' 的 API 密钥未配置。\n\
-                 请在 ~/.latte/models.yaml 的 api_keys 部分设置 {} 的密钥。",
-                default_model_def.provider,
-                default_model_def.provider
-            )
-        })?;
-    
-    // Build Model struct
-    let api_type = match default_model_def.provider.as_str() {
-        "anthropic" => latte_ai::models::ApiType::AnthropicMessages,
-        _ => latte_ai::models::ApiType::OpenAiCompletions,
-    };
-    
-    let model = latte_ai::models::Model {
-        id: default_model_def.model.clone(),
-        name: default_model_def.name.clone(),
-        api: api_type,
-        provider: default_model_def.provider.clone(),
-        base_url: default_model_def.api_base.clone().unwrap_or_else(|| {
-            match default_model_def.provider.as_str() {
-                "anthropic" => "https://api.anthropic.com".to_string(),
-                "deepseek" => "https://api.deepseek.com".to_string(),
-                "openai" => "https://api.openai.com".to_string(),
-                _ => String::new(),
-            }
-        }),
-        api_key,
-        context_window: default_model_def.context_window,
-        max_tokens: default_model_def.max_tokens,
-        supports_thinking: default_model_def.supports_thinking,
-        cost_per_million_input: default_model_def.cost_input,
-        cost_per_million_output: default_model_def.cost_output,
-    };
-    
-    // Build AI client
-    let client = AiClient::new(model).map_err(|e| format!("创建 AI 客户端失败: {}", e))?;
-    
-    // Get roles for this workflow
-    let workflow = roles_config
-        .workflows
-        .get(&req.workflow)
-        .or_else(|| roles_config.workflows.values().next())
-        .ok_or_else(|| "roles.yaml 中没有定义工作流".to_string())?;
-    
-    let roles_to_use = req.custom_roles.clone().unwrap_or_else(|| workflow.roles.clone());
-    let max_rounds = req.max_rounds.unwrap_or(workflow.max_rounds).max(1);
-    
-    // Build messages for each role
+    // Resolve roles from workflow
+    let (default_roles, default_max_rounds) = resolve_workflow_roles(roles_config, req);
+    let roles_to_use = req.custom_roles.clone().unwrap_or(default_roles);
+    let max_rounds = req.max_rounds.unwrap_or(default_max_rounds).max(1);
+
+    // Build role agents
+    let mut agents: Vec<RoleAgent> = Vec::new();
+    for role_id in &roles_to_use {
+        let (agent_name, icon, system_prompt, temperature) = get_role_info(roles_config, role_id);
+        let model_def = get_model_for_role(global_config, roles_config, role_id)?;
+        let client = build_client(model_def)?;
+        agents.push(RoleAgent {
+            id: role_id.clone(),
+            name: agent_name,
+            icon,
+            system_prompt,
+            temperature,
+            client,
+        });
+    }
+
+    if agents.is_empty() {
+        return Err("没有可用的角色".to_string());
+    }
+
+    // Run rounds
     let mut turns: Vec<TurnPayload> = Vec::new();
     let mut total_input_tokens = 0u32;
     let mut total_output_tokens = 0u32;
-    
+
     for round in 0..max_rounds {
-        for role_id in &roles_to_use {
-            let role_def = roles_config
-                .roles
-                .get(role_id)
-                .ok_or_else(|| format!("角色 '{}' 未在 roles.yaml 中定义", role_id))?;
-            
-            // Get model for this role (or use default)
-            let model_id = role_def.model.as_ref().unwrap_or(&global_config.default_model);
-            let model_def = global_config
-                .models
-                .get(model_id)
-                .ok_or_else(|| format!("模型 '{}' 未在 models.yaml 中定义", model_id))?;
-            
-            // Build prompt
-            let mut prompt = role_def.prompt.clone();
-            prompt = prompt.replace("{topic}", &req.topic);
-            
-            // Add previous turns as context
+        for (idx, agent) in agents.iter().enumerate() {
             let transcript: String = turns
                 .iter()
-                .map(|t| format!("**{}**: {}", t.agent, t.response))
+                .map(|t| format!("**{} ({})**: {}", t.agent, t.role_id, t.response))
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            prompt = prompt.replace("{transcript}", &transcript);
-            
-            // Call LLM
+
+            let user_message = if turns.is_empty() {
+                format!("{}\n\nTopic: {}\n\nPlease share your perspective.", agent.system_prompt, req.topic)
+            } else {
+                format!(
+                    "{}\n\nTopic: {}\n\nPrevious discussion:\n{}\n\nPlease continue based on the above discussion.",
+                    agent.system_prompt, req.topic, transcript
+                )
+            };
+
+            let messages = vec![Message {
+                role: MessageRole::User,
+                content: user_message,
+            }];
+
             let params = GenerateParams {
-                temperature: Some(role_def.temperature),
-                max_tokens: Some(model_def.max_tokens),
+                temperature: Some(agent.temperature),
+                max_tokens: Some(8192),
                 ..Default::default()
             };
-            
-            let messages = vec![
-                latte_ai::models::Message {
-                    role: latte_ai::models::Role::User,
-                    content: prompt.clone(),
-                }
-            ];
-            
-            let response = client
-                .chat(&messages, &params)
-                .await
-                .map_err(|e| format!("LLM 调用失败: {}", e))?;
-            
-            let response_text = response.content.clone();
-            total_input_tokens += response.usage.input_tokens;
-            total_output_tokens += response.usage.output_tokens;
+
+            let completion: Completion = agent.client.chat(&messages, &params).await.map_err(|e| {
+                format!(
+                    "LLM call failed (role: {})\nModel: {}\nError: {}\n\nCommon causes:\n- Invalid or expired API key\n- Network connection issue\n- Model service unavailable",
+                    agent.id, agent.client.model().id, e
+                )
+            })?;
+
+            total_input_tokens += completion.usage.input_tokens;
+            total_output_tokens += completion.usage.output_tokens;
+
             let turn = TurnPayload {
-                agent: role_def.name.clone(),
-                role_id: role_id.clone(),
-                icon: role_def.icon.clone(),
-                response: response_text.clone(),
+                agent: agent.name.clone(),
+                role_id: agent.id.clone(),
+                icon: agent.icon.clone(),
+                response: completion.content.clone(),
                 round,
-                step_id: format!("step_{}", turns.len()),
+                step_id: format!("step_{}", idx),
                 turn_number: turns.len(),
             };
-            
-            // Emit turn event
+
             let _ = app.emit("chat:turn", &turn);
             turns.push(turn);
-            
-            // Small delay between turns
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
     }
-    
-    // Build final result
-    let max_round = turns.iter().map(|t| t.round).max().unwrap_or(0);
-    let rounds: Vec<RoundPayload> = (0..=max_round)
-        .map(|round| {
-            let round_turns: Vec<TurnPayload> = turns
-                .iter()
-                .filter(|t| t.round == round)
-                .cloned()
-                .collect();
-            RoundPayload {
-                number: round,
-                turns: round_turns,
-                consensus_reached: true,
-            }
+
+    let max_round_seen = turns.iter().map(|t| t.round).max().unwrap_or(0);
+    let rounds: Vec<RoundPayload> = (0..=max_round_seen)
+        .map(|round| RoundPayload {
+            number: round,
+            turns: turns.iter().filter(|t| t.round == round).cloned().collect(),
+            consensus_reached: true,
         })
         .collect();
-    
+
     Ok(DiscussionPayload {
         rounds,
         consensus_reached: true,
-        summary: Some(format!("讨论完成: {}", req.topic)),
+        summary: Some(format!("Discussion complete: {}", req.topic)),
         total_input_tokens,
         total_output_tokens,
         stub: false,
     })
 }
 
-fn lookup_icon(role_id: &str) -> String {
-    ROLE_TEMPLATES
-        .iter()
-        .find(|(id, _, _)| *id == role_id)
-        .map(|(_, icon, _)| icon.to_string())
-        .unwrap_or_else(|| "💬".to_string())
+fn resolve_workflow_roles(roles_config: &RoleConfig, req: &StartDiscussionRequest) -> (Vec<String>, usize) {
+    if let Some(wf) = roles_config.workflows.get(&req.workflow) {
+        return (wf.roles.clone(), wf.max_rounds);
+    }
+    if let Some((_, _, roles, rounds, _)) = WORKFLOW_PRESETS.iter().find(|(id, _, _, _, _)| *id == req.workflow) {
+        return (roles.iter().map(|s| s.to_string()).collect(), *rounds);
+    }
+    (default_role_ids().iter().map(|s| s.to_string()).collect(), 1)
 }
 
-/// Run a discussion in stub mode — emit fake but realistic turns.
+fn get_role_info(roles_config: &RoleConfig, role_id: &str) -> (String, String, String, f64) {
+    if let Some(role_def) = roles_config.roles.get(role_id) {
+        return (role_def.name.clone(), role_def.icon.clone(), role_def.prompt.clone(), role_def.temperature);
+    }
+    let template = ROLE_TEMPLATES.iter().find(|(id, _, _)| *id == role_id);
+    match template {
+        Some((id, icon, tmpl)) => (id.to_string(), icon.to_string(), tmpl.to_string(), 0.5),
+        None => (role_id.to_string(), "💬".to_string(), "You are a helpful assistant.".to_string(), 0.5),
+    }
+}
+
+fn get_model_for_role<'a>(
+    global_config: &'a GlobalModelConfig,
+    roles_config: &RoleConfig,
+    role_id: &str,
+) -> Result<&'a super::global_config::ModelDef, String> {
+    let model_id = roles_config
+        .roles
+        .get(role_id)
+        .and_then(|r| r.model.clone())
+        .unwrap_or_else(|| global_config.default_model.clone());
+
+    global_config
+        .models
+        .iter()
+        .find(|m| m.id == model_id)
+        .or_else(|| global_config.models.first())
+        .ok_or_else(|| format!("Model '{}' not defined in models.yaml", model_id))
+}
+
+fn build_client(model_def: &super::global_config::ModelDef) -> Result<AiClient, String> {
+    let api_key = global_config::expand_env_vars(&model_def.api_key);
+    if api_key.starts_with("${") || api_key.is_empty() {
+        return Err(format!(
+            "API key for model '{}' not configured.\nPlease set api_key for provider '{}' in ~/.latte/models.yaml.",
+            model_def.id, model_def.provider
+        ));
+    }
+
+    let api_type = match model_def.api.as_str() {
+        "anthropic" => ApiType::AnthropicMessages,
+        _ => ApiType::OpenAiCompletions,
+    };
+
+    let base_url = if model_def.base_url.is_empty() {
+        match model_def.provider.as_str() {
+            "anthropic" => "https://api.anthropic.com".to_string(),
+            "deepseek" => "https://api.deepseek.com".to_string(),
+            "openai" => "https://api.openai.com".to_string(),
+            _ => String::new(),
+        }
+    } else {
+        model_def.base_url.clone()
+    };
+
+    let model = Model {
+        id: model_def.id.clone(),
+        name: model_def.name.clone(),
+        api: api_type,
+        provider: model_def.provider.clone(),
+        base_url,
+        api_key,
+        context_window: model_def.context_window,
+        max_tokens: model_def.max_tokens,
+        supports_thinking: model_def.reasoning,
+        cost_per_million_input: model_def.cost_per_million_input,
+        cost_per_million_output: model_def.cost_per_million_output,
+    };
+
+    AiClient::new(model).map_err(|e| format!("Failed to create AI client: {}", e))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stub mode
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ROLE_TEMPLATES: &[(&str, &str, &str)] = &[
+    ("pm", "📋", "## Requirements Analysis\n\nAs **PM**, I've analyzed **{topic}**.\n\n<file_edit path=\"docs/{slug}.md\">Add requirements doc for {topic}</file_edit>"),
+    ("architect", "🏗️", "## Architecture Review\n\nLooking at **{topic}** from a system-design perspective.\n\n<file_edit path=\"docs/architecture/{slug}.md\">Add architecture notes for {topic}</file_edit>"),
+    ("programmer", "💻", "## Implementation Plan\n\nFor **{topic}**.\n\n<file_edit path=\"src/lib/{slug}.ts\">Implement {topic}</file_edit>"),
+    ("tester", "🧪", "## Test Strategy\n\nFor **{topic}**.\n\n<file_edit path=\"src/lib/{slug}.test.ts\">Add tests for {topic}</file_edit>"),
+    ("reviewer", "🔍", "## Code Review\n\nReviewing **{topic}**."),
+    ("devops", "🚀", "## Operational Notes\n\nFor **{topic}**."),
+    ("security", "🛡️", "## Security Review\n\nFor **{topic}**."),
+    ("designer", "🎨", "## UX Considerations\n\nFor **{topic}**."),
+    ("tech_writer", "📝", "## Documentation\n\nFor **{topic}**."),
+    ("manager", "👔", "## Decision\n\n**Verdict on {topic}**: ✅ proceed."),
+];
+
 async fn run_stub_discussion(
     app: &AppHandle,
     req: &StartDiscussionRequest,
@@ -707,7 +287,18 @@ async fn run_stub_discussion(
     } else {
         req.topic.clone()
     };
-    let (_, roles) = resolve_workflow(req);
+
+    let preset = WORKFLOW_PRESETS.iter().find(|(name, _, _, _, _)| *name == req.workflow);
+    let roles: Vec<String> = match preset {
+        Some((_, _, default_roles, _, _)) => req
+            .custom_roles
+            .clone()
+            .unwrap_or_else(|| default_roles.iter().map(|s| s.to_string()).collect()),
+        None => req
+            .custom_roles
+            .clone()
+            .unwrap_or_else(|| default_role_ids().iter().map(|s| s.to_string()).collect()),
+    };
 
     let total_rounds = req.max_rounds.unwrap_or(1).max(1);
     let mut rounds: Vec<RoundPayload> = Vec::new();
