@@ -121,7 +121,7 @@ async fn run_live_discussion(
 
             let messages = vec![Message {
                 role: MessageRole::User,
-                content: user_message,
+                content: user_message.into(),
             }];
 
             let params = GenerateParams {
