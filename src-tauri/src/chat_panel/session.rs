@@ -21,6 +21,7 @@ use latte_agent_orchestrator::{ConsensusMethod, DiscussionWorkflow, WorkflowStep
 use latte_ai::params::GenerateParams;
 
 use super::config::agents_config_root;
+use super::global_config::{self, GlobalModelConfig, RoleConfig};
 use super::types::*;
 
 /// Workflow presets. Maps a friendly name → (workflow_id, default roles,
@@ -150,23 +151,46 @@ pub async fn run_discussion(
         return run_stub_discussion(app, req).await;
     }
 
-    // Real mode: check prerequisites first
-    let has_keys = has_any_api_key();
+    // Real mode: load global config and check API keys
+    let global_config = global_config::load_global_models();
+    let roles_config = global_config::load_roles_config();
+    
+    // Check if any API key is configured (either in env or in config)
+    let has_keys = check_api_keys_available(&global_config);
     if !has_keys {
-        return Err(
-            "未配置 API 密钥。请设置环境变量 ANTHROPIC_API_KEY、OPENAI_API_KEY 或 DEEPSEEK_API_KEY。\n\
+        let models_path = global_config::global_models_path();
+        return Err(format!(
+            "未配置 API 密钥。\n\
              \n\
-             示例:\n\
-             export ANTHROPIC_API_KEY=sk-...\n\
+             配置文件: {}\n\
+             \n\
+             请在配置文件中设置 API 密钥:\n\
+             1. 打开 ~/.latte/models.yaml\n\
+             2. 在 api_keys 部分填入密钥:\n\
+                  deepseek: YOUR_API_KEY_HERE\n\
+                  或使用环境变量: \"$DEEPSEEK_API_KEY\"\n\
              \n\
              或强制使用 stub 模式:\n\
-             export LATTE_CHAT_LIVE=0"
-                .to_string(),
-        );
+             export LATTE_CHAT_LIVE=0",
+            models_path.display()
+        ));
     }
 
-    // Run real LLM discussion; propagate errors to the caller
-    run_live_discussion(app, req).await
+    // Run real LLM discussion with global config
+    run_live_discussion_with_config(app, req, &global_config, &roles_config).await
+}
+
+/// Check if any API key is available (in config or environment)
+fn check_api_keys_available(config: &GlobalModelConfig) -> bool {
+    // Check if any API key is configured and non-empty
+    for (provider, key) in &config.api_keys {
+        let expanded = global_config::expand_env_vars(key);
+        // If it doesn't start with ${, it means the env var was found
+        if !expanded.starts_with("${") && !expanded.is_empty() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Check if any of the supported API keys is in the environment.
@@ -484,6 +508,179 @@ async fn run_live_discussion(
         summary: None,
         total_input_tokens: result.total_usage.input_tokens,
         total_output_tokens: result.total_usage.output_tokens,
+        stub: false,
+    })
+}
+
+/// Run a real LLM-backed discussion using global config files.
+/// This is the new preferred path that reads from ~/.latte/models.yaml
+async fn run_live_discussion_with_config(
+    app: &AppHandle,
+    req: &StartDiscussionRequest,
+    global_config: &GlobalModelConfig,
+    roles_config: &RoleConfig,
+) -> Result<DiscussionPayload, String> {
+    use latte_ai::client::AiClient;
+    use latte_ai::params::GenerateParams;
+    
+    // Build AI client from config
+    let (default_model_id, default_model_def) = global_config
+        .models
+        .get(&global_config.default_model)
+        .map(|m| (global_config.default_model.clone(), m.clone()))
+        .or_else(|| global_config.models.iter().next().map(|(k, v)| (k.clone(), v.clone())))
+        .ok_or_else(|| "models.yaml 中没有定义任何模型".to_string())?;
+    
+    // Expand API key from env or use direct value
+    let api_key = global_config
+        .api_keys
+        .get(&default_model_def.provider)
+        .map(|k| global_config::expand_env_vars(k))
+        .filter(|k| !k.starts_with("${"))
+        .ok_or_else(|| {
+            format!(
+                "Provider '{}' 的 API 密钥未配置。\n\
+                 请在 ~/.latte/models.yaml 的 api_keys 部分设置 {} 的密钥。",
+                default_model_def.provider,
+                default_model_def.provider
+            )
+        })?;
+    
+    // Build Model struct
+    let api_type = match default_model_def.provider.as_str() {
+        "anthropic" => latte_ai::models::ApiType::AnthropicMessages,
+        _ => latte_ai::models::ApiType::OpenAiCompletions,
+    };
+    
+    let model = latte_ai::models::Model {
+        id: default_model_def.model.clone(),
+        name: default_model_def.name.clone(),
+        api: api_type,
+        provider: default_model_def.provider.clone(),
+        base_url: default_model_def.api_base.clone().unwrap_or_else(|| {
+            match default_model_def.provider.as_str() {
+                "anthropic" => "https://api.anthropic.com".to_string(),
+                "deepseek" => "https://api.deepseek.com".to_string(),
+                "openai" => "https://api.openai.com".to_string(),
+                _ => String::new(),
+            }
+        }),
+        api_key,
+        context_window: default_model_def.context_window,
+        max_tokens: default_model_def.max_tokens,
+        supports_thinking: default_model_def.supports_thinking,
+        cost_per_million_input: default_model_def.cost_input,
+        cost_per_million_output: default_model_def.cost_output,
+    };
+    
+    // Build AI client
+    let client = AiClient::new(model).map_err(|e| format!("创建 AI 客户端失败: {}", e))?;
+    
+    // Get roles for this workflow
+    let workflow = roles_config
+        .workflows
+        .get(&req.workflow)
+        .or_else(|| roles_config.workflows.values().next())
+        .ok_or_else(|| "roles.yaml 中没有定义工作流".to_string())?;
+    
+    let roles_to_use = req.custom_roles.clone().unwrap_or_else(|| workflow.roles.clone());
+    let max_rounds = req.max_rounds.unwrap_or(workflow.max_rounds).max(1);
+    
+    // Build messages for each role
+    let mut turns: Vec<TurnPayload> = Vec::new();
+    let mut total_input_tokens = 0u32;
+    let mut total_output_tokens = 0u32;
+    
+    for round in 0..max_rounds {
+        for role_id in &roles_to_use {
+            let role_def = roles_config
+                .roles
+                .get(role_id)
+                .ok_or_else(|| format!("角色 '{}' 未在 roles.yaml 中定义", role_id))?;
+            
+            // Get model for this role (or use default)
+            let model_id = role_def.model.as_ref().unwrap_or(&global_config.default_model);
+            let model_def = global_config
+                .models
+                .get(model_id)
+                .ok_or_else(|| format!("模型 '{}' 未在 models.yaml 中定义", model_id))?;
+            
+            // Build prompt
+            let mut prompt = role_def.prompt.clone();
+            prompt = prompt.replace("{topic}", &req.topic);
+            
+            // Add previous turns as context
+            let transcript: String = turns
+                .iter()
+                .map(|t| format!("**{}**: {}", t.agent, t.response))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            prompt = prompt.replace("{transcript}", &transcript);
+            
+            // Call LLM
+            let params = GenerateParams {
+                temperature: Some(role_def.temperature),
+                max_tokens: Some(model_def.max_tokens),
+                ..Default::default()
+            };
+            
+            let messages = vec![
+                latte_ai::models::Message {
+                    role: latte_ai::models::Role::User,
+                    content: prompt.clone(),
+                }
+            ];
+            
+            let response = client
+                .chat(&messages, &params)
+                .await
+                .map_err(|e| format!("LLM 调用失败: {}", e))?;
+            
+            let response_text = response.content.clone();
+            total_input_tokens += response.usage.input_tokens;
+            total_output_tokens += response.usage.output_tokens;
+            let turn = TurnPayload {
+                agent: role_def.name.clone(),
+                role_id: role_id.clone(),
+                icon: role_def.icon.clone(),
+                response: response_text.clone(),
+                round,
+                step_id: format!("step_{}", turns.len()),
+                turn_number: turns.len(),
+            };
+            
+            // Emit turn event
+            let _ = app.emit("chat:turn", &turn);
+            turns.push(turn);
+            
+            // Small delay between turns
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    
+    // Build final result
+    let max_round = turns.iter().map(|t| t.round).max().unwrap_or(0);
+    let rounds: Vec<RoundPayload> = (0..=max_round)
+        .map(|round| {
+            let round_turns: Vec<TurnPayload> = turns
+                .iter()
+                .filter(|t| t.round == round)
+                .cloned()
+                .collect();
+            RoundPayload {
+                number: round,
+                turns: round_turns,
+                consensus_reached: true,
+            }
+        })
+        .collect();
+    
+    Ok(DiscussionPayload {
+        rounds,
+        consensus_reached: true,
+        summary: Some(format!("讨论完成: {}", req.topic)),
+        total_input_tokens,
+        total_output_tokens,
         stub: false,
     })
 }
