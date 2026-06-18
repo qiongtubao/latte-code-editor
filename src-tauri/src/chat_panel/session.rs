@@ -126,22 +126,32 @@ fn convert_model_def(m: &ProjectModelDef) -> UpstreamModelDef {
 /// `effective_chain` is the chain that `build_agent_config` will hand
 /// to the resolver (chain head = tier override, rest = fallbacks).
 fn build_upstream_role(role_id: &str, role_def: &RoleDef, effective_chain: &[String]) -> Role {
+    // `model_tier` is a free-form String in the project's `RoleDef`
+    // (matches `agents.toml` schema). The upstream runtime uses a
+    // `ModelTier` enum, so parse + fall back to `Standard` on
+    // unknown / missing values — keeping chain head as primary.
+    let default_model_tier = ModelTier::parse(&role_def.model_tier)
+        .unwrap_or(ModelTier::Standard);
     Role {
         id: role_id.to_string(),
         name: role_def.name.clone(),
         category: RoleCategory::parse(&role_def.category)
             .unwrap_or(RoleCategory::Discussion),
+        // `prompt_file` is stored on `RoleDef` for future file-based
+        // prompts; runtime still uses the inline `prompt` until the
+        // file-loading helper lands.
         system_prompt: role_def.prompt.clone(),
-        // Project has no tier concept — the chain head IS the primary.
-        // The tier→model wiring lives in `build_agent_config`.
-        default_model_tier: ModelTier::Standard,
+        default_model_tier,
         model_chain: effective_chain.to_vec(),
         default_params: latte_ai::params::GenerateParams {
             temperature: Some(role_def.temperature),
             max_tokens: Some(8192),
             ..Default::default()
         },
-        allowed_tools: vec![],
+        // Forward the role's tool whitelist. The chat panel runner
+        // doesn't yet wire tool calls, but the upstream `Agent`
+        // reads `allowed_tools` when constructed.
+        allowed_tools: role_def.tools.clone(),
         icon: role_def.icon.clone(),
     }
 }

@@ -78,9 +78,12 @@ models:
             name: "Test".into(),
             icon: "🧪".into(),
             category: "test".into(),
+            model_tier: "standard".into(),
             model: model.map(String::from),
             model_chain: chain.into_iter().map(String::from).collect(),
             temperature: 0.5,
+            tools: vec![],
+            prompt_file: String::new(),
             prompt: "You are a test.".into(),
         }
     }

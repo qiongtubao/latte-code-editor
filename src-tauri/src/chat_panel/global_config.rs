@@ -38,6 +38,14 @@ pub struct RoleDef {
     pub icon: String,
     #[serde(default)]
     pub category: String,
+    /// Tier hint for primary model resolution (`"budget"` /
+    /// `"standard"` / `"premium"`). The project currently uses the
+    /// chain head as primary regardless of tier, but the field is
+    /// stored + forwarded to upstream `Role.default_model_tier` so
+    /// `ModelResolver` and downstream consumers see the same value
+    /// the upstream `agents.toml` would carry.
+    #[serde(default = "default_model_tier")]
+    pub model_tier: String,
     /// Single-model override (back-compat). If `model_chain` is empty,
     /// this single id is treated as the entire chain.
     #[serde(default)]
@@ -50,6 +58,15 @@ pub struct RoleDef {
     pub model_chain: Vec<String>,
     #[serde(default = "default_temperature")]
     pub temperature: f64,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Optional path to a markdown prompt file (relative to
+    /// `roles.yaml` directory or absolute). When set, takes
+    /// precedence over the inline `prompt` field. Mirrors
+    /// `latte-rs-agents::role::RoleTemplate::prompt_file`.
+    #[serde(default)]
+    pub prompt_file: String,
+    /// Inline system prompt. Used when `prompt_file` is empty.
     pub prompt: String,
 }
 
@@ -108,6 +125,7 @@ fn default_model() -> String { "deepseek-chat".into() }
 fn default_max_tokens() -> u32 { 8192 }
 fn default_context_window() -> u32 { 32768 }
 fn default_temperature() -> f64 { 0.5 }
+fn default_model_tier() -> String { "standard".into() }
 fn default_max_rounds() -> usize { 1 }
 
 impl GlobalModelConfig {
@@ -249,10 +267,19 @@ fn create_default_roles() -> RoleConfig {
         name: "Software Engineer".into(),
         icon: "💻".into(),
         category: "execution".into(),
+        // Upstream `latte-rs-agents/config/agents.toml` uses "budget"
+        // for programmer (low cost / high volume role). We store +
+        // forward this verbatim; runtime still uses chain head as
+        // primary, but the field travels with the role.
+        model_tier: "budget".into(),
         model: None,
-        // Default to the global default; users can extend the chain via UI.
         model_chain: vec!["deepseek-chat".into()],
         temperature: 0.3,
+        // Upstream programmer gets read/write/bash/search; the chat
+        // panel doesn't yet wire tools to LLM calls but the field
+        // is forwarded to `Role.allowed_tools` for future use.
+        tools: vec!["read".into(), "write".into(), "bash".into(), "search".into()],
+        prompt_file: "prompts/programmer.md".into(),
         prompt: "You are a Software Engineer.".into(),
     });
     let mut workflows = HashMap::new();
