@@ -19,9 +19,9 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 const baseConfig: RoleConfigResponse = {
-  default_model: "deepseek-chat",
-  models_path: "/tmp/models.yaml",
-  roles_path: "/tmp/roles.yaml",
+  defaultModel: "deepseek-chat",
+  modelsPath: "/tmp/models.yaml",
+  rolesPath: "/tmp/roles.yaml",
   workflows: [],
   roles: [
     {
@@ -29,17 +29,17 @@ const baseConfig: RoleConfigResponse = {
       name: "Software Engineer",
       icon: "💻",
       category: "execution",
-      default_model_tier: "claude-sonnet-4",
-      model_chain: ["claude-sonnet-4", "deepseek-chat"],
+      defaultModelTier: "claude-sonnet-4",
+      modelChain: ["claude-sonnet-4", "deepseek-chat"],
     },
     {
       id: "pm",
       name: "Product Manager",
       icon: "📋",
       category: "planning",
-      // Pre-chain config: only the legacy `default_model_tier` is set.
-      default_model_tier: "gpt-4o",
-      model_chain: [],
+      // Pre-chain config: only the legacy `defaultModelTier` is set.
+      defaultModelTier: "gpt-4o",
+      modelChain: [],
     },
   ],
 };
@@ -80,7 +80,7 @@ describe("useChatStore — 角色模型优先级 (chain)", () => {
     expect(state.roleModels["programmer"]).toBe("claude-sonnet-4");
     // availableRoles mirrors both fields
     const programmer = state.availableRoles.find((r) => r.id === "programmer");
-    expect(programmer?.model_chain).toEqual(["claude-sonnet-4", "deepseek-chat"]);
+    expect(programmer?.modelChain).toEqual(["claude-sonnet-4", "deepseek-chat"]);
     expect(programmer?.model).toBe("claude-sonnet-4");
 
     // Legacy `default_model_tier` is wrapped into a one-element chain
@@ -105,7 +105,7 @@ describe("useChatStore — 角色模型优先级 (chain)", () => {
     expect(state.roleChains["programmer"]).toEqual(["a", "b", "c"]);
     expect(state.roleModels["programmer"]).toBe("a");
     const programmer = state.availableRoles.find((r) => r.id === "programmer");
-    expect(programmer?.model_chain).toEqual(["a", "b", "c"]);
+    expect(programmer?.modelChain).toEqual(["a", "b", "c"]);
     expect(programmer?.model).toBe("a");
 
     // Make sure we actually called the right Tauri command with the

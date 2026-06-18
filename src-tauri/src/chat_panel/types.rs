@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// A single agent turn, sent as a streaming event.
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TurnPayload {
     pub agent: String,
     pub role_id: String,
@@ -12,8 +13,8 @@ pub struct TurnPayload {
     pub turn_number: usize,
 }
 
-/// Final result after discussion completes.
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DiscussionPayload {
     pub rounds: Vec<RoundPayload>,
     pub consensus_reached: bool,
@@ -24,6 +25,7 @@ pub struct DiscussionPayload {
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoundPayload {
     pub number: usize,
     pub turns: Vec<TurnPayload>,
@@ -32,6 +34,7 @@ pub struct RoundPayload {
 
 /// Request from frontend to start a discussion.
 #[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StartDiscussionRequest {
     pub topic: String,
     pub workflow: String,
@@ -41,6 +44,7 @@ pub struct StartDiscussionRequest {
 
 /// Request to continue with a follow-up question.
 #[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContinueDiscussionRequest {
     pub session_id: usize,
     pub message: String,
@@ -48,6 +52,7 @@ pub struct ContinueDiscussionRequest {
 
 /// Available workflows list item.
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowInfo {
     pub id: String,
     pub name: String,
@@ -55,9 +60,9 @@ pub struct WorkflowInfo {
     pub default_roles: Vec<String>,
     pub steps: Vec<String>,
 }
-
 /// Role info for display in UI.
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoleInfo {
     pub id: String,
     pub name: String,
@@ -74,6 +79,7 @@ pub struct RoleInfo {
 
 /// Model info for display in UI.
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
@@ -83,9 +89,9 @@ pub struct ModelInfo {
     pub supports_vision: bool,
     pub supports_thinking: bool,
 }
-
 /// Response for chat_get_role_config
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoleConfigResponse {
     pub default_model: String,
     pub roles: Vec<RoleInfo>,
@@ -99,6 +105,7 @@ pub struct RoleConfigResponse {
 /// `chain[0]` is the primary; the rest are fallbacks tried in order
 /// when earlier models fail. An empty chain is rejected by the backend.
 #[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SetRoleModelChainRequest {
     pub role_id: String,
     pub chain: Vec<String>,

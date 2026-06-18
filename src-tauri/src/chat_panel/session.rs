@@ -7,19 +7,24 @@
 //! Set LATTE_CHAT_LIVE=0 to force stub mode.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use serde_json::json;
 
-use parking_lot::Mutex;
-
-use super::global_config::{self, GlobalModelConfig, ModelDef, RoleConfig};
+use super::global_config::{
+    self, expand_env_vars, GlobalModelConfig, ModelDef as ProjectModelDef, RoleConfig, RoleDef,
+    WorkflowDef,
+};
 use super::types::*;
 
-use latte_ai::client::AiClient;
-use latte_ai::error::AiError;
-use latte_ai::models::{ApiType, Completion, Message, Model, Role as MessageRole};
-use latte_ai::params::GenerateParams;
+use latte_agent_core::agent::{Agent, AgentRunner};
+use latte_agent_core::config::{AgentConfig, ModelCatalog, ModelDef as UpstreamModelDef};
+use latte_agent_core::model_resolver::{ModelResolver, ModelTier};
+use latte_agent_core::role::{Role, RoleCategory};
+
+use latte_agent_orchestrator::consensus::ConsensusMethod;
+use latte_agent_orchestrator::orchestrator::{DiscussionConfig, DiscussionOrchestrator};
+use latte_agent_orchestrator::workflow::{DiscussionWorkflow, WorkflowStep};
 
 /// Workflow presets
 pub const WORKFLOW_PRESETS: &[(&str, &str, &[&str], usize, &str)] = &[
@@ -60,351 +65,340 @@ pub async fn run_discussion(
 
     run_live_discussion(app, req, &global_config, &roles_config).await
 }
-/// One priority-ordered (model_def, client) pair in an agent's fallback chain.
-struct ChainEntry {
-    def: Arc<ModelDef>,
-    client: AiClient,
-}
-
-/// A configured role backed by a priority-ordered model chain.
+/// Bridge the project's `RoleDef` / `ModelDef` types into the upstream
+/// `latte-agent-core` types used by `DiscussionOrchestrator`.
 ///
-/// `chat_with_fallback` walks the chain top-to-bottom: on a retryable
-/// error (rate-limit, 5xx, transient network) the failing model is
-/// put on cooldown and the next model in the chain is tried. This
-/// mirrors `latte-agent-core::agent::Agent` but stays local so the
-/// chat panel runner doesn't depend on the orchestrator's role
-/// rendering pipeline.
-struct RoleAgent {
-    id: String,
-    name: String,
-    icon: String,
-    system_prompt: String,
-    temperature: f64,
-    /// Priority-ordered chain (highest priority first). Always non-empty
-    /// once `build_chain_for_role` succeeds.
-    chain: Vec<ChainEntry>,
-    /// Per-model cooldown deadlines (model_id -> cooldown_until). Held in
-    /// a `Mutex` so `chat_with_fallback` can take `&self`.
-    cooldown: Mutex<HashMap<String, Instant>>,
-}
+/// The upstream has its own `Role` (with handlebars prompt rendering,
+/// `default_model_tier`, `model_chain`) and `ModelDef` (with `api: String`
+/// and `cost_*` fields). The project keeps a lighter-weight config-only
+/// view in YAML; these helpers do the one-shot conversion when a
+/// discussion is launched.
+// ─── Type bridges (project → upstream) ───────────────────────────────
+//
+// The upstream `latte-agent-core` has its own `Role` (with handlebars
+// prompt rendering, `default_model_tier`, `model_chain`) and `ModelDef`
+// (with `api: String` and `cost_*` fields). The project keeps a lighter
+// config-only view in YAML; these helpers do the one-shot conversion
+// when a discussion is launched.
 
-impl RoleAgent {
-    /// Walk `chain` in priority order, skipping models on cooldown.
-    /// Returns the first successful completion.
-    ///
-    /// On a retryable error the failing model is put on cooldown and
-    /// the next model in the chain is tried. Non-retryable errors
-    /// (auth, config, caller-fault 4xx other than 429) propagate
-    /// immediately so the user sees the underlying cause.
-    async fn chat_with_fallback(
-        &self,
-        messages: &[Message],
-        params: &GenerateParams,
-    ) -> Result<Completion, String> {
-        let now = Instant::now();
-        let mut tried: Vec<String> = Vec::new();
-        let mut last_err: Option<String> = None;
-
-        for entry in &self.chain {
-            // Skip models currently on cooldown.
-            {
-                let cooldowns = self.cooldown.lock();
-                if let Some(until) = cooldowns.get(&entry.def.id) {
-                    if *until > now {
-                        continue;
-                    }
-                }
-            }
-            tried.push(entry.def.id.clone());
-            match entry.client.chat(messages, params).await {
-                Ok(completion) => return Ok(completion),
-                Err(e) => {
-                    if let Some(cd) = cooldown_for_error(&e) {
-                        self.cooldown
-                            .lock()
-                            .insert(entry.def.id.clone(), now + cd);
-                    }
-                    last_err = Some(format!("{}: {}", entry.def.id, e));
-                    // Continue to the next model in the chain.
-                }
-            }
-        }
-
-        Err(format!(
-            "LLM call failed (role: {})\nTried: {}\nLast error: {}\n\nCommon causes:\n- Invalid or expired API key\n- Network connection issue\n- Model service unavailable",
-            self.id,
-            if tried.is_empty() {
-                "<all on cooldown>".to_string()
-            } else {
-                tried.join(", ")
-            },
-            last_err.as_deref().unwrap_or("n/a"),
-        ))
-    }
-}
-
-/// Map an `AiError` to a suggested cooldown duration.
+/// Convert the project's `ModelDef` (lives in `~/.latte/models.yaml`)
+/// to the upstream `ModelDef` consumed by `ModelResolver`.
 ///
-/// Returns `None` for non-retryable errors (auth, config, serialization,
-/// caller-fault 4xx other than 429) — these surface immediately so the
-/// user sees the underlying cause. Mirrors the upstream helper in
-/// `latte-agent-core::agent::cooldown_for_error`.
-fn cooldown_for_error(e: &AiError) -> Option<Duration> {
-    match e {
-        // Vendor told us how long to wait — respect it (floor 1s).
-        AiError::RateLimited { retry_after, .. } => {
-            let secs = retry_after.max(1.0);
-            Some(Duration::from_secs_f64(secs))
-        }
-        // HTTP status codes from the upstream provider.
-        AiError::Api { status, .. } => match *status {
-            429 => Some(Duration::from_secs(60)),
-            500..=599 => Some(Duration::from_secs(30)),
-            // 4xx other than 429 = caller error (bad request, not found,
-            // etc.) — same model will keep failing.
-            _ => None,
+/// Field differences:
+/// - project has `reasoning`, upstream has `supports_thinking` (rename)
+/// - project has `f64` cost fields, upstream has `Option<f64>` (0.0 → None)
+/// - API key `${ENV_VAR}` references are expanded here so the resolver
+///   gets a usable key even if a caller forgot to expand.
+fn convert_model_def(m: &ProjectModelDef) -> UpstreamModelDef {
+    let api_key = expand_env_vars(&m.api_key);
+    UpstreamModelDef {
+        id: m.id.clone(),
+        name: m.name.clone(),
+        // The project omits `api` in many configs; fall back to
+        // `provider` so `parse_api_type` can still classify it.
+        api: if m.api.is_empty() {
+            m.provider.clone()
+        } else {
+            m.api.clone()
         },
-        // Transient network / reqwest errors — short cooldown.
-        AiError::Http(_) => Some(Duration::from_secs(10)),
-        // Everything else is non-retryable: vendor config, serde,
-        // auth, unsupported provider, etc.
-        _ => None,
+        provider: m.provider.clone(),
+        base_url: m.base_url.clone(),
+        api_key,
+        context_window: m.context_window,
+        max_tokens: m.max_tokens,
+        supports_thinking: m.reasoning,
+        cost_per_million_input: if m.cost_per_million_input > 0.0 {
+            Some(m.cost_per_million_input)
+        } else {
+            None
+        },
+        cost_per_million_output: if m.cost_per_million_output > 0.0 {
+            Some(m.cost_per_million_output)
+        } else {
+            None
+        },
+        tier: None,
     }
 }
 
-/// Run a real LLM-backed discussion.
+/// Build an upstream `Role` from the project's `RoleDef`.
+///
+/// `effective_chain` is the chain that `build_agent_config` will hand
+/// to the resolver (chain head = tier override, rest = fallbacks).
+fn build_upstream_role(role_id: &str, role_def: &RoleDef, effective_chain: &[String]) -> Role {
+    Role {
+        id: role_id.to_string(),
+        name: role_def.name.clone(),
+        category: RoleCategory::parse(&role_def.category)
+            .unwrap_or(RoleCategory::Discussion),
+        system_prompt: role_def.prompt.clone(),
+        // Project has no tier concept — the chain head IS the primary.
+        // The tier→model wiring lives in `build_agent_config`.
+        default_model_tier: ModelTier::Standard,
+        model_chain: effective_chain.to_vec(),
+        default_params: latte_ai::params::GenerateParams {
+            temperature: Some(role_def.temperature),
+            max_tokens: Some(8192),
+            ..Default::default()
+        },
+        allowed_tools: vec![],
+        icon: role_def.icon.clone(),
+    }
+}
+
+/// Build the upstream `AgentConfig` from the project's model catalog +
+/// per-role tier overrides derived from each role's chain head.
+fn build_agent_config(
+    global_config: &GlobalModelConfig,
+    roles_config: &RoleConfig,
+    role_ids: &[String],
+) -> AgentConfig {
+    // Upstream `ModelCatalog.role_tiers` uses serde strings as tier keys
+    // (e.g. "standard", "premium", "budget") — not the `ModelTier` enum.
+    let mut role_tiers: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for role_id in role_ids {
+        let Some(role_def) = roles_config.roles.get(role_id) else {
+            continue;
+        };
+        let mut effective = role_def.chain();
+        // Append global default so the resolver always has a primary
+        // to pick from the tier override map.
+        if effective.is_empty() {
+            effective.push(global_config.default_model.clone());
+        }
+        if let Some(primary) = effective.first() {
+            let mut tier_map = HashMap::new();
+            tier_map.insert("standard".to_string(), primary.clone());
+            role_tiers.insert(role_id.clone(), tier_map);
+        }
+    }
+
+    AgentConfig {
+        models: ModelCatalog {
+            models: global_config.models.iter().map(convert_model_def).collect(),
+            tiers: None,
+            role_tiers: Some(role_tiers),
+        },
+        // The project loads its own role YAML; the orchestrator's role
+        // catalog isn't used.
+        roles: HashMap::new(),
+    }
+}
+
+/// Build `HashMap<role_id, AgentRunner>` for the orchestrator.
+///
+/// For each role:
+/// - resolve its chain through `ModelResolver` (primary via
+///   `role_tiers[role_id][Standard]`, fallbacks = `chain[1..]`)
+/// - the resolver drops duplicates and unknown ids
+/// - construct `Agent::new_with_chain` and wrap in `AgentRunner`
+fn build_agent_runners(
+    resolver: &ModelResolver,
+    roles_config: &RoleConfig,
+    role_ids: &[String],
+) -> Result<HashMap<String, AgentRunner>, String> {
+    let mut agents: HashMap<String, AgentRunner> = HashMap::new();
+    for role_id in role_ids {
+        let role_def = roles_config.roles.get(role_id).ok_or_else(|| {
+            format!("role '{role_id}' not found in roles.yaml")
+        })?;
+        let chain = role_def.chain();
+        let role = build_upstream_role(role_id, role_def, &chain);
+        // Snapshot `role.id` so we can use it after `new_with_chain` moves the role.
+        let role_id_owned = role.id.clone();
+        // The resolver picks the primary via `role_tiers`; pass the rest
+        // of the chain as the fallback list. An empty tail is fine — the
+        // resolver will still return the primary.
+        let chain_tail: Vec<String> = chain.iter().skip(1).cloned().collect();
+        let resolved_models = resolver
+            .resolve_chain(&role.id, ModelTier::Standard, &chain_tail)
+            .map_err(|e| format!("resolve chain for role '{role_id}': {e}"))?;
+        let agent = Agent::new_with_chain(
+            role_id_owned.clone(),
+            role,
+            resolved_models,
+            // `Role.default_params` already carries temperature/max_tokens;
+            // the runner uses those, not this one. Pass default to be safe.
+            latte_ai::params::GenerateParams::default(),
+        )
+        .map_err(|e| format!("build agent '{role_id}': {e}"))?;
+        agents.insert(role_id_owned, AgentRunner::new(agent));
+    }
+    Ok(agents)
+}
+
+/// Build the orchestrator's `DiscussionWorkflow` from the project's
+/// workflow request.
+///
+/// Each role becomes one step; the prompt injects `{{role_name}}` and
+/// `{{topic}}` so the orchestrator can substitute at run time. The
+/// upstream `default_workflow` in `discussion.toml` uses the same
+/// one-step-per-speaker pattern, so this is consistent.
+fn build_workflow(
+    req: &StartDiscussionRequest,
+    role_ids: &[String],
+) -> DiscussionWorkflow {
+    let steps: Vec<WorkflowStep> = role_ids
+        .iter()
+        .map(|role_id| WorkflowStep {
+            id: format!("{role_id}_speak"),
+            description: format!("{role_id} speaks"),
+            speakers: vec![role_id.clone()],
+            prompt: "You are {{{{role_name}}}}. Topic: {{{{topic}}}}. Share your perspective."
+                .to_string(),
+            hooks: vec![],
+            output_key: None,
+        })
+        .collect();
+    DiscussionWorkflow {
+        name: req.workflow.clone(),
+        description: String::new(),
+        steps,
+        max_rounds: req.max_rounds.unwrap_or(1).max(1),
+        context_token_budget: 32_000,
+    }
+}
+
+/// Resolve which roles and how many rounds to use for a request.
+///
+/// Lookup order: `roles.yaml` workflow → `WORKFLOW_PRESETS` → all defaults.
+fn resolve_workflow_roles(
+    roles_config: &RoleConfig,
+    req: &StartDiscussionRequest,
+) -> (Vec<String>, usize) {
+    if let Some(wf) = roles_config.workflows.get(&req.workflow) {
+        return (wf.roles.clone(), wf.max_rounds);
+    }
+    if let Some((_, _, roles, rounds, _)) = WORKFLOW_PRESETS
+        .iter()
+        .find(|(id, _, _, _, _)| *id == req.workflow)
+    {
+        return (roles.iter().map(|s| s.to_string()).collect(), *rounds);
+    }
+    (
+        default_role_ids().iter().map(|s| s.to_string()).collect(),
+        1,
+    )
+}
+
+// ─── Live discussion (upstream `DiscussionOrchestrator`) ─────────────
+//
+// The runner no longer hand-rolls chain walking / cooldown / round
+// orchestration. All of that lives in `latte-agent-orchestrator`:
+// - `Agent::chat` walks the priority-ordered chain, tracking per-model
+//   cooldown (429/5xx → cooldown, 4xx → propagate immediately)
+// - `AgentRunner::run_turn` renders the role's handlebars prompt and
+//   carries the conversation context across turns
+// - `DiscussionOrchestrator::run_with_events` drives the round/step/
+//   turn loop and yields each completed turn via a callback — this is
+//   how the Tauri `chat:turn` events stay in lock-step with the user.
+
+/// Run a real LLM-backed discussion via the upstream orchestrator.
 async fn run_live_discussion(
     app: &AppHandle,
     req: &StartDiscussionRequest,
     global_config: &GlobalModelConfig,
     roles_config: &RoleConfig,
 ) -> Result<DiscussionPayload, String> {
-    // Resolve roles from workflow
-    let (default_roles, default_max_rounds) = resolve_workflow_roles(roles_config, req);
-    let roles_to_use = req.custom_roles.clone().unwrap_or(default_roles);
-    let max_rounds = req.max_rounds.unwrap_or(default_max_rounds).max(1);
-
-    // Build role agents with their priority-ordered model chains.
-    // `build_chain_for_role` resolves the chain ids to live `AiClient`s,
-    // skipping any chain entry whose model id isn't in `models.yaml`
-    // (so a stale chain never poisons the whole discussion).
-    let mut agents: Vec<RoleAgent> = Vec::new();
-    for role_id in &roles_to_use {
-        let (agent_name, icon, system_prompt, temperature) = get_role_info(roles_config, role_id);
-        let chain = build_chain_for_role(global_config, roles_config, role_id)?;
-        agents.push(RoleAgent {
-            id: role_id.clone(),
-            name: agent_name,
-            icon,
-            system_prompt,
-            temperature,
-            chain,
-            cooldown: Mutex::new(HashMap::new()),
-        });
+    // 1. Which roles participate? (workflow → custom → defaults)
+    let (default_roles, _preset_rounds) = resolve_workflow_roles(roles_config, req);
+    let roles_to_use: Vec<String> = req.custom_roles.clone().unwrap_or(default_roles);
+    if roles_to_use.is_empty() {
+        return Err("No roles selected for discussion".to_string());
     }
 
-    if agents.is_empty() {
-        return Err("没有可用的角色".to_string());
-    }
+    // 2. Build resolver with per-role tier overrides (chain head = primary)
+    let agent_config = build_agent_config(global_config, roles_config, &roles_to_use);
+    let resolver = ModelResolver::from_config(&agent_config)
+        .map_err(|e| format!("model resolver init: {e}"))?;
 
-    // Run rounds
-    let mut turns: Vec<TurnPayload> = Vec::new();
-    let mut total_input_tokens = 0u32;
-    let mut total_output_tokens = 0u32;
+    // 3. Build agent runners
+    let agents = build_agent_runners(&resolver, roles_config, &roles_to_use)?;
 
-    for round in 0..max_rounds {
-        for (idx, agent) in agents.iter().enumerate() {
-            let transcript: String = turns
+    // 4. Build workflow; respect `req.max_rounds` if set, else use the
+    //    value the workflow builder defaulted to.
+    let workflow = build_workflow(req, &roles_to_use);
+
+    // 5. Variables used by the orchestrator's handlebars rendering.
+    //    `topic` is mandatory; `step` / `role_name` / `step_id` are
+    //    injected per turn by the orchestrator itself.
+    let mut variables = HashMap::new();
+    variables.insert("topic".into(), req.topic.clone());
+    let config = DiscussionConfig {
+        workflow,
+        // `NoConsensus` means `consensus_reached = true` every round,
+        // so the orchestrator runs the full `max_rounds` without
+        // short-circuiting. Matches the project's previous "always run
+        // N rounds" behavior.
+        consensus: ConsensusMethod::NoConsensus,
+        max_rounds: req.max_rounds,
+        context_token_budget: 32_000,
+        variables,
+    };
+
+    // 6. Construct + run the orchestrator with per-turn Tauri emission
+    let mut orchestrator = DiscussionOrchestrator::new(agents, config)
+        .map_err(|e| format!("orchestrator init: {e}"))?;
+    let result = orchestrator
+        .run_with_events(|turn| {
+            let icon = roles_config
+                .roles
+                .get(&turn.role_id)
+                .map(|r| r.icon.clone())
+                .unwrap_or_else(|| "💬".to_string());
+            let payload = TurnPayload {
+                agent: turn.agent.clone(),
+                role_id: turn.role_id.clone(),
+                icon,
+                response: turn.response.clone(),
+                round: turn.round,
+                step_id: turn.step_id.clone(),
+                turn_number: turn.turn_number,
+            };
+            let _ = app.emit("chat:turn", &payload);
+        })
+        .await
+        .map_err(|e| format!("discussion failed: {e}"))?;
+
+    // 7. Map `DiscussionResult` → `DiscussionPayload`
+    let rounds: Vec<RoundPayload> = result
+        .rounds
+        .iter()
+        .map(|r| RoundPayload {
+            number: r.number,
+            turns: r
+                .turns
                 .iter()
-                .map(|t| format!("**{} ({})**: {}", t.agent, t.role_id, t.response))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-
-            let user_message = if turns.is_empty() {
-                format!("{}\n\nTopic: {}\n\nPlease share your perspective.", agent.system_prompt, req.topic)
-            } else {
-                format!(
-                    "{}\n\nTopic: {}\n\nPrevious discussion:\n{}\n\nPlease continue based on the above discussion.",
-                    agent.system_prompt, req.topic, transcript
-                )
-            };
-
-            let messages = vec![Message {
-                role: MessageRole::User,
-                content: user_message.into(),
-            }];
-
-            let params = GenerateParams {
-                temperature: Some(agent.temperature),
-                max_tokens: Some(8192),
-                ..Default::default()
-            };
-            let completion: Completion = agent.chat_with_fallback(&messages, &params).await?;
-
-            total_input_tokens += completion.usage.input_tokens;
-            total_output_tokens += completion.usage.output_tokens;
-
-            let turn = TurnPayload {
-                agent: agent.name.clone(),
-                role_id: agent.id.clone(),
-                icon: agent.icon.clone(),
-                response: completion.content.clone(),
-                round,
-                step_id: format!("step_{}", idx),
-                turn_number: turns.len(),
-            };
-
-            let _ = app.emit("chat:turn", &turn);
-            turns.push(turn);
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-    }
-
-    let max_round_seen = turns.iter().map(|t| t.round).max().unwrap_or(0);
-    let rounds: Vec<RoundPayload> = (0..=max_round_seen)
-        .map(|round| RoundPayload {
-            number: round,
-            turns: turns.iter().filter(|t| t.round == round).cloned().collect(),
-            consensus_reached: true,
+                .map(|t| TurnPayload {
+                    agent: t.agent.clone(),
+                    role_id: t.role_id.clone(),
+                    icon: roles_config
+                        .roles
+                        .get(&t.role_id)
+                        .map(|rd| rd.icon.clone())
+                        .unwrap_or_else(|| "💬".to_string()),
+                    response: t.response.clone(),
+                    round: t.round,
+                    step_id: t.step_id.clone(),
+                    turn_number: t.turn_number,
+                })
+                .collect(),
+            consensus_reached: r.consensus_reached,
         })
         .collect();
 
     Ok(DiscussionPayload {
         rounds,
-        consensus_reached: true,
+        consensus_reached: result.consensus_reached,
         summary: Some(format!("Discussion complete: {}", req.topic)),
-        total_input_tokens,
-        total_output_tokens,
+        total_input_tokens: result.total_usage.input_tokens as u32,
+        total_output_tokens: result.total_usage.output_tokens as u32,
         stub: false,
     })
 }
-
-fn resolve_workflow_roles(roles_config: &RoleConfig, req: &StartDiscussionRequest) -> (Vec<String>, usize) {
-    if let Some(wf) = roles_config.workflows.get(&req.workflow) {
-        return (wf.roles.clone(), wf.max_rounds);
-    }
-    if let Some((_, _, roles, rounds, _)) = WORKFLOW_PRESETS.iter().find(|(id, _, _, _, _)| *id == req.workflow) {
-        return (roles.iter().map(|s| s.to_string()).collect(), *rounds);
-    }
-    (default_role_ids().iter().map(|s| s.to_string()).collect(), 1)
-}
-
-fn get_role_info(roles_config: &RoleConfig, role_id: &str) -> (String, String, String, f64) {
-    if let Some(role_def) = roles_config.roles.get(role_id) {
-        return (role_def.name.clone(), role_def.icon.clone(), role_def.prompt.clone(), role_def.temperature);
-    }
-    let template = ROLE_TEMPLATES.iter().find(|(id, _, _)| *id == role_id);
-    match template {
-        Some((id, icon, tmpl)) => (id.to_string(), icon.to_string(), tmpl.to_string(), 0.5),
-        None => (role_id.to_string(), "💬".to_string(), "You are a helpful assistant.".to_string(), 0.5),
-    }
-}
-
-/// Build the priority-ordered `(ModelDef, AiClient)` chain for a role.
-///
-/// Resolution order:
-/// 1. `RoleDef::chain()` (explicit `model_chain`, or the legacy
-///    single `model` field wrapped as a one-element chain)
-/// 2. `global_config.default_model` as a last-resort fallback
-///
-/// Chain entries whose id is missing from the global catalog are
-/// silently skipped (a stale config must not poison the whole
-/// discussion). Returns an error only if no usable model can be
-/// resolved at all.
-fn build_chain_for_role(
-    global_config: &GlobalModelConfig,
-    roles_config: &RoleConfig,
-    role_id: &str,
-) -> Result<Vec<ChainEntry>, String> {
-    // 1. Resolve the chain id list for this role.
-    let mut ids: Vec<String> = roles_config
-        .roles
-        .get(role_id)
-        .map(|r| r.chain())
-        .unwrap_or_default();
-
-    // 2. Fall back to the global default if the role has no chain.
-    if ids.is_empty() {
-        ids.push(global_config.default_model.clone());
-    }
-
-    // 3. Map ids → (ModelDef, AiClient) pairs, preserving order and
-    //    skipping any id that isn't in the global catalog.
-    let mut entries: Vec<ChainEntry> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for id in ids {
-        if !seen.insert(id.clone()) {
-            continue; // dedup
-        }
-        let Some(def) = global_config.models.iter().find(|m| m.id == id).cloned() else {
-            eprintln!(
-                "[chat] role '{}' chain references unknown model '{}' — skipping",
-                role_id, id
-            );
-            continue;
-        };
-        let client = build_client(&def)?;
-        entries.push(ChainEntry {
-            def: Arc::new(def),
-            client,
-        });
-    }
-
-    if entries.is_empty() {
-        return Err(format!(
-            "Role '{}' has no usable model (chain entries all unknown and no default model configured)",
-            role_id
-        ));
-    }
-    Ok(entries)
-}
-
-fn build_client(model_def: &super::global_config::ModelDef) -> Result<AiClient, String> {
-    let api_key = global_config::expand_env_vars(&model_def.api_key);
-    if api_key.starts_with("${") || api_key.is_empty() {
-        return Err(format!(
-            "API key for model '{}' not configured.\nPlease set api_key for provider '{}' in ~/.latte/models.yaml.",
-            model_def.id, model_def.provider
-        ));
-    }
-
-    let api_type = match model_def.api.as_str() {
-        "anthropic" => ApiType::AnthropicMessages,
-        _ => ApiType::OpenAiCompletions,
-    };
-
-    let base_url = if model_def.base_url.is_empty() {
-        match model_def.provider.as_str() {
-            "anthropic" => "https://api.anthropic.com".to_string(),
-            "deepseek" => "https://api.deepseek.com".to_string(),
-            "openai" => "https://api.openai.com".to_string(),
-            _ => String::new(),
-        }
-    } else {
-        model_def.base_url.clone()
-    };
-
-    let model = Model {
-        id: model_def.id.clone(),
-        name: model_def.name.clone(),
-        api: api_type,
-        provider: model_def.provider.clone(),
-        base_url,
-        api_key,
-        context_window: model_def.context_window,
-        max_tokens: model_def.max_tokens,
-        supports_thinking: model_def.reasoning,
-        cost_per_million_input: model_def.cost_per_million_input,
-        cost_per_million_output: model_def.cost_per_million_output,
-    };
-
-    AiClient::new(model).map_err(|e| format!("Failed to create AI client: {}", e))
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Stub mode
 // ─────────────────────────────────────────────────────────────────────────────
-
 const ROLE_TEMPLATES: &[(&str, &str, &str)] = &[
     ("pm", "📋", "## Requirements Analysis\n\nAs **PM**, I've analyzed **{topic}**.\n\n<file_edit path=\"docs/{slug}.md\">Add requirements doc for {topic}</file_edit>"),
     ("architect", "🏗️", "## Architecture Review\n\nLooking at **{topic}** from a system-design perspective.\n\n<file_edit path=\"docs/architecture/{slug}.md\">Add architecture notes for {topic}</file_edit>"),
@@ -530,104 +524,5 @@ fn capitalize(s: &str) -> String {
     match chars.next() {
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use latte_ai::error::AiError;
-
-    /// `cooldown_for_error` 决定一个失败的模型要冷却多久（None = 不冷却、
-    /// 立即把错误原样抛给用户）。这套语义是 chat panel 整条 fallback 链路的
-    /// 基础，所以每个分支都得有专门的测试：
-    /// - 429 / 5xx / RateLimited 是供应商告诉我们的"等一会就好"
-    /// - 4xx (除 429) 是用户配置写错了——同一模型再试也还是失败
-    /// - Auth/Config/Serialization 等内部错不能因为换模型就消失
-
-    #[test]
-    fn rate_limited_respects_retry_after_floored_at_1s() {
-        let e = AiError::RateLimited {
-            retry_after: 0.1, // 极小值 — floor 1s 必须生效
-            message: "slow down".into(),
-        };
-        assert_eq!(
-            cooldown_for_error(&e),
-            Some(Duration::from_secs(1)),
-            "retry_after < 1s should be floored to 1s, never 0"
-        );
-
-        let e = AiError::RateLimited {
-            retry_after: 12.5,
-            message: "x".into(),
-        };
-        assert_eq!(
-            cooldown_for_error(&e),
-            Some(Duration::from_millis(12_500)),
-            "retry_after should be passed through verbatim"
-        );
-    }
-
-    #[test]
-    fn api_429_is_cooldown_60s() {
-        let e = AiError::Api {
-            status: 429,
-            message: "rate limit".into(),
-        };
-        assert_eq!(cooldown_for_error(&e), Some(Duration::from_secs(60)));
-    }
-
-    #[test]
-    fn api_5xx_is_cooldown_30s() {
-        for status in [500u16, 502, 503, 504, 599] {
-            let e = AiError::Api {
-                status,
-                message: "upstream down".into(),
-            };
-            assert_eq!(
-                cooldown_for_error(&e),
-                Some(Duration::from_secs(30)),
-                "status {status} should be 30s cooldown"
-            );
-        }
-    }
-
-    #[test]
-    fn api_4xx_other_than_429_is_not_cooldown() {
-        // 400/401/403/404 — caller-fault. Same model will keep failing
-        // for the same reason, so putting it on cooldown just hides the
-        // error from the user.
-        for status in [400u16, 401, 403, 404, 422] {
-            let e = AiError::Api {
-                status,
-                message: "client error".into(),
-            };
-            assert_eq!(
-                cooldown_for_error(&e),
-                None,
-                "status {status} must not be cooled down"
-            );
-        }
-    }
-
-    #[test]
-    fn non_retryable_errors_are_not_cooldown() {
-        // Auth / Config / Serialization / etc. — the problem is in our
-        // config or credentials, not the model. Rotating to a fallback
-        // model won't help; the user needs to see the error.
-        let cases = [
-            AiError::Auth("bad key".into()),
-            AiError::Config("missing field".into()),
-            AiError::UnsupportedProvider("foo".into()),
-            AiError::ModelNotFound("foo".into()),
-            AiError::Stream("interrupted".into()),
-            AiError::Other("oops".into()),
-        ];
-        for e in cases {
-            assert_eq!(
-                cooldown_for_error(&e),
-                None,
-                "{e:?} must not be cooled down"
-            );
-        }
     }
 }

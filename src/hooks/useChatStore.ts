@@ -27,12 +27,12 @@ export interface ChatMessage {
 
 export interface ChatTurn {
   agent: string;
-  role_id: string;
+  roleId: string;
   icon: string;
   response: string;
   round: number;
-  step_id: string;
-  turn_number: number;
+  stepId: string;
+  turnNumber: number;
 }
 
 interface ChatStore {
@@ -46,10 +46,10 @@ interface ChatStore {
     id: string;
     name: string;
     icon: string;
-    /** Back-compat: equals `model_chain[0]` or the global default. */
+    /** Back-compat: equals `modelChain[0]` or the global default. */
     model: string;
     /** Priority-ordered model chain. Empty when the role has no chain yet. */
-    model_chain: string[];
+    modelChain: string[];
   }[];
 
   // Model configuration
@@ -142,18 +142,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const roleChains: Record<string, string[]> = {};
       config.roles.forEach((r) => {
         // Prefer the explicit chain; fall back to the back-compat
-        // `default_model_tier` so old single-model configs still
+        // `defaultModelTier` so old single-model configs still
         // surface as a one-element chain in the UI.
         const chain =
-          r.model_chain && r.model_chain.length > 0
-            ? r.model_chain
-            : r.default_model_tier
-              ? [r.default_model_tier]
+          r.modelChain && r.modelChain.length > 0
+            ? r.modelChain
+            : r.defaultModelTier
+              ? [r.defaultModelTier]
               : [];
         roleChains[r.id] = chain;
         // The dropdown's "primary" is the chain head; if the chain
         // is empty, fall back to the global default.
-        roleModels[r.id] = chain[0] ?? config.default_model;
+        roleModels[r.id] = chain[0] ?? config.defaultModel;
       });
       set({
         availableRoles: config.roles.map((r) => ({
@@ -161,13 +161,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           name: r.name,
           icon: r.icon,
           model: roleModels[r.id],
-          model_chain: roleChains[r.id] ?? [],
+          modelChain: roleChains[r.id] ?? [],
         })),
-        defaultModel: config.default_model,
+        defaultModel: config.defaultModel,
         roleModels,
         roleChains,
-        modelsPath: config.models_path,
-        rolesPath: config.roles_path,
+        modelsPath: config.modelsPath,
+        rolesPath: config.rolesPath,
       });
     } catch (e) {
       console.error("loadRoleConfig failed:", e);
@@ -194,8 +194,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const sessionId = await startDiscussion({
           topic: trimmed,
           workflow: state.selectedWorkflow,
-          custom_roles: null,
-          max_rounds: 1,
+          customRoles: null,
+          maxRounds: 1,
         });
         set({ sessionId });
       } else {
@@ -249,7 +249,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         roleChains: { ...s.roleChains, [roleId]: [modelId] },
         availableRoles: s.availableRoles.map((r) =>
           r.id === roleId
-            ? { ...r, model: modelId, model_chain: [modelId] }
+            ? { ...r, model: modelId, modelChain: [modelId] }
             : r
         ),
       }));
@@ -282,7 +282,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           : s.roleModels,
         availableRoles: s.availableRoles.map((r) =>
           r.id === roleId
-            ? { ...r, model: primary, model_chain: persisted }
+            ? { ...r, model: primary, modelChain: persisted }
             : r
         ),
       }));

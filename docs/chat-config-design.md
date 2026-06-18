@@ -638,6 +638,73 @@ async fn chat_set_role_model_chain(
 每次改动立即持久化到 `roles.yaml`（`chat_set_role_model_chain`），
 后端返回的 canonical 链覆盖本地，保证 UI 与 YAML 一致。
 
+## 讨论 runner：对齐上游 `DiscussionOrchestrator`
+
+`session.rs` 里的 `run_live_discussion` 不再自建 round/turn/cooldown 循环，
+全部交给 `latte-agent-orchestrator` 的 `DiscussionOrchestrator`。
+自建的那套 `RoleAgent` / `chat_with_fallback` / `cooldown_for_error` /
+`build_chain_for_role` 全部删除，理由是：
+
+1. **链路走与冷却跟踪是上游 `Agent::chat` 的语义** —— `ModelClient` 自带
+   `cooldown_until: Mutex<Option<Instant>>`，按 `latte_ai::error::AiError` 自动
+   区分可重试（429/5xx/Http → 进冷却）和不可重试（4xx 除 429 / Auth /
+   Config → 立刻抛给用户）。再自己写一遍就是双份维护。
+2. **round / step / turn 的编排逻辑没有项目特异性** —— `run_with_events`
+   自带 per-turn 回调（`FnMut(&TurnRecord)`），正好可以映射到
+   `chat:turn` Tauri 事件，UX 与原来"边跑边出"的体验一致。
+3. **Role / Model 类型上游有正式版** —— 上游的 `Role`（带 handlebars
+   prompt 渲染、`default_model_tier`、`model_chain`）和
+   `latte_agent_core::config::ModelDef` 是协议层；项目在 YAML 里存的是
+   轻量 config 视图，运行时由 `build_upstream_role` /
+   `convert_model_def` 一次性桥接过去。
+
+### 类型桥接（project → upstream）
+
+| 项目 (`chat_panel::global_config`) | 上游 (`latte_agent_core::config` 等) | 桥接点 |
+| --- | --- | --- |
+| `ModelDef.reasoning: bool` | `ModelDef.supports_thinking: bool` | `convert_model_def` |
+| `ModelDef.cost_per_million_*: f64` | `ModelDef.cost_per_million_*: Option<f64>` | `0.0 → None` |
+| `ModelDef.api: String`（可空） | `ModelDef.api: String` | 空时回退到 `provider` |
+| `RoleDef.prompt: String` | `Role.system_prompt: String` | 直接赋值（无 handlebars） |
+| `RoleDef.temperature: f64` | `Role.default_params.temperature: Option<f64>` | `Some(temperature)` |
+| `RoleDef.chain() -> Vec<String>` | `Role.model_chain: Vec<String>` | 直接赋值（文档/审查用） |
+| `RoleDef.chain()[0]` | `ModelResolver::role_tiers[role_id]["standard"]` | `build_agent_config` 注入 |
+| `RoleDef.chain()[1..]` | `ModelResolver::resolve_chain(..., &chain_tail)` | `build_agent_runners` 传入 |
+
+### 一次性 wiring
+
+```rust
+// 1. 解析 chain → 上游 AgentConfig（带 per-role tier 覆盖）
+let agent_config = build_agent_config(global_config, roles_config, &role_ids);
+let resolver = ModelResolver::from_config(&agent_config)?;
+
+// 2. 每个 role 解析出 Vec<Model>，装进 Agent::new_with_chain
+let agents = build_agent_runners(&resolver, roles_config, &role_ids)?;
+
+// 3. 一 role 一 step 的 workflow
+let workflow = build_workflow(req, &role_ids);
+
+// 4. 跑 — run_with_events 自带每 turn 回调，映射到 Tauri 事件
+let result = orchestrator.run_with_events(|turn| {
+    app.emit("chat:turn", TurnPayload { ... })?;
+}).await?;
+```
+
+### `cooldown_for_error` 测试去哪儿了？
+
+移到上游的 `latte-agent-core`（`agent::cooldown_for_error`），由其自带
+单测覆盖（429/5xx/4xx/RateLimited/Http/Auth 等 9 个 case）。项目里再写
+一遍是测同一份代码，留着反而变成"双份测试同一行为"的陷阱。
+
+### 兼容性
+
+| 不变 | 改 |
+| --- | --- |
+| Tauri 命令 `chat_start_discussion` 签名 | 内部：自建 runner → `DiscussionOrchestrator` |
+| Tauri 事件 `chat:turn` payload | 类型：移除 `RoleAgent`/`ChainEntry` 等 |
+| `DiscussionPayload` / `TurnPayload` / `RoundPayload` | imports：删除 `parking_lot::Mutex`、`AiError`、`Arc`、`Instant` |
+| `WorkflowInfo` / `RoleInfo` | 增加上游 `Agent` / `AgentRunner` / `ModelResolver` 等 |
+| stub mode（无 API key 时） | `run_stub_discussion` 完全不动 |
 ## 迁移策略
 
 1. **首次启动**：如果 `~/.latte/models.yaml` 不存在，自动创建默认配置

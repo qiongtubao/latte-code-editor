@@ -4,18 +4,18 @@ export interface ModelInfo {
   id: string;
   name: string;
   provider: string;
-  max_tokens: number;
-  context_window: number;
-  supports_vision: boolean;
-  supports_thinking: boolean;
+  maxTokens: number;
+  contextWindow: number;
+  supportsVision: boolean;
+  supportsThinking: boolean;
 }
 
 export interface RoleConfigResponse {
-  default_model: string;
+  defaultModel: string;
   roles: RoleInfo[];
   workflows: WorkflowInfo[];
-  models_path: string;
-  roles_path: string;
+  modelsPath: string;
+  rolesPath: string;
 }
 
 export interface RoleInfo {
@@ -23,25 +23,25 @@ export interface RoleInfo {
   name: string;
   icon: string;
   category: string;
-  /** Back-compat: equals `model_chain[0]`. Used by the old single-dropdown UI. */
-  default_model_tier: string;
+  /** Back-compat: equals `modelChain[0]`. Used by the old single-dropdown UI. */
+  defaultModelTier: string;
   /** Priority-ordered model chain (highest priority first). `chain[0]` is the primary. */
-  model_chain: string[];
+  modelChain: string[];
 }
 
 export interface WorkflowInfo {
   id: string;
   name: string;
   description: string;
-  default_roles: string[];
+  defaultRoles: string[];
   steps: string[];
 }
 
 export interface StartDiscussionRequest {
   topic: string;
   workflow: string;
-  custom_roles: string[] | null;
-  max_rounds: number | null;
+  customRoles: string[] | null;
+  maxRounds: number | null;
 }
 
 export interface ContinueDiscussionRequest {

@@ -162,8 +162,8 @@ export function ChatPanel({ onClose }: Props) {
                   // loaded from a pre-chain config still render a
                   // functional editor.
                   serverChain={
-                    role.model_chain.length > 0
-                      ? role.model_chain
+                    role.modelChain.length > 0
+                      ? role.modelChain
                       : role.model
                         ? [role.model]
                         : []
