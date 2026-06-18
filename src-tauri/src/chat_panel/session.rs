@@ -117,7 +117,7 @@ fn convert_model_def(m: &ProjectModelDef) -> UpstreamModelDef {
         } else {
             None
         },
-        tier: None,
+        tier: m.tier.clone(),
     }
 }
 
@@ -170,17 +170,21 @@ fn build_agent_config(
         let Some(role_def) = roles_config.roles.get(role_id) else {
             continue;
         };
-        let mut effective = role_def.chain();
-        // Append global default so the resolver always has a primary
-        // to pick from the tier override map.
-        if effective.is_empty() {
-            effective.push(global_config.default_model.clone());
-        }
-        if let Some(primary) = effective.first() {
-            let mut tier_map = HashMap::new();
-            tier_map.insert("standard".to_string(), primary.clone());
-            role_tiers.insert(role_id.clone(), tier_map);
-        }
+        // Primary resolution order (matches upstream
+        // `ModelResolver::resolve` step 1+2 semantics):
+        // 1. Chain head (chain[0]) — explicit override, always wins
+        // 2. First model in catalog with `tier == role.model_tier`
+        //    — the role declares "I prefer budget / standard / premium"
+        // 3. Global default model — ultimate fallback
+        let chain = role_def.chain();
+        let primary = chain
+            .first()
+            .cloned()
+            .or_else(|| resolve_primary_by_tier(global_config, &role_def.model_tier))
+            .unwrap_or_else(|| global_config.default_model.clone());
+        let mut tier_map = HashMap::new();
+        tier_map.insert("standard".to_string(), primary);
+        role_tiers.insert(role_id.clone(), tier_map);
     }
 
     AgentConfig {
@@ -193,6 +197,18 @@ fn build_agent_config(
         // catalog isn't used.
         roles: HashMap::new(),
     }
+}
+
+/// Find the first model in the catalog whose `tier` matches the given
+/// string. Mirrors the upstream `ModelResolver::resolve` step 3
+/// (scan catalog for `model.tier == tier`). Returns the model id or
+/// `None` if no match.
+fn resolve_primary_by_tier(global_config: &GlobalModelConfig, tier: &str) -> Option<String> {
+    global_config
+        .models
+        .iter()
+        .find(|m| m.tier.as_deref() == Some(tier))
+        .map(|m| m.id.clone())
 }
 
 /// Build `HashMap<role_id, AgentRunner>` for the orchestrator.

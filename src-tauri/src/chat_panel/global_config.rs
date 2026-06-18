@@ -29,6 +29,15 @@ pub struct ModelDef {
     pub cost_per_million_input: f64,
     #[serde(default)]
     pub cost_per_million_output: f64,
+    /// Tier hint (`"budget"` / `"standard"` / `"premium"`) for the
+    /// upstream `ModelResolver`. Mirrors
+    /// `latte-rs-agents::config::ModelDef::tier`. When the role
+    /// has no explicit `model_chain`, the resolver uses this to
+    /// pick the primary model (e.g. programmer + budget → a
+    /// budget-tier model). Ignored when `model_chain` is non-empty
+    /// (chain head wins for back-compat).
+    #[serde(default)]
+    pub tier: Option<String>,
 }
 
 /// Role definition
@@ -254,6 +263,10 @@ fn create_default_models() -> GlobalModelConfig {
                 reasoning: false,
                 cost_per_million_input: 0.27,
                 cost_per_million_output: 1.10,
+                // Upstream `models.toml` lists deepseek as a budget-tier
+                // model. Users can add their own models with other tiers
+                // to `~/.latte/models.yaml`; this is just the default.
+                tier: Some("budget".into()),
             },
         ],
         default_model: "deepseek-chat".into(),
