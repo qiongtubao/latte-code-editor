@@ -186,15 +186,11 @@ pub fn load_global_models() -> GlobalModelConfig {
 
     if !path.exists() {
         let config = create_default_models();
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let _ = fs::write(&path, serde_yaml::to_string(&config).unwrap_or_default());
-        eprintln!("[chat] Created default models config at {:?}", path);
+        write_models_config(&path, &config);
         return config;
     }
 
-    match fs::read_to_string(&path) {
+    let mut config: GlobalModelConfig = match fs::read_to_string(&path) {
         Ok(content) => serde_yaml::from_str(&content).unwrap_or_else(|e| {
             eprintln!("[chat] Failed to parse {:?}: {}. Using defaults.", path, e);
             create_default_models()
@@ -203,7 +199,43 @@ pub fn load_global_models() -> GlobalModelConfig {
             eprintln!("[chat] Failed to read {:?}: {}. Using defaults.", path, e);
             create_default_models()
         }
+    };
+
+    // Forward-migrate: add default tier placeholders the user's
+    // catalog is missing (gpt-4o-mini / claude-sonnet-4 / claude-opus-4).
+    // Non-destructive — the user's own models are preserved; only
+    // missing placeholder entries are added so `model_tier` routing
+    // actually has something to pick from.
+    if migrate_models_config(&mut config) {
+        eprintln!(
+            "[chat] models.yaml updated with new tier placeholders at {:?}",
+            path
+        );
+        write_models_config(&path, &config);
     }
+
+    config
+}
+
+/// Add any default model the user's catalog is missing by id.
+/// Returns `true` if anything was added.
+fn migrate_models_config(config: &mut GlobalModelConfig) -> bool {
+    let defaults = create_default_models();
+    let mut changed = false;
+    for default_model in defaults.models {
+        if !config.models.iter().any(|m| m.id == default_model.id) {
+            config.models.push(default_model);
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn write_models_config(path: &std::path::Path, config: &GlobalModelConfig) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(path, serde_yaml::to_string(config).unwrap_or_default());
 }
 
 /// Load roles config
@@ -212,15 +244,11 @@ pub fn load_roles_config() -> RoleConfig {
 
     if !path.exists() {
         let config = create_default_roles();
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let _ = fs::write(&path, serde_yaml::to_string(&config).unwrap_or_default());
-        eprintln!("[chat] Created default roles config at {:?}", path);
+        write_roles_config(&path, &config);
         return config;
     }
 
-    match fs::read_to_string(&path) {
+    let mut config: RoleConfig = match fs::read_to_string(&path) {
         Ok(content) => serde_yaml::from_str(&content).unwrap_or_else(|e| {
             eprintln!("[chat] Failed to parse {:?}: {}. Using defaults.", path, e);
             create_default_roles()
@@ -229,7 +257,52 @@ pub fn load_roles_config() -> RoleConfig {
             eprintln!("[chat] Failed to read {:?}: {}. Using defaults.", path, e);
             create_default_roles()
         }
+    };
+
+    // Forward-migrate: add any default role / workflow the user's
+    // config is missing. Non-destructive — the user's custom roles
+    // and their customizations of existing roles are preserved.
+    // Required so users running an older single-role + debug-workflow
+    // config see the new 10 roles / 4 workflows after restart.
+    if migrate_roles_config(&mut config) {
+        eprintln!(
+            "[chat] roles.yaml updated with new defaults (multi-role + workflows) at {:?}",
+            path
+        );
+        write_roles_config(&path, &config);
     }
+
+    config
+}
+
+/// Add any default role / workflow not already in the config.
+/// Returns `true` if anything was added (so the caller can persist).
+fn migrate_roles_config(config: &mut RoleConfig) -> bool {
+    let defaults = create_default_roles();
+    let mut changed = false;
+
+    for (id, default_role) in defaults.roles {
+        if !config.roles.contains_key(&id) {
+            config.roles.insert(id, default_role);
+            changed = true;
+        }
+    }
+
+    for (id, default_wf) in defaults.workflows {
+        if !config.workflows.contains_key(&id) {
+            config.workflows.insert(id, default_wf);
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+fn write_roles_config(path: &std::path::Path, config: &RoleConfig) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(path, serde_yaml::to_string(config).unwrap_or_default());
 }
 
 /// Expand env vars in ${VAR} format
@@ -488,5 +561,146 @@ fn create_default_roles() -> RoleConfig {
         default_model: "deepseek-chat".into(),
         roles,
         workflows,
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    //! Tests for the forward-migration that runs on every
+    //! `load_roles_config` / `load_global_models` call. Without this
+    //! migration, users running an older `roles.yaml` (1 role + 1
+    //! workflow) would never see the new 10 roles / 4 workflows /
+    //! 3 tier placeholders, because `create_default_roles` /
+    //! `create_default_models` only run when the file doesn't exist.
+
+    use super::*;
+
+    // ─── roles migration ──────────────────────────────────────────
+
+    #[test]
+    fn old_single_role_gets_10_roles_and_4_workflows() {
+        // Simulate a v1 config: 1 role (programmer) + 1 workflow (debug)
+        let mut cfg = RoleConfig {
+            default_model: "deepseek-chat".into(),
+            roles: HashMap::from([(
+                "programmer".into(),
+                RoleDef {
+                    name: "Custom Programmer".into(),
+                    ..Default::default()
+                },
+            )]),
+            workflows: HashMap::from([(
+                "debug".into(),
+                WorkflowDef {
+                    name: "🪲 Debug".into(),
+                    roles: vec!["programmer".into()],
+                    max_rounds: 1,
+                },
+            )]),
+        };
+        assert!(migrate_roles_config(&mut cfg));
+        // 10 default roles total
+        assert_eq!(cfg.roles.len(), 10);
+        // 4 default workflows total
+        assert_eq!(cfg.workflows.len(), 4);
+        // User's custom programmer override is preserved (not
+        // overwritten by the default)
+        assert_eq!(cfg.roles["programmer"].name, "Custom Programmer");
+    }
+
+    #[test]
+    fn migration_is_noop_when_all_defaults_present() {
+        let defaults = create_default_roles();
+        let mut cfg = defaults.clone();
+        assert!(!migrate_roles_config(&mut cfg));
+        // Same role count, same workflow count — no additions
+        assert_eq!(cfg.roles.len(), defaults.roles.len());
+        assert_eq!(cfg.workflows.len(), defaults.workflows.len());
+    }
+
+    #[test]
+    fn users_custom_role_preserved_through_migration() {
+        // User has a custom role "my_specialist" that isn't in defaults
+        let mut cfg = RoleConfig {
+            default_model: "deepseek-chat".into(),
+            roles: HashMap::from([(
+                "my_specialist".into(),
+                RoleDef {
+                    name: "Custom Specialist".into(),
+                    icon: "🎯".into(),
+                    category: "custom".into(),
+                    model_tier: "premium".into(),
+                    model: None,
+                    model_chain: vec!["claude-opus-4".into()],
+                    temperature: 0.4,
+                    tools: vec!["read".into(), "write".into()],
+                    prompt_file: "prompts/custom.md".into(),
+                    prompt: "You are a specialist.".into(),
+                },
+            )]),
+            workflows: HashMap::new(),
+        };
+        migrate_roles_config(&mut cfg);
+        // Custom role still there with all fields preserved
+        assert!(cfg.roles.contains_key("my_specialist"));
+        let r = &cfg.roles["my_specialist"];
+        assert_eq!(r.name, "Custom Specialist");
+        assert_eq!(r.model_chain, vec!["claude-opus-4".to_string()]);
+    }
+
+    // ─── models migration ─────────────────────────────────────────
+
+    #[test]
+    fn old_single_model_gets_3_tier_placeholders() {
+        // v1 catalog: just deepseek-chat
+        let mut cfg = GlobalModelConfig {
+            default_model: "deepseek-chat".into(),
+            models: vec![ModelDef {
+                id: "deepseek-chat".into(),
+                name: "DeepSeek".into(),
+                api: "openai".into(),
+                provider: "deepseek".into(),
+                base_url: "".into(),
+                api_key: "x".into(),
+                context_window: 0,
+                max_tokens: 0,
+                reasoning: false,
+                cost_per_million_input: 0.0,
+                cost_per_million_output: 0.0,
+                tier: Some("budget".into()),
+            }],
+        };
+        assert!(migrate_models_config(&mut cfg));
+        // 4 total: deepseek + 3 placeholders
+        assert_eq!(cfg.models.len(), 4);
+        assert!(cfg.models.iter().any(|m| m.id == "gpt-4o-mini"));
+        assert!(cfg.models.iter().any(|m| m.id == "claude-sonnet-4"));
+        assert!(cfg.models.iter().any(|m| m.id == "claude-opus-4"));
+    }
+
+    #[test]
+    fn users_custom_model_preserved_through_migration() {
+        let mut cfg = GlobalModelConfig {
+            default_model: "my-custom-model".into(),
+            models: vec![ModelDef {
+                id: "my-custom-model".into(),
+                name: "My Custom".into(),
+                api: "openai".into(),
+                provider: "custom".into(),
+                base_url: "https://my.api".into(),
+                api_key: "secret".into(),
+                context_window: 32000,
+                max_tokens: 4096,
+                reasoning: false,
+                cost_per_million_input: 0.0,
+                cost_per_million_output: 0.0,
+                tier: None,
+            }],
+        };
+        migrate_models_config(&mut cfg);
+        // Custom model preserved with its fields intact
+        let m = cfg.models.iter().find(|m| m.id == "my-custom-model").unwrap();
+        assert_eq!(m.base_url, "https://my.api");
+        assert_eq!(m.api_key, "secret");
     }
 }
