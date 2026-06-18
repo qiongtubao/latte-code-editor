@@ -251,6 +251,7 @@ pub fn expand_env_vars(s: &str) -> String {
 fn create_default_models() -> GlobalModelConfig {
     GlobalModelConfig {
         models: vec![
+            // ─── Real model (works out of the box if DEEPSEEK_API_KEY is set) ───
             ModelDef {
                 id: "deepseek-chat".into(),
                 name: "DeepSeek Chat V3".into(),
@@ -263,10 +264,59 @@ fn create_default_models() -> GlobalModelConfig {
                 reasoning: false,
                 cost_per_million_input: 0.27,
                 cost_per_million_output: 1.10,
-                // Upstream `models.toml` lists deepseek as a budget-tier
-                // model. Users can add their own models with other tiers
-                // to `~/.latte/models.yaml`; this is just the default.
                 tier: Some("budget".into()),
+            },
+            // ─── Placeholders ─────────────────────────────────────────────
+            // These exist so `model_tier` actually picks something
+            // out of the box. They're keyed on env vars that the
+            // user may or may not have set:
+            //   - GPT-4o mini / GPT-4o → OPENAI_API_KEY
+            //   - Claude Sonnet / Opus    → ANTHROPIC_API_KEY
+            // If the env var is empty, the role will fail at runtime
+            // with an auth error; users can either set the env var,
+            // or remove / replace the entry in their
+            // `~/.latte/models.yaml`.
+            ModelDef {
+                id: "gpt-4o-mini".into(),
+                name: "GPT-4o mini (budget placeholder)".into(),
+                api: "openai".into(),
+                provider: "openai".into(),
+                base_url: "https://api.openai.com".into(),
+                api_key: "${OPENAI_API_KEY}".into(),
+                context_window: 128000,
+                max_tokens: 16384,
+                reasoning: false,
+                cost_per_million_input: 0.15,
+                cost_per_million_output: 0.60,
+                tier: Some("budget".into()),
+            },
+            ModelDef {
+                id: "claude-sonnet-4".into(),
+                name: "Claude Sonnet 4.5 (standard placeholder)".into(),
+                api: "anthropic".into(),
+                provider: "anthropic".into(),
+                base_url: "https://api.anthropic.com".into(),
+                api_key: "${ANTHROPIC_API_KEY}".into(),
+                context_window: 200000,
+                max_tokens: 8192,
+                reasoning: true,
+                cost_per_million_input: 3.00,
+                cost_per_million_output: 15.00,
+                tier: Some("standard".into()),
+            },
+            ModelDef {
+                id: "claude-opus-4".into(),
+                name: "Claude Opus 4 (premium placeholder)".into(),
+                api: "anthropic".into(),
+                provider: "anthropic".into(),
+                base_url: "https://api.anthropic.com".into(),
+                api_key: "${ANTHROPIC_API_KEY}".into(),
+                context_window: 200000,
+                max_tokens: 8192,
+                reasoning: true,
+                cost_per_million_input: 15.00,
+                cost_per_million_output: 75.00,
+                tier: Some("premium".into()),
             },
         ],
         default_model: "deepseek-chat".into(),
