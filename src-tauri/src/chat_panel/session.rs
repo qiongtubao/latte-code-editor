@@ -132,15 +132,21 @@ fn build_upstream_role(role_id: &str, role_def: &RoleDef, effective_chain: &[Str
     // unknown / missing values — keeping chain head as primary.
     let default_model_tier = ModelTier::parse(&role_def.model_tier)
         .unwrap_or(ModelTier::Standard);
+    // `prompt_file` is loaded from disk relative to the roles.yaml
+    // directory (or absolute if the user wrote an absolute path).
+    // Falls back to the inline `prompt` field on read error so a
+    // missing file never breaks the discussion.
+    let roles_dir = super::global_config::roles_config_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let system_prompt = load_role_prompt(role_id, role_def, &roles_dir);
     Role {
         id: role_id.to_string(),
         name: role_def.name.clone(),
         category: RoleCategory::parse(&role_def.category)
             .unwrap_or(RoleCategory::Discussion),
-        // `prompt_file` is stored on `RoleDef` for future file-based
-        // prompts; runtime still uses the inline `prompt` until the
-        // file-loading helper lands.
-        system_prompt: role_def.prompt.clone(),
+        system_prompt,
         default_model_tier,
         model_chain: effective_chain.to_vec(),
         default_params: latte_ai::params::GenerateParams {
@@ -153,6 +159,40 @@ fn build_upstream_role(role_id: &str, role_def: &RoleDef, effective_chain: &[Str
         // reads `allowed_tools` when constructed.
         allowed_tools: role_def.tools.clone(),
         icon: role_def.icon.clone(),
+    }
+}
+
+/// Load a role's system prompt from `prompt_file` (relative to
+/// `roles_dir` or absolute), falling back to the inline `prompt`
+/// field on any read error. Mirrors the file-loading half of
+/// upstream `RoleTemplate::resolve`; handlebars rendering is
+/// intentionally not done here — the orchestrator's per-turn
+/// rendering already substitutes `{{topic}}` / `{{role_name}}` /
+/// `{{step}}` in the workflow prompt, and per-role template
+/// variables (e.g. `{{temperature}}`) are a future addition.
+fn load_role_prompt(
+    role_id: &str,
+    role_def: &RoleDef,
+    roles_dir: &std::path::Path,
+) -> String {
+    if role_def.prompt_file.is_empty() {
+        return role_def.prompt.clone();
+    }
+    let path = std::path::Path::new(&role_def.prompt_file);
+    let full_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        roles_dir.join(path)
+    };
+    match std::fs::read_to_string(&full_path) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!(
+                "[chat] role '{role_id}' prompt_file '{}' read failed: {e} — falling back to inline prompt",
+                full_path.display()
+            );
+            role_def.prompt.clone()
+        }
     }
 }
 
