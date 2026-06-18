@@ -132,15 +132,23 @@ fn build_upstream_role(role_id: &str, role_def: &RoleDef, effective_chain: &[Str
     // unknown / missing values — keeping chain head as primary.
     let default_model_tier = ModelTier::parse(&role_def.model_tier)
         .unwrap_or(ModelTier::Standard);
-    // `prompt_file` is loaded from disk relative to the roles.yaml
-    // directory (or absolute if the user wrote an absolute path).
-    // Falls back to the inline `prompt` field on read error so a
-    // missing file never breaks the discussion.
+    // Prompt resolution order:
+    // 1. Upstream's built-in `latte_agent_core::prompts::for_role(id)`
+    //    — returns the markdown from the upstream workspace
+    //    (`latte-rs-agents/prompts/<id>.md`) embedded at build time
+    //    via `include_str!`. No file I/O, no copy into the project tree.
+    // 2. `load_role_prompt` — reads a custom `prompt_file` from
+    //    disk (for roles that aren't in the upstream catalog, or
+    //    for users who want to override the upstream template).
+    //    Falls back to the inline `prompt` field on read error.
+    // 3. Inline `prompt` (last resort, via `load_role_prompt`).
     let roles_dir = super::global_config::roles_config_path()
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let system_prompt = load_role_prompt(role_id, role_def, &roles_dir);
+    let system_prompt = latte_agent_core::prompts::for_role(role_id)
+        .map(String::from)
+        .unwrap_or_else(|| load_role_prompt(role_id, role_def, &roles_dir));
     Role {
         id: role_id.to_string(),
         name: role_def.name.clone(),
