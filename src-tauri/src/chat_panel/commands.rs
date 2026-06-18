@@ -38,12 +38,22 @@ pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
     let roles: Vec<RoleInfo> = role_config
         .roles
         .iter()
-        .map(|(id, r)| RoleInfo {
-            id: id.clone(),
-            name: r.name.clone(),
-            icon: r.icon.clone(),
-            category: r.category.clone(),
-            default_model_tier: r.model.clone().unwrap_or_else(|| role_config.default_model.clone()),
+        .map(|(id, r)| {
+            let chain = r.chain();
+            // For UI back-compat: surface the primary model as
+            // `default_model_tier` so existing dropdowns still work.
+            let primary = chain
+                .first()
+                .cloned()
+                .unwrap_or_else(|| role_config.default_model.clone());
+            RoleInfo {
+                id: id.clone(),
+                name: r.name.clone(),
+                icon: r.icon.clone(),
+                category: r.category.clone(),
+                default_model_tier: primary,
+                model_chain: chain,
+            }
         })
         .collect();
 
@@ -77,7 +87,8 @@ pub async fn chat_set_role_model(
     let mut role_config = load_roles_config();
 
     if let Some(role) = role_config.roles.get_mut(&role_id) {
-        role.model = Some(model_id);
+        // Persist as a single-element chain so the YAML form is unambiguous.
+        role.set_chain(vec![model_id]);
     } else {
         return Err(format!("Role '{}' not found", role_id));
     }
@@ -90,6 +101,59 @@ pub async fn chat_set_role_model(
         .map_err(|e| format!("Failed to write {:?}: {}", path, e))?;
 
     Ok(())
+}
+
+/// Set the priority-ordered model chain for a specific role.
+///
+/// `chain[0]` becomes the primary; the rest are fallbacks tried in
+/// order when earlier models fail. Empty chains are rejected.
+/// Validates that every model id is present in the global catalog.
+#[tauri::command]
+pub async fn chat_set_role_model_chain(
+    request: SetRoleModelChainRequest,
+) -> Result<Vec<String>, String> {
+    if request.chain.is_empty() {
+        return Err("model chain must contain at least one model".to_string());
+    }
+    // Deduplicate while preserving order — the runner dedups again, but
+    // a stable, minimal YAML form is friendlier to read by hand.
+    let mut seen = std::collections::HashSet::new();
+    let chain: Vec<String> = request
+        .chain
+        .into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect();
+
+    let global_config = load_global_models();
+    let unknown: Vec<&String> = chain
+        .iter()
+        .filter(|m| !global_config.models.iter().any(|def| &def.id == *m))
+        .collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "unknown model(s) in chain: {}",
+            unknown
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    let mut role_config = load_roles_config();
+    let role = role_config
+        .roles
+        .get_mut(&request.role_id)
+        .ok_or_else(|| format!("Role '{}' not found", request.role_id))?;
+    role.set_chain(chain.clone());
+
+    let path = roles_config_path();
+    let content = serde_yaml::to_string(&role_config)
+        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    std::fs::write(&path, content)
+        .map_err(|e| format!("Failed to write {:?}: {}", path, e))?;
+
+    Ok(chain)
 }
 
 /// Set default model
@@ -170,19 +234,27 @@ pub async fn chat_list_roles() -> Result<Vec<RoleInfo>, String> {
         let mut roles: Vec<RoleInfo> = role_config
             .roles
             .iter()
-            .map(|(id, r)| RoleInfo {
-                id: id.clone(),
-                name: r.name.clone(),
-                icon: r.icon.clone(),
-                category: r.category.clone(),
-                default_model_tier: r.model.clone().unwrap_or_else(|| role_config.default_model.clone()),
+            .map(|(id, r)| {
+                let chain = r.chain();
+                let primary = chain
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| role_config.default_model.clone());
+                RoleInfo {
+                    id: id.clone(),
+                    name: r.name.clone(),
+                    icon: r.icon.clone(),
+                    category: r.category.clone(),
+                    default_model_tier: primary,
+                    model_chain: chain,
+                }
             })
             .collect();
         roles.sort_by(|a, b| a.id.cmp(&b.id));
         return Ok(roles);
     }
 
-    // Fallback: use defaults
+    // Fallback: use defaults (no chain yet)
     let mut roles: Vec<RoleInfo> = default_role_ids()
         .iter()
         .map(|id| RoleInfo {
@@ -191,6 +263,7 @@ pub async fn chat_list_roles() -> Result<Vec<RoleInfo>, String> {
             icon: "💬".to_string(),
             category: "general".to_string(),
             default_model_tier: "standard".into(),
+            model_chain: vec![],
         })
         .collect();
     roles.sort_by(|a, b| a.id.cmp(&b.id));

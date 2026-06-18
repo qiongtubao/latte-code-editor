@@ -26,7 +26,7 @@ walkdir = "2"
 rusqlite = { version = "0.34", features = ["bundled"] }
 regex = "1"
 latte-rs-graph = { path = "../../latte-rs-graph" }
-# Multi-agent discussion system
+parking_lot = "0.12"
 latte-agent-core = { path = "../../latte-rs-agents/latte-agent-core" }
 latte-agent-orchestrator = { path = "../../latte-rs-agents/latte-agent-orchestrator" }
 latte-ai = { path = "../../latte-rs-model-router/latte-ai" }

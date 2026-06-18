@@ -2399,10 +2399,10 @@ dependencies = [
 name = "latte-agent-core"
 version = "0.1.0"
 dependencies = [
- "futures",
  "handlebars",
  "latte-ai",
  "latte-rs-agent-tools",
+ "parking_lot",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -2428,13 +2428,16 @@ dependencies = [
 name = "latte-ai"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "futures-util",
+ "parking_lot",
  "reqwest 0.12.28",
  "reqwest-eventsource",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.8.2",
  "tracing",
 ]
 
@@ -2458,6 +2461,7 @@ dependencies = [
  "latte-rs-graph",
  "lsp-types 0.97.0",
  "notify",
+ "parking_lot",
  "regex",
  "rusqlite",
  "serde",
@@ -2482,9 +2486,12 @@ name = "latte-rs-agent-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "futures",
  "glob",
+ "globset",
+ "ignore",
  "log",
  "path-clean",
  "regex",

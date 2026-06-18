@@ -38,11 +38,41 @@ pub struct RoleDef {
     pub icon: String,
     #[serde(default)]
     pub category: String,
+    /// Single-model override (back-compat). If `model_chain` is empty,
+    /// this single id is treated as the entire chain.
     #[serde(default)]
     pub model: Option<String>,
+    /// Priority-ordered model chain (highest priority first).
+    /// The first entry is the primary; the rest are fallbacks tried
+    /// in order when earlier models fail (rate-limit, 5xx, network).
+    /// Mirrors `latte-rs-agents::role::Role::model_chain`.
+    #[serde(default)]
+    pub model_chain: Vec<String>,
     #[serde(default = "default_temperature")]
     pub temperature: f64,
     pub prompt: String,
+}
+
+impl RoleDef {
+    /// Resolve the effective priority-ordered model chain for this role.
+    ///
+    /// Source order:
+    /// 1. Explicit `model_chain` if non-empty
+    /// 2. Legacy single `model` field wrapped into a one-element chain
+    /// 3. Empty chain — caller should fall back to the global default
+    pub fn chain(&self) -> Vec<String> {
+        if !self.model_chain.is_empty() {
+            return self.model_chain.clone();
+        }
+        self.model.clone().map(|m| vec![m]).unwrap_or_default()
+    }
+
+    /// Write the chain, clearing the legacy `model` field so the
+    /// serialized form is unambiguous.
+    pub fn set_chain(&mut self, chain: Vec<String>) {
+        self.model_chain = chain;
+        self.model = None;
+    }
 }
 
 /// Workflow preset
@@ -220,10 +250,11 @@ fn create_default_roles() -> RoleConfig {
         icon: "💻".into(),
         category: "execution".into(),
         model: None,
+        // Default to the global default; users can extend the chain via UI.
+        model_chain: vec!["deepseek-chat".into()],
         temperature: 0.3,
         prompt: "You are a Software Engineer.".into(),
     });
-
     let mut workflows = HashMap::new();
     workflows.insert("debug".into(), WorkflowDef {
         name: "🪲 Debug".into(),

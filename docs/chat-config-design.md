@@ -526,6 +526,118 @@ workflows:
     max_rounds: 3
 ```
 
+
+## 角色模型优先级（model chain / fallback）
+
+每个角色可以配置**按优先级排序的模型链**。运行时按顺序尝试：
+第一个模型成功就返回；遇到可重试错误（429 / 5xx / 临时网络故障），
+就把当前模型放入**冷却表**并切到下一个；冷却时间到了之后该模型会
+自动重新进入候选。所有模型都失败或都在冷却中时，返回一个带
+`Tried: a, b, c` 信息的错误给用户。
+
+### 设计动机
+
+1. **不把鸡蛋放在一个篮子里** — 一个供应商限流时自动切到备用
+2. **按"重要性"分配成本** — 让贵的（opus）只跑"重要"角色，便宜的（deepseek）跑"量大"角色
+3. **与 `latte-rs-agents` 上游 `Role::model_chain` 协议对齐** — 同一份配置可以在 agent 框架和 chat panel 之间共享
+
+### 角色 YAML 形式
+
+```yaml
+roles:
+  programmer:
+    name: Software Engineer
+    icon: 💻
+    category: execution
+    temperature: 0.3
+    prompt: |
+      You are a senior engineer...
+    # 优先级：claude-sonnet-4 是主，deepseek-chat 兜底
+    model_chain:
+      - claude-sonnet-4
+      - deepseek-chat
+
+  pm:
+    name: Product Manager
+    icon: 📋
+    category: planning
+    temperature: 0.5
+    prompt: |
+      You are a PM...
+    # 旧格式 `model: <id>` 仍然支持 — 内部会被规整为单元素 chain
+    model: gpt-4o
+```
+
+读取规则（`RoleDef::chain()`）：
+
+1. 如果 `model_chain` 非空 → 使用它
+2. 否则如果 `model` 非空 → 包装成单元素链
+3. 否则 → 空链；runner 回退到 `GlobalModelConfig::default_model`
+
+写入规则（`RoleDef::set_chain()`）：写入时**清空** `model` 字段，
+保证序列化的 YAML 不会有歧义。
+
+### 错误 → 冷却 映射（`cooldown_for_error`）
+
+| 错误类型                          | 冷却时长           | 理由                       |
+| --------------------------------- | ------------------ | -------------------------- |
+| `RateLimited { retry_after, .. }` | `retry_after` (≥1s) | 供应商明确说"等这么久"     |
+| `Api { status: 429 }`             | 60s                | 标准限流窗口               |
+| `Api { status: 500..=599 }`       | 30s                | 上游故障，短暂重试          |
+| `Api { status: 4xx (其他) }`      | **None**           | 调用方错误，换模型也无效    |
+| `Http(_)` (reqwest)               | 10s                | 瞬时网络抖动               |
+| `Auth / Config / Serde / Stream`  | **None**           | 内部配置错误，必须抛给用户 |
+
+> 关键设计：把"换模型能解决的"和"换模型也解决不了的"两类错误区分开。
+> 后者直接抛给用户（可能还要提示改配置），不要因为有 fallback 就吞掉。
+
+### 运行时行为
+
+1. `run_live_discussion` 根据 `RoleDef.chain()` 解析出 `(ModelDef, AiClient)` 列表
+2. 每个角色调用 `RoleAgent::chat_with_fallback(messages, params)`
+3. `chat_with_fallback` 走 `cooldown` 表过滤出可用模型，按顺序试
+4. 第一个成功的 `Completion` 返回；失败的可重试错误记入 cooldown
+5. 全部失败 → 返回 `LLM call failed (role: <id>)\nTried: a, b, c\nLast error: <...>`
+
+### 新的 Tauri 命令
+
+```rust
+#[tauri::command]
+async fn chat_set_role_model_chain(
+    request: SetRoleModelChainRequest,  // { role_id, chain: Vec<String> }
+) -> Result<Vec<String>, String>;       // 返回去重后的 canonical chain
+```
+
+`chat_set_role_model(role_id, model_id)` 是旧 API 的兼容壳，
+内部直接调用 `RoleDef::set_chain(vec![model_id])`，
+所以旧调用方不需要改任何东西 — 写出来的 YAML 自然就是新格式。
+
+### UI — 角色链编辑器
+
+`RoleChainEditor` 组件（`src/components/RoleChainEditor.tsx`）替换了旧的单下拉：
+
+```
+┌──────────────────────────────────────────┐
+│ 💻 Software Engineer              💾 …   │
+│ ┌──────────────────────────────────────┐ │
+│ │ 1 │ [claude-sonnet-4   ▼] [↑] [↓] [×]│ │
+│ │ 2 │ [deepseek-chat     ▼] [↑] [↓] [×]│ │
+│ └──────────────────────────────────────┘ │
+│ + [Add fallback…                       ▼]│
+└──────────────────────────────────────────┘
+```
+
+每行：
+- **数字**：优先级
+- **下拉**：可换成任何 `availableModels` 里的 id
+- **↑/↓**：调整优先级（边界禁用）
+- **×**：移除（最后一行禁用，保证至少有一个）
+
+底部 `+ Add fallback…` 只列出**未在链中**的模型，避免重复。
+
+每次改动立即持久化到 `roles.yaml`（`chat_set_role_model_chain`），
+后端返回的 canonical 链覆盖本地，保证 UI 与 YAML 一致。
+
 ## 迁移策略
 
 1. **首次启动**：如果 `~/.latte/models.yaml` 不存在，自动创建默认配置

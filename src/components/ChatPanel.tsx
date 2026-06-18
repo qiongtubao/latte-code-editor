@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useChatStore } from "../hooks/useChatStore";
 import { MessageList } from "./MessageList";
+import { RoleChainEditor } from "./RoleChainEditor";
 import { openFile } from "../api/commands";
 import { useEditorStore } from "../hooks/useEditorStore";
 
 interface Props {
   onClose: () => void;
 }
-
 export function ChatPanel({ onClose }: Props) {
   const {
     messages,
@@ -18,7 +18,6 @@ export function ChatPanel({ onClose }: Props) {
     availableRoles,
     availableModels,
     defaultModel,
-    roleModels,
     modelsPath,
     rolesPath,
     configPanelOpen,
@@ -29,13 +28,12 @@ export function ChatPanel({ onClose }: Props) {
     sendMessage,
     cancelDiscussion,
     clearChat,
-    setRoleModel,
+    setRoleModelChain,
     setDefaultModel,
     openConfigFile,
     toggleConfigPanel,
   } = useChatStore();
   const [input, setInput] = useState("");
-
   useEffect(() => {
     loadWorkflows();
     loadModels();
@@ -146,29 +144,37 @@ export function ChatPanel({ onClose }: Props) {
           </div>
           
           <div className="mb-2">
-            <div className="text-gray-400 mb-1">角色模型:</div>
-            <div className="max-h-40 overflow-y-auto space-y-1">
+            <div className="flex items-center text-gray-400 mb-1">
+              <span>角色模型优先级:</span>
+              <span className="ml-auto text-[10px] text-gray-500">
+                1=主, 2+=备选
+              </span>
+            </div>
+            <div className="max-h-64 overflow-y-auto space-y-1">
               {availableRoles.map((role) => (
-                <div key={role.id} className="flex items-center gap-2">
-                  <span className="w-20 text-gray-300 truncate">
-                    {role.icon} {role.id}
-                  </span>
-                  <select
-                    value={roleModels[role.id] || defaultModel}
-                    onChange={(e) => setRoleModel(role.id, e.target.value)}
-                    className="flex-1 px-1 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
-                  >
-                    {availableModels.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <RoleChainEditor
+                  key={role.id}
+                  roleId={role.id}
+                  icon={role.icon}
+                  name={role.name}
+                  // Prefer the explicit chain; fall back to a synthetic
+                  // one-element chain built from the primary, so roles
+                  // loaded from a pre-chain config still render a
+                  // functional editor.
+                  serverChain={
+                    role.model_chain.length > 0
+                      ? role.model_chain
+                      : role.model
+                        ? [role.model]
+                        : []
+                  }
+                  availableModels={availableModels}
+                  onSave={(chain) => setRoleModelChain(role.id, chain)}
+                />
               ))}
             </div>
           </div>
-          
+
           <div className="flex gap-2 text-[10px]">
             <button
               onClick={() => openConfigFile("models")}

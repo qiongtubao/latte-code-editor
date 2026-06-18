@@ -23,7 +23,10 @@ export interface RoleInfo {
   name: string;
   icon: string;
   category: string;
+  /** Back-compat: equals `model_chain[0]`. Used by the old single-dropdown UI. */
   default_model_tier: string;
+  /** Priority-ordered model chain (highest priority first). `chain[0]` is the primary. */
+  model_chain: string[];
 }
 
 export interface WorkflowInfo {
@@ -47,6 +50,16 @@ export interface ContinueDiscussionRequest {
 }
 
 /**
+ * Request to update a role's priority-ordered model chain.
+ * `chain[0]` is the primary; the rest are fallbacks tried in order
+ * when earlier models fail. Empty chains are rejected by the backend.
+ */
+export interface SetRoleModelChainRequest {
+  roleId: string;
+  chain: string[];
+}
+
+/**
  * List available models from ~/.latte/models.yaml
  */
 export async function listModels(): Promise<ModelInfo[]> {
@@ -61,13 +74,32 @@ export async function getRoleConfig(): Promise<RoleConfigResponse> {
 }
 
 /**
- * Set model for a specific role
+ * Set model for a specific role. Convenience wrapper around
+ * `setRoleModelChain([modelId])` — kept for callers that only need
+ * a single primary model.
  */
 export async function setRoleModel(
   roleId: string,
   modelId: string
 ): Promise<void> {
   return invoke("chat_set_role_model", { roleId, modelId });
+}
+
+/**
+ * Set the priority-ordered model chain for a specific role.
+ *
+ * `chain[0]` is the primary; the rest are fallbacks tried in order
+ * when earlier models fail (rate-limit, 5xx, transient network).
+ * Empty chains are rejected by the backend.
+ * Returns the persisted (deduplicated) chain.
+ */
+export async function setRoleModelChain(
+  roleId: string,
+  chain: string[]
+): Promise<string[]> {
+  return invoke<string[]>("chat_set_role_model_chain", {
+    request: { roleId, chain } as SetRoleModelChainRequest,
+  });
 }
 
 /**

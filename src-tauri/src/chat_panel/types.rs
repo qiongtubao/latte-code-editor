@@ -63,7 +63,13 @@ pub struct RoleInfo {
     pub name: String,
     pub icon: String,
     pub category: String,
+    /// Legacy single-model id (deprecated, kept for back-compat in UI).
+    /// Equals the first entry of `model_chain` for display.
     pub default_model_tier: String,
+    /// Priority-ordered model chain (highest priority first).
+    /// The first entry is the primary; the rest are fallbacks tried
+    /// in order when earlier models fail.
+    pub model_chain: Vec<String>,
 }
 
 /// Model info for display in UI.
@@ -86,4 +92,14 @@ pub struct RoleConfigResponse {
     pub workflows: Vec<WorkflowInfo>,
     pub models_path: String,
     pub roles_path: String,
+}
+
+/// Request from frontend to update a role's priority-ordered model chain.
+///
+/// `chain[0]` is the primary; the rest are fallbacks tried in order
+/// when earlier models fail. An empty chain is rejected by the backend.
+#[derive(Clone, Deserialize)]
+pub struct SetRoleModelChainRequest {
+    pub role_id: String,
+    pub chain: Vec<String>,
 }
