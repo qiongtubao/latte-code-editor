@@ -41,7 +41,7 @@ pub struct ModelDef {
 }
 
 /// Role definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RoleDef {
     pub name: String,
     pub icon: String,
@@ -276,29 +276,161 @@ fn create_default_models() -> GlobalModelConfig {
 fn create_default_roles() -> RoleConfig {
     let mut roles = HashMap::new();
 
+    // Mirror `latte-rs-agents/config/agents.toml` (10 roles). Each role
+    // carries the same `model_tier` / `tools` / `prompt_file` as upstream
+    // so users can drop in their own `prompts/<id>.md` files without
+    // editing the YAML. Inline `prompt` is a fallback for missing files
+    // — `load_role_prompt` only reads the file when it exists.
+    roles.insert("pm".into(), RoleDef {
+        name: "Product Manager".into(),
+        icon: "📋".into(),
+        category: "planning".into(),
+        model_tier: "standard".into(),
+        model_chain: vec![],
+        temperature: 0.7,
+        tools: vec!["read".into(), "search".into()],
+        prompt_file: "prompts/pm.md".into(),
+        prompt: "You are a Product Manager.".into(),
+        ..Default::default()
+    });
+    roles.insert("architect".into(), RoleDef {
+        name: "System Architect".into(),
+        icon: "🏗️".into(),
+        category: "planning".into(),
+        model_tier: "premium".into(),
+        model_chain: vec![],
+        temperature: 0.5,
+        tools: vec!["read".into(), "search".into()],
+        prompt_file: "prompts/architect.md".into(),
+        prompt: "You are a System Architect.".into(),
+        ..Default::default()
+    });
     roles.insert("programmer".into(), RoleDef {
         name: "Software Engineer".into(),
         icon: "💻".into(),
         category: "execution".into(),
-        // Upstream `latte-rs-agents/config/agents.toml` uses "budget"
-        // for programmer (low cost / high volume role). We store +
-        // forward this verbatim; runtime still uses chain head as
-        // primary, but the field travels with the role.
         model_tier: "budget".into(),
         model: None,
         model_chain: vec!["deepseek-chat".into()],
         temperature: 0.3,
-        // Upstream programmer gets read/write/bash/search; the chat
-        // panel doesn't yet wire tools to LLM calls but the field
-        // is forwarded to `Role.allowed_tools` for future use.
         tools: vec!["read".into(), "write".into(), "bash".into(), "search".into()],
         prompt_file: "prompts/programmer.md".into(),
         prompt: "You are a Software Engineer.".into(),
     });
+    roles.insert("tester".into(), RoleDef {
+        name: "QA Engineer".into(),
+        icon: "🧪".into(),
+        category: "verification".into(),
+        model_tier: "budget".into(),
+        model_chain: vec![],
+        temperature: 0.4,
+        tools: vec!["read".into(), "bash".into(), "search".into()],
+        prompt_file: "prompts/tester.md".into(),
+        prompt: "You are a QA Engineer.".into(),
+        ..Default::default()
+    });
+    roles.insert("reviewer".into(), RoleDef {
+        name: "Code Reviewer".into(),
+        icon: "🔍".into(),
+        category: "verification".into(),
+        model_tier: "standard".into(),
+        model_chain: vec![],
+        temperature: 0.4,
+        tools: vec!["read".into(), "search".into()],
+        prompt_file: "prompts/reviewer.md".into(),
+        prompt: "You are a Code Reviewer.".into(),
+        ..Default::default()
+    });
+    roles.insert("devops".into(), RoleDef {
+        name: "DevOps Engineer".into(),
+        icon: "🚀".into(),
+        category: "execution".into(),
+        model_tier: "budget".into(),
+        model_chain: vec![],
+        temperature: 0.3,
+        tools: vec!["read".into(), "bash".into(), "write".into()],
+        prompt_file: "prompts/devops.md".into(),
+        prompt: "You are a DevOps Engineer.".into(),
+        ..Default::default()
+    });
+    roles.insert("security".into(), RoleDef {
+        name: "Security Auditor".into(),
+        icon: "🛡️".into(),
+        category: "verification".into(),
+        model_tier: "standard".into(),
+        model_chain: vec![],
+        temperature: 0.4,
+        tools: vec!["read".into(), "search".into()],
+        prompt_file: "prompts/security.md".into(),
+        prompt: "You are a Security Auditor.".into(),
+        ..Default::default()
+    });
+    roles.insert("designer".into(), RoleDef {
+        name: "UI/UX Designer".into(),
+        icon: "🎨".into(),
+        category: "planning".into(),
+        model_tier: "standard".into(),
+        model_chain: vec![],
+        temperature: 0.7,
+        tools: vec!["read".into()],
+        prompt_file: "prompts/designer.md".into(),
+        prompt: "You are a UI/UX Designer.".into(),
+        ..Default::default()
+    });
+    roles.insert("tech_writer".into(), RoleDef {
+        name: "Technical Writer".into(),
+        icon: "📝".into(),
+        category: "execution".into(),
+        model_tier: "budget".into(),
+        model_chain: vec![],
+        temperature: 0.5,
+        tools: vec!["read".into(), "write".into()],
+        prompt_file: "prompts/tech_writer.md".into(),
+        prompt: "You are a Technical Writer.".into(),
+        ..Default::default()
+    });
+    roles.insert("manager".into(), RoleDef {
+        name: "Engineering Manager".into(),
+        icon: "👔".into(),
+        category: "planning".into(),
+        model_tier: "premium".into(),
+        model_chain: vec![],
+        temperature: 0.5,
+        tools: vec!["read".into()],
+        prompt_file: "prompts/manager.md".into(),
+        prompt: "You are an Engineering Manager.".into(),
+        ..Default::default()
+    });
+
+    // Default workflows — same naming as upstream `discussion.toml` so
+    // the `loadRoleConfig` consumers see consistent ids.
     let mut workflows = HashMap::new();
+    workflows.insert("default".into(), WorkflowDef {
+        name: "💬 Default — full team".into(),
+        roles: vec![
+            "pm".into(),
+            "architect".into(),
+            "programmer".into(),
+            "tester".into(),
+            "reviewer".into(),
+            "devops".into(),
+            "manager".into(),
+        ],
+        max_rounds: 3,
+    });
+    workflows.insert("plan".into(), WorkflowDef {
+        name: "🗺️ Plan — design and architect".into(),
+        roles: vec!["pm".into(), "architect".into(), "designer".into()],
+        max_rounds: 2,
+    });
+    workflows.insert("code_review".into(), WorkflowDef {
+        name: "🔍 Code Review".into(),
+        roles: vec!["reviewer".into(), "programmer".into()],
+        max_rounds: 1,
+    });
     workflows.insert("debug".into(), WorkflowDef {
         name: "🪲 Debug".into(),
-        roles: vec!["programmer".into()],
+        roles: vec!["tester".into(), "programmer".into(), "devops".into()],
         max_rounds: 1,
     });
 
