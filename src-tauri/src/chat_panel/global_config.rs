@@ -270,10 +270,110 @@ pub fn roles_config_path() -> PathBuf {
         .join("roles.yaml")
 }
 
+/// Get the directory that holds per-workflow `.yaml` files.
+///
+/// Defaults to `~/.latte-code-editor/workflows/`. Can be overridden
+/// via `LATTE_WORKFLOWS_DIR` for testing. The dir is created on
+/// first read if missing.
+pub fn workflows_dir() -> PathBuf {
+    if let Ok(p) = env::var("LATTE_WORKFLOWS_DIR") {
+        return PathBuf::from(p);
+    }
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".latte-code-editor")
+        .join("workflows")
+}
+
+/// Read a single workflow file by id (`workflows/<id>.yaml`).
+/// Returns `Ok(None)` if the file doesn't exist (caller should fall
+/// back to a default workflow). Files that fail to parse are
+/// logged + treated as missing.
+pub fn read_workflow_file(id: &str) -> Result<Option<WorkflowDef>, String> {
+    let path = workflows_dir().join(format!("{}.yaml", sanitize_workflow_id(id)));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("read {}: {e}", path.display()))?;
+    serde_yaml::from_str::<WorkflowDef>(&raw)
+        .map(Some)
+        .map_err(|e| format!("parse {}: {e}", path.display()))
+}
+
+/// Write a workflow file (`workflows/<id>.yaml`). Creates the dir
+/// if missing.
+pub fn write_workflow_file(id: &str, def: &WorkflowDef) -> std::io::Result<()> {
+    let dir = workflows_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.yaml", sanitize_workflow_id(id)));
+    let yaml = serde_yaml::to_string(def).unwrap_or_default();
+    std::fs::write(path, yaml)
+}
+
+/// Delete a workflow file. Returns `true` if the file existed and
+/// was removed, `false` if it wasn't there.
+pub fn delete_workflow_file(id: &str) -> std::io::Result<bool> {
+    let path = workflows_dir().join(format!("{}.yaml", sanitize_workflow_id(id)));
+    if !path.exists() {
+        return Ok(false);
+    }
+    std::fs::remove_file(&path)?;
+    Ok(true)
+}
+
+/// Read every workflow file under `workflows_dir()`. Returns a
+/// sorted map (id → def). Files that fail to parse are skipped
+/// with a stderr warning — we don't want a single bad workflow to
+/// lock the user out of every workflow.
+pub fn read_all_workflow_files() -> HashMap<String, WorkflowDef> {
+    let dir = workflows_dir();
+    let mut out: HashMap<String, WorkflowDef> = HashMap::new();
+    let entries = match fs::read_dir(&dir) {
+        Ok(it) => it,
+        Err(_) => return out,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if path.extension().and_then(|s| s.to_str()) != Some("yaml") {
+            continue;
+        }
+        match serde_yaml::from_str::<WorkflowDef>(&fs::read_to_string(&path).unwrap_or_default()) {
+            Ok(def) => {
+                out.insert(stem.to_string(), def);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[chat] failed to parse workflow file {:?}: {e}",
+                    path
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Sanitize a workflow id for use as a filename. Mirrors the
+/// `validate_workflow_id` rules in commands.rs — only
+/// alphanumeric, `-`, `_`, `:`.
+fn sanitize_workflow_id(id: &str) -> String {
+    id.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 /// Load models config
 pub fn load_global_models() -> GlobalModelConfig {
     let path = global_models_path();
-
     if !path.exists() {
         let config = create_default_models();
         write_models_config(&path, &config);
@@ -356,9 +456,45 @@ pub fn load_roles_config() -> RoleConfig {
         let _ = write_roles_config(&path, &config);
     }
 
+    // One-time migration: if `roles.yaml` still has workflows inline
+    // but `workflows/` is empty, split each workflow into its own
+    // file under `~/.latte-code-editor/workflows/`. Idempotent — if
+    // the user has already migrated, the dir is non-empty and we
+    // leave their files alone.
+    if !config.workflows.is_empty() {
+        let dir = workflows_dir();
+        let dir_is_empty = match fs::read_dir(&dir) {
+            Ok(mut it) => it.next().is_none(),
+            Err(_) => true,
+        };
+        if dir_is_empty {
+            let workflow_count = config.workflows.len();
+            let mut split_ok = true;
+            for (id, wf) in &config.workflows {
+                if let Err(e) = write_workflow_file(id, wf) {
+                    eprintln!("[chat] failed to split workflow {id}: {e}");
+                    split_ok = false;
+                }
+            }
+            if split_ok {
+                // Remove the inline workflows from roles.yaml now
+                // that each one has its own file.
+                config.workflows.clear();
+                if let Err(e) = write_roles_config(&path, &config) {
+                    eprintln!(
+                        "[chat] failed to rewrite roles.yaml after splitting workflows: {e}"
+                    );
+                } else {
+                    eprintln!(
+                        "[chat] split {workflow_count} workflows into {}/",
+                        dir.display()
+                    );
+                }
+            }
+        }
+    }
     config
 }
-
 pub fn write_roles_config(path: &std::path::Path, config: &RoleConfig) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

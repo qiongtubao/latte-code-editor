@@ -16,3 +16,5 @@ mod reset_integration_test;
 mod preflight_test;
 #[cfg(test)]
 mod derive_mode_test;
+#[cfg(test)]
+mod workflow_files_test;

@@ -77,12 +77,15 @@ pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
         })
         .collect();
 
-    let workflows: Vec<WorkflowInfo> = role_config
-        .workflows
+    // Workflows live in their own files under `~/.latte-code-editor/workflows/`.
+    // We don't read them out of `roles.yaml` anymore — that's reserved
+    // for roles + default model. `read_all_workflow_files` returns a
+    // sorted map so the chat panel dropdown order is deterministic.
+    let workflows: Vec<WorkflowInfo> = super::global_config::read_all_workflow_files()
         .iter()
         .map(|(id, w)| WorkflowInfo {
             id: id.clone(),
-            mode: derive_mode(&id, &kind_to_str(w.kind)),
+            mode: derive_mode(id, &kind_to_str(w.kind)),
             name: w.name.clone(),
             description: match w.kind {
                 super::global_config::WorkflowKind::Swarm => {
@@ -115,14 +118,10 @@ pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
 /// Fetch the full editable payload for one workflow, by id. The
 /// `chat_get_role_config` summary returns only the flat roles list;
 /// the editor needs the per-step breakdown.
-#[tauri::command]
 pub async fn chat_get_workflow_full(id: String) -> Result<WorkflowPayload, String> {
-    let role_config = load_roles_config();
-    let wf = role_config
-        .workflows
-        .get(&id)
-        .ok_or_else(|| format!("未找到工作流 `{id}`"))?;
-    Ok(workflow_def_to_payload(&id, wf))
+    super::global_config::read_workflow_file(&id)?
+        .map(|wf| workflow_def_to_payload(&id, &wf))
+        .ok_or_else(|| format!("未找到工作流 `{id}`（workflows/ 下没有同名 .yaml 文件）"))
 }
 
 /// List full editable payloads for every workflow. Used when the
@@ -131,9 +130,7 @@ pub async fn chat_get_workflow_full(id: String) -> Result<WorkflowPayload, Strin
 /// slimmer summary.
 #[tauri::command]
 pub async fn chat_list_workflows_full() -> Result<Vec<WorkflowPayload>, String> {
-    let role_config = load_roles_config();
-    Ok(role_config
-        .workflows
+    Ok(super::global_config::read_all_workflow_files()
         .iter()
         .map(|(id, w)| workflow_def_to_payload(id, w))
         .collect())
@@ -638,15 +635,10 @@ pub async fn chat_save_workflow(
     payload: WorkflowPayload,
 ) -> Result<WorkflowMutationResult, String> {
     let def = workflow_payload_to_def(&payload)?;
-    let mut config = load_roles_config();
     let id = payload.id.clone();
-    config.workflows.insert(id.clone(), def);
-    write_roles_config(&roles_config_path(), &config)
-        .map_err(|e| format!("写入 roles.yaml 失败：{e}"))?;
-    let updated = workflow_def_to_payload(
-        &id,
-        config.workflows.get(&id).expect("just inserted"),
-    );
+    super::global_config::write_workflow_file(&id, &def)
+        .map_err(|e| format!("写入 workflows/{id}.yaml 失败：{e}"))?;
+    let updated = workflow_def_to_payload(&id, &def);
     let _ = app.emit("workflows:changed", &id);
     Ok(WorkflowMutationResult {
         workflow: Some(updated),
@@ -668,19 +660,17 @@ pub async fn chat_delete_workflow(
             "工作流 `{id}` 是内置预设，不能删除（可以新建一个同名变体来覆盖）"
         ));
     }
-    let mut config = load_roles_config();
-    if config.workflows.remove(&id).is_none() {
+    let removed = super::global_config::delete_workflow_file(&id)
+        .map_err(|e| format!("删除 workflows/{id}.yaml 失败：{e}"))?;
+    if !removed {
         return Err(format!("未找到工作流 `{id}`"));
     }
-    write_roles_config(&roles_config_path(), &config)
-        .map_err(|e| format!("写入 roles.yaml 失败：{e}"))?;
     let _ = app.emit("workflows:changed", &id);
     Ok(WorkflowMutationResult {
         workflow: None,
         deleted: true,
     })
 }
-/// Wipe the user `roles.yaml` and replace it with the current
 /// defaults (Chinese-named roles + 5 workflow presets including
 /// `quick_task` swarm). Use as the "reset to defaults" button in the
 /// workflow editor for users whose existing `roles.yaml` predates
@@ -692,35 +682,29 @@ pub async fn chat_delete_workflow(
 pub async fn chat_reset_roles_to_defaults() -> Result<RoleConfigResponse, String> {
     let path = roles_config_path();
     let config = crate::chat_panel::global_config::create_default_roles();
-    write_roles_config(&path, &config)
+    // Write roles.yaml (roles + default_model only — workflows moved
+    // out into per-file storage).
+    let mut roles_only = config.clone();
+    roles_only.workflows = std::collections::HashMap::new();
+    write_roles_config(&path, &roles_only)
         .map_err(|e| format!("写入 roles.yaml 失败：{e}"))?;
 
+    // Write each default workflow as its own file under
+    // `~/.latte-code-editor/workflows/<id>.yaml`. Re-running reset
+    // overwrites cleanly — no migration noise.
+    for (id, wf) in &config.workflows {
+        super::global_config::write_workflow_file(id, wf)
+            .map_err(|e| format!("写入 workflows/{id}.yaml 失败：{e}"))?;
+    }
+
     let global_config = load_global_models();
-    let roles: Vec<RoleInfo> = config
-        .roles
-        .iter()
-        .map(|(id, r)| {
-            let chain = r.chain();
-            let primary = chain
-                .first()
-                .cloned()
-                .unwrap_or_else(|| config.default_model.clone());
-            RoleInfo {
-                id: id.clone(),
-                name: r.name.clone(),
-                icon: r.icon.clone(),
-                category: r.category.clone(),
-                default_model_tier: primary,
-                model_chain: chain,
-            }
-        })
-        .collect();
-    let workflows: Vec<WorkflowInfo> = config
-        .workflows
+    // Re-read workflows from the files we just wrote so the
+    // response reflects what's actually on disk.
+    let workflows: Vec<WorkflowInfo> = super::global_config::read_all_workflow_files()
         .iter()
         .map(|(id, w)| WorkflowInfo {
             id: id.clone(),
-            mode: derive_mode(&id, &kind_to_str(w.kind)),
+            mode: derive_mode(id, &kind_to_str(w.kind)),
             name: w.name.clone(),
             description: match w.kind {
                 super::global_config::WorkflowKind::Swarm => {
@@ -739,6 +723,25 @@ pub async fn chat_reset_roles_to_defaults() -> Result<RoleConfigResponse, String
             kind: kind_to_str(w.kind),
             planner_role: w.planner_role.clone(),
             worker_roles: w.worker_roles.clone(),
+        })
+        .collect();
+    let roles: Vec<RoleInfo> = config
+        .roles
+        .iter()
+        .map(|(id, r)| {
+            let chain = r.chain();
+            let primary = chain
+                .first()
+                .cloned()
+                .unwrap_or_else(|| config.default_model.clone());
+            RoleInfo {
+                id: id.clone(),
+                name: r.name.clone(),
+                icon: r.icon.clone(),
+                category: r.category.clone(),
+                default_model_tier: primary,
+                model_chain: chain,
+            }
         })
         .collect();
     Ok(RoleConfigResponse {
