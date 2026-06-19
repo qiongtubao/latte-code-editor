@@ -115,6 +115,12 @@ pub fn run() {
             crate::chat_panel::commands::chat_delete_workflow,
             crate::chat_panel::commands::chat_list_workflows_full,
             crate::chat_panel::commands::chat_reset_roles_to_defaults,
+            crate::chat_panel::commands::chat_start_manager_session,
+            crate::chat_panel::commands::chat_user_decision,
+            crate::chat_panel::commands::chat_user_continue,
+            crate::chat_panel::commands::chat_get_manager_state,
+            crate::chat_panel::commands::chat_list_manager_sessions,
+            crate::chat_panel::commands::chat_abort_manager_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

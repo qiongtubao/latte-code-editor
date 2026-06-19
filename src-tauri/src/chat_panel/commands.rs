@@ -453,6 +453,70 @@ pub async fn chat_cancel(session_id: usize) -> Result<(), String> {
     Ok(())
 }
 
+/// Start a manager-led interactive workflow. The manager role reads
+/// the topic, decides what to do next, and either asks the user
+/// (via `chat:need_decision`) or dispatches a worker (via `chat:turn`).
+///
+/// Returns the new session_id immediately. Progress streams via
+/// `chat:turn` for manager / worker bubbles and `chat:need_decision`
+/// for the option-button panel.
+#[tauri::command]
+pub async fn chat_start_manager_session(
+    app: AppHandle,
+    topic: String,
+    #[allow(non_snake_case)]
+    workspace: Option<String>,
+) -> Result<usize, String> {
+    super::manager::start_manager_session(&app, &topic, workspace.as_deref()).await
+}
+/// Backend advances the state machine from `AwaitingDecision` to
+/// `AssigningWorker` / `Finalizing` and emits the resulting turn.
+#[tauri::command]
+pub async fn chat_user_decision(
+    app: AppHandle,
+    decision: UserDecision,
+) -> Result<(), String> {
+    super::manager::submit_user_decision(&app, decision).await
+}
+
+/// User pushed the session forward without picking an option, or
+/// supplied their own instruction. Forces the manager to re-plan
+/// with the user's context note appended.
+#[tauri::command]
+pub async fn chat_user_continue(
+    app: AppHandle,
+    session_id: usize,
+    message: Option<String>,
+) -> Result<(), String> {
+    super::manager::submit_user_continue(&app, session_id, message).await
+}
+
+/// Snapshot a manager session by id. Returns `null` if the session
+/// has never been started in this process (e.g. after a Tauri
+/// restart — caller should re-issue `chat_start_manager_session`).
+#[tauri::command]
+pub async fn chat_get_manager_state(
+    session_id: usize,
+) -> Result<Option<ManagerSessionState>, String> {
+    Ok(super::manager::get_session_state(session_id))
+}
+
+/// List all live manager session ids in this process.
+#[tauri::command]
+pub async fn chat_list_manager_sessions() -> Result<Vec<usize>, String> {
+    Ok(super::manager::list_sessions())
+}
+
+/// Force-stop a manager session.
+#[tauri::command]
+pub async fn chat_abort_manager_session(
+    session_id: usize,
+    reason: String,
+) -> Result<(), String> {
+    super::manager::abort_session(session_id, &reason)
+}
+
+/// Validate a workflow id.
 /// Validate a workflow id. Must be a stable identifier usable as a
 /// YAML map key and a workflow dropdown value. Keeps users from
 /// injecting whitespace or path-traversal characters.

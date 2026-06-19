@@ -242,3 +242,103 @@ pub struct WorkflowMutationResult {
     /// `true` if the workflow was removed.
     pub deleted: bool,
 }
+
+// ─── Manager-led workflow ────────────────────────────────────────────
+//
+// Single user → manager role orchestrates a multi-role discussion,
+// pausing to ask the user for decisions when the path isn't clear.
+// Distinct from `planned` (sequential auto-runs) and `swarm` (planner
+// upfront); the manager is interactive throughout.
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagerState {
+    Idle,
+    Planning,
+    AwaitingDecision,
+    AssigningWorker,
+    WorkerRunning,
+    Reflecting,
+    Finalizing,
+    Done,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum ManagerAction {
+    NeedDecision {
+        question: String,
+        reason: String,
+        options: Vec<DecisionOption>,
+    },
+    AssignWorker {
+        worker_role: String,
+        instruction: String,
+    },
+    Finalize { summary: String },
+    Conclude,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionOption {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub worker_role: Option<String>,
+    #[serde(default)]
+    pub estimated_cost_usd: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionRequest {
+    pub session_id: usize,
+    pub question: String,
+    pub reason: String,
+    pub options: Vec<DecisionOption>,
+    pub context_summary: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserDecision {
+    pub session_id: usize,
+    pub option_id: String,
+    #[serde(default)]
+    pub free_text: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagerTurn {
+    pub turn_number: usize,
+    pub role_id: String,
+    pub role_name: String,
+    pub icon: String,
+    pub content: String,
+    pub action: Option<ManagerAction>,
+    pub user_decision: Option<UserDecision>,
+    pub weight: f32,
+    pub pinned: bool,
+    pub ts_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagerSessionState {
+    pub session_id: usize,
+    pub state: ManagerState,
+    pub topic: String,
+    pub manager_role_id: String,
+    pub available_roles: Vec<String>,
+    pub max_total_steps: u32,
+    pub max_user_decisions: u32,
+    pub steps_taken: u32,
+    pub decisions_taken: u32,
+    pub turns: Vec<ManagerTurn>,
+    pub started_at_ms: u64,
+    pub finished_at_ms: Option<u64>,
+    pub summary: Option<String>,
+}
