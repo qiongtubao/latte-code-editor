@@ -12,7 +12,7 @@ static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
 /// in manager-led mode (regardless of `kind`); other workflows
 /// dispatch on `kind`. This lets us keep `WorkflowKind` enum
 /// unchanged while still surfacing the new mode to the UI.
-fn derive_mode(id: &str, kind: &str) -> String {
+pub(crate) fn derive_mode(id: &str, kind: &str) -> String {
     if id.starts_with("manager_") {
         "manager_led".to_string()
     } else {
@@ -22,7 +22,7 @@ fn derive_mode(id: &str, kind: &str) -> String {
 
 /// Convert a `WorkflowKind` to its serialized string form. Used
 /// both as `kind` and as the input to `derive_mode`.
-fn kind_to_str(kind: super::global_config::WorkflowKind) -> String {
+pub(crate) fn kind_to_str(kind: super::global_config::WorkflowKind) -> String {
     match kind {
         super::global_config::WorkflowKind::Planned => "planned".to_string(),
         super::global_config::WorkflowKind::Swarm => "swarm".to_string(),
