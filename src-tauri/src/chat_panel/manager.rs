@@ -37,9 +37,8 @@ use tauri::{AppHandle, Emitter};
 use super::global_config::{load_global_models, load_roles_config};
 use super::types::{
     DecisionOption, DecisionRequest, ManagerAction, ManagerSessionState, ManagerState,
-    ManagerTurn, TurnPayload, UserDecision,
+    ManagerStatus, ManagerTurn, TurnPayload, UserDecision,
 };
-
 /// In-memory registry of active sessions. Persisted snapshots live
 /// under `<ws>/.manager_<id>/state.json` (see `persist_state`).
 static SESSIONS: OnceLock<Mutex<HashMap<usize, Arc<Mutex<ManagerSessionState>>>>>
@@ -302,6 +301,89 @@ fn emit_decision(app: &AppHandle, req: &DecisionRequest) {
     let _ = app.emit("chat:need_decision", req);
 }
 
+pub(crate) fn phase_label(state: &ManagerState) -> String {
+    match state {
+        ManagerState::Idle => "空闲".to_string(),
+        ManagerState::Planning => "规划中".to_string(),
+        ManagerState::AwaitingDecision => "等待你的决策".to_string(),
+        ManagerState::AssigningWorker => "派单中".to_string(),
+        ManagerState::WorkerRunning => "Worker 运行中".to_string(),
+        ManagerState::Reflecting => "反思中".to_string(),
+        ManagerState::Finalizing => "收尾中".to_string(),
+        ManagerState::Done => "已完成".to_string(),
+        ManagerState::Failed => "失败".to_string(),
+    }
+}
+
+/// Compute the streaming status payload from a snapshot of session
+/// state. Pure function — no I/O, no side effects, safe to call
+/// from any thread.
+pub(crate) fn compute_manager_status(state: &ManagerSessionState) -> ManagerStatus {
+    let roles_config = load_roles_config();
+    let (role_name, icon) = roles_config
+        .roles
+        .get(&state.manager_role_id)
+        .map(|r| (r.name.clone(), r.icon.clone()))
+        .unwrap_or_else(|| (state.manager_role_id.clone(), "👔".to_string()));
+
+    // Resolve the manager role's model chain. We use a placeholder
+    // tier ("standard") because the manager role's chain is
+    // authoritative regardless of the global model_tier routing.
+    let chain: Vec<String> = roles_config
+        .roles
+        .get(&state.manager_role_id)
+        .map(|r| r.chain())
+        .unwrap_or_default();
+
+    let current_model = chain.first().cloned().unwrap_or_default();
+    let global_models = load_global_models();
+    let is_stub_mode = chain.is_empty()
+        || !global_models.has_api_key()
+        || std::env::var("LATTE_CHAT_LIVE")
+            .map(|v| v == "0")
+            .unwrap_or(false);
+
+    let transcript_bytes: u32 = state
+        .turns
+        .iter()
+        .map(|t| (t.content.len() as u32).saturating_add(t.role_name.len() as u32))
+        .sum();
+    let summary_bytes = state.summary.as_ref().map(|s| s.len() as u32).unwrap_or(0);
+    let tokens_estimated = (transcript_bytes / 3).saturating_add(summary_bytes / 3);
+
+    let elapsed_ms = now_ms().saturating_sub(state.started_at_ms);
+    let last_step_at_ms = state.turns.last().map(|t| t.ts_ms).unwrap_or(0);
+
+    ManagerStatus {
+        session_id: state.session_id,
+        state: state.state.clone(),
+        phase_label: phase_label(&state.state),
+        manager_role_id: state.manager_role_id.clone(),
+        manager_role_name: role_name,
+        manager_icon: icon,
+        current_model,
+        model_chain: chain,
+        is_stub_mode,
+        available_workers: state.available_roles.clone(),
+        steps_taken: state.steps_taken,
+        max_total_steps: state.max_total_steps,
+        decisions_taken: state.decisions_taken,
+        max_user_decisions: state.max_user_decisions,
+        transcript_bytes,
+        summary_bytes,
+        tokens_estimated,
+        elapsed_ms,
+        last_step_at_ms,
+    }
+}
+
+/// Emit a status payload for the given session. Safe to call after
+/// any state mutation — the chat panel just renders the latest
+/// payload it received.
+fn emit_manager_status(app: &AppHandle, state: &ManagerSessionState) {
+    let payload = compute_manager_status(state);
+    let _ = app.emit("chat:manager_status", &payload);
+}
 /// Public entry: start a manager-led session for `topic`. Returns
 /// the new session_id. Emits one `chat:turn` for the manager
 /// (containing the first decision) and one `chat:need_decision`
@@ -437,8 +519,8 @@ where
     if let ManagerAction::AssignWorker { worker_role, instruction } = &action {
         run_worker_stub(app, state_arc, workspace, worker_role, instruction, turn_number + 1)?;
     }
-
     persist_state(&state_arc.lock(), workspace).ok();
+    emit_manager_status(app, &state_arc.lock());
     Ok(())
 }
 
@@ -526,8 +608,7 @@ fn run_worker_stub(
 
     emit_turn(app, &payload);
     persist_state(&state_arc.lock(), workspace).ok();
-
-    // Chain the reflection step.
+    emit_manager_status(app, &state_arc.lock());
     take_manager_turn(app, state_arc, workspace, &topic, turn_number + 1, |s| {
         stub_reflection(worker_role, &s.topic)
     })

@@ -358,3 +358,53 @@ pub struct ManagerSessionState {
     pub finished_at_ms: Option<u64>,
     pub summary: Option<String>,
 }
+
+/// Streaming status payload for manager-led workflows. Emitted via
+/// `chat:manager_status` whenever the manager transitions state
+/// (planning → awaiting decision → worker running → reflecting →
+/// finalizing → done). The chat panel renders it as a compact
+/// "📊 状态" panel — Chinese labels, no jargon.
+///
+/// All values are derived from `ManagerSessionState` at the moment
+/// of emission; we don't store this struct separately. Token /
+/// transcript byte counts are estimates (chars / 3) — fine for UI,
+/// not for billing.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagerStatus {
+    pub session_id: usize,
+    pub state: ManagerState,
+    /// Phase label in Chinese — "规划", "等待决策", "派单",
+    /// "Worker 运行中", "反思", "收尾", "完成", "失败".
+    pub phase_label: String,
+    pub manager_role_id: String,
+    pub manager_role_name: String,
+    pub manager_icon: String,
+    /// First model in the manager's chain (primary). Empty if no
+    /// model is configured (stub mode + no API key).
+    pub current_model: String,
+    /// Full priority-ordered chain. Empty in stub mode.
+    pub model_chain: Vec<String>,
+    /// `true` when no LLM call was made (keyword heuristic) or when
+    /// the manager role's primary model has no API key.
+    pub is_stub_mode: bool,
+    /// Roles the manager may pick as workers. Empty = fall back to
+    /// all available roles.
+    pub available_workers: Vec<String>,
+    pub steps_taken: u32,
+    pub max_total_steps: u32,
+    pub decisions_taken: u32,
+    pub max_user_decisions: u32,
+    /// Estimated total transcript bytes (all turns summed).
+    pub transcript_bytes: u32,
+    /// Byte length of the current / final summary.
+    pub summary_bytes: u32,
+    /// Rough token estimate (transcript_bytes / 3). 4 chars / token
+    /// is the rough English rule; Chinese averages 1.5 char / token
+    /// so we split the difference at 3.
+    pub tokens_estimated: u32,
+    /// Total elapsed time since session start, in milliseconds.
+    pub elapsed_ms: u64,
+    /// Timestamp of the most recent turn. 0 if no turns yet.
+    pub last_step_at_ms: u64,
+}

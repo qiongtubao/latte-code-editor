@@ -369,6 +369,50 @@ export async function abortManagerSession(
 ): Promise<void> {
   return invoke("chat_abort_manager_session", { sessionId, reason });
 }
+
+/**
+ * Streaming status payload from `chat:manager_status`. Emitted on
+ * every manager state transition. The chat panel renders this as a
+ * compact Chinese-labeled status card so the user can see what
+ * model is being used, how many steps / decisions remain, how many
+ * tokens the transcript has consumed, and whether the manager is
+ * running in stub mode (keyword heuristic) or live LLM mode.
+ *
+ * All byte / token counts are estimates — fine for the UI, not for
+ * billing.
+ */
+export interface ManagerStatus {
+  sessionId: number;
+  state:
+    | "idle"
+    | "planning"
+    | "awaitingDecision"
+    | "assigningWorker"
+    | "workerRunning"
+    | "reflecting"
+    | "finalizing"
+    | "done"
+    | "failed";
+  /** Chinese phase label — "规划中", "等待你的决策", ... */
+  phaseLabel: string;
+  managerRoleId: string;
+  managerRoleName: string;
+  managerIcon: string;
+  /** First model in the manager's chain (primary). Empty in stub mode. */
+  currentModel: string;
+  modelChain: string[];
+  isStubMode: boolean;
+  availableWorkers: string[];
+  stepsTaken: number;
+  maxTotalSteps: number;
+  decisionsTaken: number;
+  maxUserDecisions: number;
+  transcriptBytes: number;
+  summaryBytes: number;
+  tokensEstimated: number;
+  elapsedMs: number;
+  lastStepAtMs: number;
+}
 /**
  * Cancel discussion
  */

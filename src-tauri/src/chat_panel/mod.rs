@@ -18,3 +18,5 @@ mod preflight_test;
 mod derive_mode_test;
 #[cfg(test)]
 mod workflow_files_test;
+#[cfg(test)]
+mod manager_status_test;

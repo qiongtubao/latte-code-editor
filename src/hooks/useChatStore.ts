@@ -115,11 +115,12 @@ interface ChatStore {
   /** Most recent pending decision request. Non-null while the UI
    *  should show option buttons under the last manager bubble. */
   pendingDecision: import("../api/chat").DecisionRequest | null;
+  /** Latest streaming status from `chat:manager_status`. `null`
+   *  before the first emission or after `clearChat`. */
+  managerStatus: import("../api/chat").ManagerStatus | null;
   /** Currently-active manager session id (assigned by
    *  `chat_start_manager_session`). `null` until first launch. */
   managerSessionId: number | null;
-  /** Start a manager-led workflow. Sets state to running and emits
-   *  the user's topic message + the manager's first turn. */
   startManagerSession: (topic: string) => Promise<void>;
   /** User picked an option (with optional free text). */
   submitManagerDecision: (
@@ -130,7 +131,9 @@ interface ChatStore {
   managerContinue: (message?: string | null) => Promise<void>;
   /** Apply one `chat:need_decision` event from the backend. */
   applyNeedDecision: (req: import("../api/chat").DecisionRequest) => void;
-
+  applyManagerStatus: (
+    status: import("../api/chat").ManagerStatus,
+  ) => void;
 
   // Config management
   setRoleModel: (roleId: string, modelId: string) => Promise<void>;
@@ -220,6 +223,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   // Manager-led workflow
   pendingDecision: null,
+  managerStatus: null,
   managerSessionId: null,
 
   // Workflow editor
@@ -418,8 +422,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       swarmFiles: [],
       swarmSummary: null,
       errorMessage: null,
-      lastUserTopic: null,
       pendingDecision: null,
+      managerStatus: null,
       managerSessionId: null,
     }),
   addTurn: (turn) => {
@@ -897,8 +901,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((s) => ({
       messages: [...s.messages, userMsg],
       status: "running",
-      errorMessage: null,
       pendingDecision: null,
+      managerStatus: null,
     }));
     try {
       const sessionId = await startManagerSessionApi(trimmed, null);
@@ -953,5 +957,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
    */
   applyNeedDecision: (req) => {
     set({ pendingDecision: req });
+  },
+
+  /**
+   * Replace the cached manager status with the latest emission.
+   * The chat panel renders this directly — there's no merge logic,
+   * the backend always sends a complete snapshot.
+   */
+  applyManagerStatus: (status) => {
+    set({ managerStatus: status });
   },
 }));

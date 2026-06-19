@@ -888,6 +888,61 @@ describe("useChatStore — manager-led", () => {
     expect(s.pendingDecision?.branchLabel).toBe("通用");
   });
 
+  it("applyManagerStatus 替换 managerStatus", () => {
+    useChatStore.getState().applyManagerStatus({
+      sessionId: 1,
+      state: "reflecting",
+      phaseLabel: "反思中",
+      managerRoleId: "manager",
+      managerRoleName: "工程经理",
+      managerIcon: "👔",
+      currentModel: "deepseek-chat",
+      modelChain: ["deepseek-chat", "deepseek-reasoner"],
+      isStubMode: false,
+      availableWorkers: ["pm", "architect", "programmer"],
+      stepsTaken: 3,
+      maxTotalSteps: 8,
+      decisionsTaken: 1,
+      maxUserDecisions: 5,
+      transcriptBytes: 4096,
+      summaryBytes: 0,
+      tokensEstimated: 1365,
+      elapsedMs: 12_345,
+      lastStepAtMs: 12_000,
+    });
+    const s = useChatStore.getState();
+    expect(s.managerStatus?.phaseLabel).toBe("反思中");
+    expect(s.managerStatus?.currentModel).toBe("deepseek-chat");
+    expect(s.managerStatus?.isStubMode).toBe(false);
+    expect(s.managerStatus?.stepsTaken).toBe(3);
+
+    // A subsequent emission replaces (not merges).
+    useChatStore.getState().applyManagerStatus({
+      sessionId: 1,
+      state: "awaitingDecision",
+      phaseLabel: "等待你的决策",
+      managerRoleId: "manager",
+      managerRoleName: "工程经理",
+      managerIcon: "👔",
+      currentModel: "deepseek-chat",
+      modelChain: ["deepseek-chat"],
+      isStubMode: true,
+      availableWorkers: ["pm"],
+      stepsTaken: 4,
+      maxTotalSteps: 8,
+      decisionsTaken: 2,
+      maxUserDecisions: 5,
+      transcriptBytes: 5120,
+      summaryBytes: 0,
+      tokensEstimated: 1706,
+      elapsedMs: 20_000,
+      lastStepAtMs: 19_500,
+    });
+    const after = useChatStore.getState();
+    expect(after.managerStatus?.phaseLabel).toBe("等待你的决策");
+    expect(after.managerStatus?.isStubMode).toBe(true);
+    expect(after.managerStatus?.stepsTaken).toBe(4);
+  });
   it("submitManagerDecision 调用 chat_user_decision 并清掉 pendingDecision", async () => {
     useChatStore.setState({ managerSessionId: 7 });
     useChatStore.getState().applyNeedDecision({

@@ -47,8 +47,10 @@ export function ChatPanel({ onClose }: Props) {
     pendingDecision,
     submitManagerDecision,
     managerContinue,
+    managerStatus,
   } = useChatStore();
   const [input, setInput] = useState("");
+  const [managerStatusCollapsed, setManagerStatusCollapsed] = useState(true);
    useEffect(() => {
     loadWorkflows();
     loadModels();
@@ -162,13 +164,14 @@ export function ChatPanel({ onClose }: Props) {
             </option>
           ))}
         </select>
-        {mode === "manager" && (
-          <span
-            className="ml-2 text-[10px] text-purple-300 px-2 py-0.5 bg-purple-900/40 border border-purple-700/50 rounded"
-            title="当前 workflow 自动以 Manager 模式启动"
-          >
-            👔 Manager 主导
-          </span>
+        {mode === "manager" && managerStatus && (
+          <ManagerStatusBar
+            status={managerStatus}
+            collapsed={managerStatusCollapsed}
+            onToggleCollapse={() =>
+              setManagerStatusCollapsed((c) => !c)
+            }
+          />
         )}
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -601,6 +604,114 @@ function DecisionBubble({ decision, onPick, onSkip }: DecisionBubbleProps) {
           {decision.options.length} 个选项
         </span>
       </div>
+    </div>
+  );
+}
+
+interface ManagerStatusBarProps {
+  status: import("../api/chat").ManagerStatus;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+}
+
+/**
+ * Compact Chinese-labeled status panel for manager-led sessions.
+ * Shows the role + model, phase, steps / decisions budget, transcript
+ * size, and a stub-mode warning when the manager isn't actually
+ * calling an LLM. Rendered in the chat panel header (manager mode
+ * only); collapsible so it doesn't crowd the dropdown row.
+ */
+function ManagerStatusBar({
+  status,
+  collapsed,
+  onToggleCollapse,
+}: ManagerStatusBarProps) {
+  const elapsedSec = Math.round(status.elapsedMs / 1000);
+  const remainingSteps = status.maxTotalSteps - status.stepsTaken;
+  const remainingDecisions = status.maxUserDecisions - status.decisionsTaken;
+  const transcriptKB = (status.transcriptBytes / 1024).toFixed(1);
+
+  return (
+    <div className="ml-2 text-[10px]">
+      <button
+        type="button"
+        onClick={onToggleCollapse}
+        className="px-2 py-0.5 bg-purple-900/30 border border-purple-700/40 text-purple-200 rounded text-[10px] hover:bg-purple-900/50"
+        title="点击展开 / 折叠 manager 会话状态"
+      >
+        📊 {status.phaseLabel} {collapsed ? "▸" : "▾"}
+      </button>
+      {!collapsed && (
+        <div className="absolute z-10 mt-1 left-0 right-0 mx-2 p-3 bg-[#1e1e1e] border border-purple-700/40 rounded shadow-lg text-[11px] text-gray-200 space-y-1">
+          <div className="flex items-center gap-2 font-semibold">
+            <span>{status.managerIcon}</span>
+            <span>{status.managerRoleName}</span>
+            <span className="text-gray-500 font-normal">
+              ({status.managerRoleId})
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+            <Field label="模型" value={
+              status.currentModel
+                ? `${status.currentModel} (chain: ${status.modelChain.length})`
+                : "（无）"
+            } />
+            <Field
+              label="Stub?"
+              value={status.isStubMode ? "⚠️ 是（keyword 决策）" : "✅ 实时 LLM"}
+              tone={status.isStubMode ? "warn" : "ok"}
+            />
+            <Field
+              label="状态"
+              value={`${status.phaseLabel}`}
+            />
+            <Field label="运行" value={`${elapsedSec} 秒`} />
+            <Field
+              label="步数"
+              value={`${status.stepsTaken} / ${status.maxTotalSteps}（剩 ${remainingSteps}）`}
+            />
+            <Field
+              label="决策"
+              value={`${status.decisionsTaken} / ${status.maxUserDecisions}（剩 ${remainingDecisions}）`}
+            />
+            <Field
+              label="Transcript"
+              value={`${transcriptKB} KB · ~${status.tokensEstimated} tokens`}
+            />
+            <Field
+              label="Workers"
+              value={
+                status.availableWorkers.length > 0
+                  ? status.availableWorkers.join("、")
+                  : "（所有角色）"
+              }
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "ok" | "warn";
+}) {
+  const valueColor =
+    tone === "warn"
+      ? "text-orange-300"
+      : tone === "ok"
+        ? "text-green-300"
+        : "text-gray-100";
+  return (
+    <div className="flex items-baseline gap-1">
+      <span className="text-gray-500 shrink-0">{label}:</span>
+      <span className={"truncate " + valueColor}>{value}</span>
     </div>
   );
 }
