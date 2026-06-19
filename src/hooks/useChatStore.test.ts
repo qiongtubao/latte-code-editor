@@ -312,7 +312,7 @@ describe("useChatStore — workflow editor", () => {
       lastUserTopic: null,
       selectedWorkflow: "discuss",
       availableWorkflows: [
-        { id: "plan", name: "🗺️ 规划", kind: "planned" },
+        { id: "plan", name: "🗺️ 规划", kind: "planned", mode: "planned" },
       ],
       availableRoles: [
         {
@@ -604,15 +604,12 @@ describe("useChatStore — resetRolesToDefaults", () => {
         },
       ],
       workflows: [
-        { id: "plan", name: "🗺️ 规划 — 设计与架构", kind: "planned" },
-        { id: "quick_task", name: "🪄 快速任务 — 智能多角色", kind: "swarm" },
+        { id: "plan", name: "🗺️ 规划 — 设计与架构", kind: "planned", mode: "planned" },
+        { id: "quick_task", name: "🪄 快速任务 — 智能多角色", kind: "swarm", mode: "swarm" },
       ],
-      modelsPath: "/home/user/.latte/models.yaml",
-      rolesPath: "/home/user/.latte-code-editor/roles.yaml",
     });
 
     await useChatStore.getState().resetRolesToDefaults();
-
     expect(invokeMock).toHaveBeenCalledWith("chat_reset_roles_to_defaults");
     const s = useChatStore.getState();
     expect(s.availableRoles.find((r) => r.id === "programmer")?.name).toBe("软件工程师");
@@ -623,8 +620,8 @@ describe("useChatStore — resetRolesToDefaults", () => {
       id: "quick_task",
       name: "🪄 快速任务 — 智能多角色",
       kind: "swarm",
+      mode: "swarm",
     });
-    expect(s.selectedWorkflow).toBe("discuss");
     expect(s.editingError).toBe(null);
     expect(s.editingSaving).toBe(false);
   });
@@ -938,13 +935,14 @@ describe("useChatStore — manager-led", () => {
   it("clearChat 同时清掉 managerSessionId 和 pendingDecision", () => {
     useChatStore.setState({
       managerSessionId: 5,
-      pendingDecision: {
-        sessionId: 5,
-        question: "Q",
-        reason: "r",
-        options: [],
-        contextSummary: "",
-      },
+    pendingDecision: {
+      sessionId: 5,
+      branchLabel: "通用",
+      question: "Q",
+      reason: "r",
+      options: [],
+      contextSummary: "",
+    },
     });
     useChatStore.getState().clearChat();
     const s = useChatStore.getState();

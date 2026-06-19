@@ -5,8 +5,29 @@ use tauri::{AppHandle, Emitter};
 use super::global_config::{load_global_models, load_roles_config, write_roles_config, global_models_path, roles_config_path, WorkflowDef, WorkflowKind, WorkflowStep};
 use super::session::{default_role_ids, run_discussion, WORKFLOW_PRESETS};
 use super::types::*;
-
 static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// Map a workflow id + kind to the runtime dispatch tag used by the
+/// chat panel. Workflows whose id starts with `manager_` always run
+/// in manager-led mode (regardless of `kind`); other workflows
+/// dispatch on `kind`. This lets us keep `WorkflowKind` enum
+/// unchanged while still surfacing the new mode to the UI.
+fn derive_mode(id: &str, kind: &str) -> String {
+    if id.starts_with("manager_") {
+        "manager_led".to_string()
+    } else {
+        kind.to_string()
+    }
+}
+
+/// Convert a `WorkflowKind` to its serialized string form. Used
+/// both as `kind` and as the input to `derive_mode`.
+fn kind_to_str(kind: super::global_config::WorkflowKind) -> String {
+    match kind {
+        super::global_config::WorkflowKind::Planned => "planned".to_string(),
+        super::global_config::WorkflowKind::Swarm => "swarm".to_string(),
+    }
+}
 #[tauri::command]
 pub async fn chat_list_models() -> Result<Vec<ModelInfo>, String> {
     let global_config = load_global_models();
@@ -61,6 +82,7 @@ pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
         .iter()
         .map(|(id, w)| WorkflowInfo {
             id: id.clone(),
+            mode: derive_mode(&id, &kind_to_str(w.kind)),
             name: w.name.clone(),
             description: match w.kind {
                 super::global_config::WorkflowKind::Swarm => {
@@ -76,10 +98,7 @@ pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
             },
             default_roles: w.roles.clone(),
             steps: vec![],
-            kind: match w.kind {
-                super::global_config::WorkflowKind::Swarm => "swarm".into(),
-                super::global_config::WorkflowKind::Planned => "planned".into(),
-            },
+            kind: kind_to_str(w.kind),
             planner_role: w.planner_role.clone(),
             worker_roles: w.worker_roles.clone(),
         })
@@ -238,6 +257,7 @@ pub async fn chat_list_workflows() -> Result<Vec<WorkflowInfo>, String> {
             .iter()
             .map(|(id, w)| WorkflowInfo {
                 id: id.clone(),
+                mode: derive_mode(&id, &kind_to_str(w.kind)),
                 name: w.name.clone(),
                 description: match w.kind {
                     super::global_config::WorkflowKind::Swarm => {
@@ -253,10 +273,7 @@ pub async fn chat_list_workflows() -> Result<Vec<WorkflowInfo>, String> {
                 },
                 default_roles: w.roles.clone(),
                 steps: vec![],
-                kind: match w.kind {
-                    super::global_config::WorkflowKind::Swarm => "swarm".into(),
-                    super::global_config::WorkflowKind::Planned => "planned".into(),
-                },
+                kind: kind_to_str(w.kind),
                 planner_role: w.planner_role.clone(),
                 worker_roles: w.worker_roles.clone(),
             })
@@ -269,6 +286,7 @@ pub async fn chat_list_workflows() -> Result<Vec<WorkflowInfo>, String> {
         .iter()
         .map(|(id, _wf_id, default_roles, _rounds, label)| WorkflowInfo {
             id: id.to_string(),
+            mode: derive_mode(id, "planned"),
             name: label.to_string(),
             description: match *id {
                 "plan" => "Multi-perspective design and architecture discussion".to_string(),
@@ -284,7 +302,6 @@ pub async fn chat_list_workflows() -> Result<Vec<WorkflowInfo>, String> {
             worker_roles: Vec::new(),
         })
         .collect();
-
     Ok(out)
 }
 
@@ -703,6 +720,7 @@ pub async fn chat_reset_roles_to_defaults() -> Result<RoleConfigResponse, String
         .iter()
         .map(|(id, w)| WorkflowInfo {
             id: id.clone(),
+            mode: derive_mode(&id, &kind_to_str(w.kind)),
             name: w.name.clone(),
             description: match w.kind {
                 super::global_config::WorkflowKind::Swarm => {
@@ -718,10 +736,7 @@ pub async fn chat_reset_roles_to_defaults() -> Result<RoleConfigResponse, String
             },
             default_roles: w.roles.clone(),
             steps: vec![],
-            kind: match w.kind {
-                super::global_config::WorkflowKind::Swarm => "swarm".into(),
-                super::global_config::WorkflowKind::Planned => "planned".into(),
-            },
+            kind: kind_to_str(w.kind),
             planner_role: w.planner_role.clone(),
             worker_roles: w.worker_roles.clone(),
         })

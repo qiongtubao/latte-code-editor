@@ -35,8 +35,15 @@ export interface WorkflowInfo {
   description: string;
   defaultRoles: string[];
   steps: string[];
-  /** `"planned"` (sequential) or `"swarm"` (planner-driven). */
+  /** `"planned"` (sequential), `"swarm"` (planner-driven), or
+   *   `"manager_led"` (interactive: manager role reads topic +
+   *   pauses to ask the user via `chat:need_decision`). */
   kind: "planned" | "swarm";
+  /** Runtime dispatch tag. Same as `kind` unless the workflow id
+   *   starts with `manager_` (in which case this is `"manager_led"`).
+   *   The chat panel uses `mode` to auto-switch to manager mode on
+   *   selection. */
+  mode: string;
   /** Role that drives the swarm (empty for planned workflows). */
   plannerRole: string;
   /** Roles the swarm may pick as workers (empty when all roles are eligible). */

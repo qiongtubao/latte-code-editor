@@ -85,14 +85,21 @@ export function ChatPanel({ onClose }: Props) {
     }
   };
 
-  // Swarm workflows get filtered out of the workflow dropdown when
-  // the user is in `discuss` mode — there's no point selecting a
-  // planner-driven workflow if the runner won't auto-route. When
-  // the user switches to swarm mode, swarm workflows appear and
-  // planned workflows disappear.
-  const filteredWorkflows = availableWorkflows.filter((w) =>
-    mode === "swarm" ? w.kind === "swarm" : w.kind !== "swarm",
-  );
+  // Workflow dropdown is filtered by `mode` rather than `kind` so
+  // that:
+  //   - manager mode shows workflows tagged `mode: "manager_led"`
+  //     (any workflow whose id starts with `manager_` per
+  //     `derive_mode` in commands.rs);
+  //   - swarm mode shows `mode: "swarm"` workflows;
+  //   - discuss mode shows everything else.
+  // The auto-switch in `setWorkflow` keeps `mode` aligned with the
+  // workflow's `mode` so the dropdown stays in sync.
+  const filteredWorkflows = availableWorkflows.filter((w) => {
+    const wfMode = w.mode ?? w.kind;
+    if (mode === "manager") return wfMode === "manager_led";
+    if (mode === "swarm") return wfMode === "swarm";
+    return wfMode !== "manager_led" && wfMode !== "swarm";
+  });
 
   return (
     <div className="flex flex-col h-full bg-[#1e1e1e] border-l border-gray-700">
@@ -139,27 +146,32 @@ export function ChatPanel({ onClose }: Props) {
             👔 Manager
           </button>
         </div>
-        {mode !== "manager" && (
-          <select
-            value={selectedWorkflow}
-            onChange={(e) => setWorkflow(e.target.value)}
-            className="ml-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
-          >
-            {filteredWorkflows.length === 0 && (
-              <option value={mode === "swarm" ? "quick_task" : "default_workflow"}>
-                {mode === "swarm" ? "quick_task" : "default_workflow"}
-              </option>
-            )}
-            {filteredWorkflows.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-              </option>
-            ))}
-          </select>
-        )}
+        <select
+          value={selectedWorkflow}
+          onChange={(e) => setWorkflow(e.target.value)}
+          className="ml-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
+        >
+          {filteredWorkflows.length === 0 && (
+            <option value={mode === "swarm" ? "quick_task" : mode === "manager" ? "manager_default" : "default_workflow"}>
+              {mode === "swarm"
+                ? "quick_task"
+                : mode === "manager"
+                  ? "manager_default"
+                  : "default_workflow"}
+            </option>
+          )}
+          {filteredWorkflows.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name}
+            </option>
+          ))}
+        </select>
         {mode === "manager" && (
-          <span className="ml-2 text-[10px] text-purple-300 px-2 py-0.5 bg-purple-900/40 border border-purple-700/50 rounded">
-            👔 Manager 主导 — 流程由 manager 调度
+          <span
+            className="ml-2 text-[10px] text-purple-300 px-2 py-0.5 bg-purple-900/40 border border-purple-700/50 rounded"
+            title="当前 workflow 自动以 Manager 模式启动"
+          >
+            👔 Manager 主导
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">

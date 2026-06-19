@@ -686,6 +686,18 @@ pub fn create_default_roles() -> RoleConfig {
         max_steps: 4,
         ..Default::default()
     });
+    // 5th default — manager-led 通用 workflow. The id starts with
+    // `manager_` so `derive_mode(id, kind)` in commands.rs tags it
+    // `mode: "manager_led"` for the chat panel. The `kind` stays
+    // `planned` so no WorkflowKind enum change is needed.
+    workflows.insert(
+        "manager_default".into(),
+        WorkflowDef {
+            name: "🧭 通用 — Manager 主导".into(),
+            kind: WorkflowKind::Planned,
+            ..Default::default()
+        },
+    );
     RoleConfig {
         default_model: "deepseek-chat".into(),
         roles,
@@ -732,8 +744,8 @@ mod migration_tests {
         assert!(migrate_roles_config(&mut cfg));
         // 10 default roles total
         assert_eq!(cfg.roles.len(), 10);
-        // 5 default workflows total (default, plan, code_review, debug, quick_task)
-        assert_eq!(cfg.workflows.len(), 5);
+        // 6 default workflows total (default, plan, code_review, debug, quick_task, manager_default)
+        assert_eq!(cfg.workflows.len(), 6);
         // User's custom programmer override is preserved (not
         // overwritten by the default)
         assert_eq!(cfg.roles["programmer"].name, "Custom Programmer");

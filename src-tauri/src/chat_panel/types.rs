@@ -78,8 +78,16 @@ pub struct WorkflowInfo {
     pub description: String,
     pub default_roles: Vec<String>,
     pub steps: Vec<String>,
-    /// `"planned"` (sequential) or `"swarm"` (planner-driven).
+    /// `"planned"` (sequential), `"swarm"` (planner-driven), or
+    /// `"manager_led"` (interactive: manager role reads topic +
+    /// pauses to ask the user via `chat:need_decision`).
     pub kind: String,
+    /// Runtime dispatch tag. `"planned"` / `"swarm"` mirror `kind`.
+    /// `"manager_led"` is set when the workflow id starts with
+    /// `manager_` (e.g. `manager_default`). Used by the chat panel
+    /// to auto-switch to manager mode on selection.
+    #[serde(default)]
+    pub mode: String,
     /// Role that drives the swarm (empty for `planned` workflows).
     pub planner_role: String,
     /// Roles the swarm may pick as workers (empty when all roles are

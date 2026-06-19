@@ -70,7 +70,14 @@ interface ChatStore {
    *  button can resend without re-typing. Cleared on success. */
   lastUserTopic: string | null;
   selectedWorkflow: string;
-  availableWorkflows: { id: string; name: string; kind: "planned" | "swarm" }[];
+  availableWorkflows: {
+    id: string;
+    name: string;
+    kind: "planned" | "swarm";
+    /** Runtime dispatch tag — when `"manager_led"`, selecting the
+     *  workflow auto-switches the chat mode to manager. */
+    mode: string;
+  }[];
   availableRoles: RoleInfo[];
 
   // Model configuration
@@ -223,7 +230,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   editingError: null,
   setMode: (mode) => set({ mode, errorMessage: null }),
 
-  setWorkflow: (id) => set({ selectedWorkflow: id }),
+  setWorkflow: (id) => {
+    const wf = get().availableWorkflows.find((w) => w.id === id);
+    // Auto-switch mode when picking a manager-led workflow so the
+    // user doesn't have to also flip the discuss/swarm/manager toggle.
+    // User can manually switch back to another mode if they want.
+    const nextMode =
+      wf?.mode === "manager_led"
+        ? "manager"
+        : wf?.mode === "swarm"
+          ? "swarm"
+          : "discuss";
+    set({ selectedWorkflow: id, mode: nextMode, errorMessage: null });
+  },
 
   loadWorkflows: async () => {
     try {
@@ -236,6 +255,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           // don't set the kind. Keep the narrow union so consumers
           // can pattern-match without a runtime fallback.
           kind: (w.kind ?? "planned") as "planned" | "swarm",
+          mode: w.mode ?? w.kind ?? "planned",
         })),
       });
     } catch (e) {
@@ -834,8 +854,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           id: w.id,
           name: w.name,
           kind: (w.kind ?? "planned") as "planned" | "swarm",
+          mode: w.mode ?? w.kind ?? "planned",
         })),
-        defaultModel: config.defaultModel,
         roleModels,
         roleChains,
         modelsPath: config.modelsPath,
