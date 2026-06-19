@@ -59,6 +59,13 @@ pub struct WorkflowInfo {
     pub description: String,
     pub default_roles: Vec<String>,
     pub steps: Vec<String>,
+    /// `"planned"` (sequential) or `"swarm"` (planner-driven).
+    pub kind: String,
+    /// Role that drives the swarm (empty for `planned` workflows).
+    pub planner_role: String,
+    /// Roles the swarm may pick as workers (empty when all roles are
+    /// eligible).
+    pub worker_roles: Vec<String>,
 }
 /// Role info for display in UI.
 #[derive(Clone, Serialize)]
@@ -109,4 +116,110 @@ pub struct RoleConfigResponse {
 pub struct SetRoleModelChainRequest {
     pub role_id: String,
     pub chain: Vec<String>,
+}
+
+/// One step emitted by the swarm planner — names a worker role and a
+/// concrete instruction for that role to execute. Workers don't see
+/// the planner's full plan; they only see their own `instruction` plus
+/// the conversation history up to that point.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmStepSpec {
+    /// Identifier the planner assigned (e.g. "step-1", "design").
+    pub id: String,
+    /// Worker role id (must exist in `roles.yaml`).
+    pub role: String,
+    /// Plain-text instruction for the worker.
+    pub instruction: String,
+}
+
+/// Streaming event for swarm-mode discussions. Tagged with `kind` so
+/// the UI can route without parsing strings.
+///
+/// Kinds:
+/// - `plan` — planner finished and emitted the step list. `steps` is
+///   populated; the runner will iterate them next.
+/// - `step` — a worker just finished a step. Mirrors the standard
+///   `TurnPayload` plus `step_id` so the UI can group by plan node.
+/// - `summary` — synthesis step finished. `content` is the final
+///   human-readable summary.
+/// - `file` — the runner wrote a file into the workspace
+///   (`.swarm_<name>/`). `path` + `kind` ("plan" | "output" | "summary").
+/// - `complete` — swarm finished successfully.
+/// - `error` — planner or worker failed.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmEvent {
+    pub kind: String,
+    /// Swarm id (`"quick_task"` by default). Echoed so the UI can
+    /// route even if multiple swarms run back-to-back.
+    pub swarm_id: String,
+    /// Planner's emitted steps (only set for `plan`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<SwarmStepSpec>>,
+    /// Worker turn (only set for `step`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn: Option<TurnPayload>,
+    /// Markdown content (only set for `summary` and `error`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// File path the runner wrote (only set for `file`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// File kind ("plan" | "output" | "summary") for `file` events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_kind: Option<String>,
+}
+/// One step in a multi-role workflow (used by the workflow editor UI).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowStepPayload {
+    pub name: String,
+    pub roles: Vec<String>,
+}
+
+/// Full workflow payload for the editor / save commands.
+///
+/// The frontend edits this and posts it back to `chat_save_workflow`.
+/// Step `roles` mirror `WorkflowDef::roles` as a flat fallback when
+/// `steps` is empty.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowPayload {
+    pub id: String,
+    pub name: String,
+    /// `"planned"` (sequential) or `"swarm"` (planner-driven).
+    pub kind: String,
+    /// Roles for legacy / quick workflows. Ignored when `steps` is
+    /// non-empty.
+    #[serde(default)]
+    pub roles: Vec<String>,
+    #[serde(default)]
+    pub steps: Vec<WorkflowStepPayload>,
+    #[serde(default = "default_max_rounds")]
+    pub max_rounds: usize,
+    #[serde(default)]
+    pub planner_role: String,
+    #[serde(default)]
+    pub worker_roles: Vec<String>,
+    #[serde(default = "default_max_steps")]
+    pub max_steps: usize,
+}
+
+fn default_max_rounds() -> usize {
+    1
+}
+fn default_max_steps() -> usize {
+    5
+}
+
+/// Result of a save / delete command. Lets the frontend re-render
+/// without an extra fetch round-trip.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowMutationResult {
+    /// Updated workflow (post-save). `None` for delete.
+    pub workflow: Option<WorkflowPayload>,
+    /// `true` if the workflow was removed.
+    pub deleted: bool,
 }

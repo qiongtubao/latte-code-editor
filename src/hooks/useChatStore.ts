@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ModelInfo, RoleConfigResponse } from "../api/chat";
+import type { ModelInfo, RoleConfigResponse, RoleInfo, SwarmEvent, SwarmStepSpec, WorkflowPayload } from "../api/chat";
 import {
   listModels,
   getRoleConfig,
@@ -10,11 +10,21 @@ import {
   startDiscussion,
   continueDiscussion,
   cancelDiscussion,
+  startSwarm,
+  saveWorkflow as apiSaveWorkflow,
+  deleteWorkflow as apiDeleteWorkflow,
+  resetRolesToDefaults as apiResetRolesToDefaults,
 } from "../api/chat";
-import { openFile } from "../api/commands";
 import { useEditorStore } from "./useEditorStore";
-
+import { openFile } from "../api/commands";
 export type ChatStatus = "idle" | "running" | "completed" | "error";
+
+/**
+ * Top-level chat mode. `"discuss"` is the original sequential
+ * discussion runner; `"swarm"` is the planner-driven flow where the
+ * planner breaks the topic into ordered worker steps.
+ */
+export type ChatMode = "discuss" | "swarm";
 
 export interface ChatMessage {
   id: string;
@@ -36,21 +46,29 @@ export interface ChatTurn {
 }
 
 interface ChatStore {
+  /** Active chat mode (planned discussion vs planner-driven swarm). */
+  mode: ChatMode;
   messages: ChatMessage[];
   status: ChatStatus;
+  /** Session id for the active planned discussion. Swarm uses `swarmSessionId`. */
   sessionId: number | null;
+  /** Session id for the active swarm, when `mode === "swarm"`. */
+  swarmSessionId: number | null;
+  /** Current swarm id (e.g. `"quick_task"`). Echoed by `chat:swarm_event`. */
+  activeSwarmId: string | null;
+  /** Steps the planner emitted for the active swarm. Cleared on `clearChat`. */
+  swarmPlan: SwarmStepSpec[];
+  /** Files the swarm runner wrote (plan.md / steps/*.md / summary.md). */
+  swarmFiles: { path: string; kind: "plan" | "output" | "summary" }[];
+  /** Final markdown synthesis from the active swarm. Cleared on `clearChat`. */
+  swarmSummary: string | null;
   errorMessage: string | null;
+  /** Last user prompt — saved when the user sends so the retry
+   *  button can resend without re-typing. Cleared on success. */
+  lastUserTopic: string | null;
   selectedWorkflow: string;
-  availableWorkflows: { id: string; name: string }[];
-  availableRoles: {
-    id: string;
-    name: string;
-    icon: string;
-    /** Back-compat: equals `modelChain[0]` or the global default. */
-    model: string;
-    /** Priority-ordered model chain. Empty when the role has no chain yet. */
-    modelChain: string[];
-  }[];
+  availableWorkflows: { id: string; name: string; kind: "planned" | "swarm" }[];
+  availableRoles: RoleInfo[];
 
   // Model configuration
   availableModels: ModelInfo[];
@@ -64,16 +82,25 @@ interface ChatStore {
   rolesPath: string;
   configPanelOpen: boolean;
 
+  setMode: (mode: ChatMode) => void;
   setWorkflow: (id: string) => void;
+  setError: (msg: string) => void;
   loadWorkflows: () => Promise<void>;
   loadModels: () => Promise<void>;
   loadRoleConfig: () => Promise<void>;
   sendMessage: (content: string) => Promise<void>;
   cancelDiscussion: () => Promise<void>;
+  /** Re-run the last user prompt via the same code path as `sendMessage`.
+   *  Used by the retry button after a preflight / orchestrator error. */
+  retryLastDiscussion: () => Promise<void>;
   clearChat: () => void;
   addTurn: (turn: ChatTurn) => void;
   setComplete: () => void;
-  setError: (msg: string) => void;
+  /** Apply one `chat:swarm_event` from the backend. */
+  applySwarmEvent: (event: SwarmEvent) => void;
+  /** Send a swarm-mode prompt. No-op when `mode !== "swarm"` or
+   *  a swarm is already running. */
+  sendSwarm: (topic: string) => Promise<void>;
 
   // Config management
   setRoleModel: (roleId: string, modelId: string) => Promise<void>;
@@ -86,6 +113,51 @@ interface ChatStore {
   setDefaultModel: (modelId: string) => Promise<void>;
   openConfigFile: (type: "models" | "roles") => Promise<void>;
   toggleConfigPanel: () => void;
+  // ─── Workflow editor state ──────────────────────────────────────
+  /** Editable copy of the workflow currently in the editor. `null`
+   *  when the editor is closed. The editor mutates this freely; the
+   *  on-disk workflow is only updated by `saveEditingWorkflow`. */
+  editingWorkflow: WorkflowPayload | null;
+  /** True once the editor has any field divergence from `editingOriginal`. */
+  editingDirty: boolean;
+  /** Mirrors `editingWorkflow` at the time the editor opened. Used
+   *  to compute `editingDirty`. */
+  editingOriginal: WorkflowPayload | null;
+  /** In-flight `saveWorkflow` / `deleteWorkflow` indicator. */
+  editingSaving: boolean;
+  /** Last save / delete error message, cleared on next successful op. */
+  editingError: string | null;
+
+  /** Open the editor on an existing workflow. */
+  openWorkflowEditor: (payload: WorkflowPayload) => void;
+  /** Open the editor on a blank new workflow. */
+  openNewWorkflowEditor: () => void;
+  /** Close the editor without saving. */
+  closeWorkflowEditor: () => void;
+  /** Patch one or more top-level fields on the editing workflow. */
+  patchEditingWorkflow: (
+    patch: Partial<WorkflowPayload>,
+  ) => void;
+  /** Patch one step in `editingWorkflow.steps`. */
+  patchEditingStep: (
+    index: number,
+    patch: Partial<{ name: string; roles: string[] }>,
+  ) => void;
+  /** Append a new step with sensible defaults. */
+  addEditingStep: () => void;
+  /** Remove step at index. */
+  removeEditingStep: (index: number) => void;
+  /** Reorder steps. */
+  moveEditingStep: (index: number, direction: -1 | 1) => void;
+  /** Persist `editingWorkflow` to roles.yaml via the backend. */
+  saveEditingWorkflow: () => Promise<void>;
+  /** Delete the workflow currently being edited. */
+  deleteEditingWorkflow: () => Promise<void>;
+  /** Wipe the user `roles.yaml` and rebuild it from defaults.
+   *  Returns the fresh config so the caller can re-render without
+   *  a follow-up `getRoleConfig`. Used as the "重置为中文默认"
+   *  button for users with old `roles.yaml` files. */
+  resetRolesToDefaults: () => Promise<void>;
 }
 
 let nextMessageId = 1;
@@ -94,14 +166,20 @@ function uid(): string {
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
+  mode: "discuss",
   messages: [],
   status: "idle",
   sessionId: null,
+  swarmSessionId: null,
+  activeSwarmId: null,
+  swarmPlan: [],
+  swarmFiles: [],
+  swarmSummary: null,
   errorMessage: null,
+  lastUserTopic: null,
   selectedWorkflow: "discuss",
   availableWorkflows: [],
   availableRoles: [],
-  
   availableModels: [],
   defaultModel: "deepseek-chat",
   roleModels: {},
@@ -109,6 +187,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   modelsPath: "",
   rolesPath: "",
   configPanelOpen: false,
+  // Workflow editor
+  editingWorkflow: null,
+  editingDirty: false,
+  editingOriginal: null,
+  editingSaving: false,
+  editingError: null,
+
+  setMode: (mode) => set({ mode, errorMessage: null }),
 
   setWorkflow: (id) => set({ selectedWorkflow: id }),
 
@@ -119,6 +205,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         availableWorkflows: config.workflows.map((w) => ({
           id: w.id,
           name: w.name,
+          // Server defaults to `"planned"` for old configs that
+          // don't set the kind. Keep the narrow union so consumers
+          // can pattern-match without a runtime fallback.
+          kind: (w.kind ?? "planned") as "planned" | "swarm",
         })),
       });
     } catch (e) {
@@ -160,10 +250,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           id: r.id,
           name: r.name,
           icon: r.icon,
+          category: r.category,
+          defaultModelTier: r.defaultModelTier,
+          // Back-compat fields kept for legacy callers; the editor
+          // only needs `id` / `name` / `icon` / `category`.
           model: roleModels[r.id],
           modelChain: roleChains[r.id] ?? [],
-        })),
-        defaultModel: config.defaultModel,
+        })) as RoleInfo[],
         roleModels,
         roleChains,
         modelsPath: config.modelsPath,
@@ -177,6 +270,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sendMessage: async (content) => {
     const trimmed = content.trim();
     if (!trimmed) return;
+    // Swarm mode has its own send path so the user gets streamed
+    // `chat:swarm_event`s rather than the planned-discussion stream.
+    if (get().mode === "swarm") {
+      await get().sendSwarm(trimmed);
+      return;
+    }
     const userMsg: ChatMessage = {
       id: uid(),
       role: "user",
@@ -187,6 +286,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       messages: [...s.messages, userMsg],
       status: "running",
       errorMessage: null,
+      // Save the prompt so the retry button can resend it without
+      // the user re-typing. Cleared on success.
+      lastUserTopic: trimmed,
     }));
     try {
       const state = get();
@@ -197,13 +299,49 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           customRoles: null,
           maxRounds: 1,
         });
-        set({ sessionId });
+        // Important: do NOT mark `sessionId` set if the start failed.
+        // When the start throws (e.g. all roles are missing API keys),
+        // we keep `sessionId === null` so the retry path uses
+        // `startDiscussion` again with the same workflow, not
+        // `continueDiscussion` (which would need a live session).
+        set({ sessionId, lastUserTopic: trimmed });
       } else {
         await continueDiscussion({ sessionId: state.sessionId, message: trimmed });
+        set({ lastUserTopic: trimmed });
       }
     } catch (e) {
-      set({ status: "error", errorMessage: String(e) });
+      // Stay in `idle` so the chat list keeps showing the preflight
+      // error bubbles and the retry button — NOT `status: "error"`
+      // which would imply a live session is failing.
+      set({ status: "idle", errorMessage: String(e) });
     }
+  },
+
+  /**
+   * Re-run the last user prompt without forcing the user to
+   * re-type. Skips a no-op if there's nothing to retry.
+   *
+   * Drops any stale error bubbles from the previous attempt so the
+   * chat list reflects only the current run.
+   */
+  retryLastDiscussion: async () => {
+    const topic = get().lastUserTopic;
+    if (!topic) return;
+    set((s) => ({
+      messages: s.messages.filter((m) => {
+        // Keep user prompts + successful agent turns; drop the
+        // `⚠️` preflight error bubbles so the retry gets a clean
+        // slate (the user prompt stays, the bot's previous
+        // failures go).
+        const idTag = (m as unknown as { stepId?: string }).stepId ?? "";
+        const isErrorTurn =
+          idTag.startsWith("__preflight_error__") || m.content.startsWith("⚠️");
+        return !isErrorTurn;
+      }),
+      status: "running",
+      errorMessage: null,
+    }));
+    await get().sendMessage(topic);
   },
 
   cancelDiscussion: async () => {
@@ -219,7 +357,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   clearChat: () =>
-    set({ messages: [], status: "idle", sessionId: null, errorMessage: null }),
+    set({
+      messages: [],
+      status: "idle",
+      sessionId: null,
+      swarmSessionId: null,
+      activeSwarmId: null,
+      swarmPlan: [],
+      swarmFiles: [],
+      swarmSummary: null,
+      errorMessage: null,
+      lastUserTopic: null,
+    }),
 
   addTurn: (turn) => {
     const agentMsg: ChatMessage = {
@@ -237,6 +386,131 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   setError: (msg) => set({ status: "error", errorMessage: msg }),
 
+  /**
+   * Launch a swarm-mode prompt. Backend streams events via
+   * `chat:swarm_event`; we mirror them into `messages` and the
+   * dedicated `swarmPlan` / `swarmFiles` / `swarmSummary` fields so
+   * the chat panel can render planner output, worker turns, and the
+   * final summary without parsing strings.
+   */
+  sendSwarm: async (topic) => {
+    const trimmed = topic.trim();
+    if (!trimmed) return;
+    if (get().status === "running") return;
+    const userMsg: ChatMessage = {
+      id: uid(),
+      role: "user",
+      content: trimmed,
+      timestamp: Date.now(),
+    };
+    // Prefer a swarm-mode workflow if one is selected; fall back
+    // to the conventional `quick_task` preset. Always preserve the
+    // pre-existing discussion workflow for when the user toggles
+    // back to discuss mode.
+    const wf = get().selectedWorkflow || "quick_task";
+    set((s) => ({
+      messages: [...s.messages, userMsg],
+      status: "running",
+      errorMessage: null,
+      activeSwarmId: wf,
+      swarmPlan: [],
+      swarmFiles: [],
+      swarmSummary: null,
+    }));
+    try {
+      const swarmSessionId = await startSwarm({ topic: trimmed, name: wf });
+      set({ swarmSessionId });
+    } catch (e) {
+      set({ status: "error", errorMessage: String(e) });
+    }
+  },
+
+  /**
+   * Apply one `chat:swarm_event` from the backend. Routes by `kind`
+   * to keep the dispatch local — UI components only consume the
+   * already-typed `swarmPlan` / `swarmFiles` / `swarmSummary` /
+   * `messages` slices.
+   */
+  applySwarmEvent: (event) => {
+    switch (event.kind) {
+      case "plan": {
+        set((s) => ({
+          swarmPlan: event.steps ?? [],
+          messages: [...s.messages, {
+            id: uid(),
+            role: "agent",
+            agentIcon: "🪄",
+            agentName: "planner",
+            content: event.steps && event.steps.length > 0
+              ? `**Plan (${event.steps.length} steps):**\n\n` +
+                event.steps
+                  .map((st, i) => `${i + 1}. **${st.role}** — ${st.instruction}`)
+                  .join("\n")
+              : "_(planner emitted no steps)_",
+            timestamp: Date.now(),
+          }],
+        }));
+        return;
+      }
+      case "step": {
+        if (!event.turn) return;
+        const t = event.turn;
+        set((s) => ({
+          messages: [...s.messages, {
+            id: uid(),
+            role: "agent",
+            agentIcon: t.icon || "💬",
+            agentName: t.agent,
+            content: t.response,
+            timestamp: Date.now(),
+          }],
+        }));
+        return;
+      }
+      case "file": {
+        if (!event.path || !event.fileKind) return;
+        set((s) => ({
+          swarmFiles: [
+            ...s.swarmFiles.filter((f) => f.path !== event.path),
+            { path: event.path!, kind: event.fileKind! },
+          ],
+        }));
+        return;
+      }
+      case "summary": {
+        set((s) => ({
+          swarmSummary: event.content ?? "",
+          status: "completed",
+          messages: event.content
+            ? [
+                ...s.messages,
+                {
+                  id: uid(),
+                  role: "agent" as const,
+                  agentIcon: "✨",
+                  agentName: "synthesis",
+                  content: event.content,
+                  timestamp: Date.now(),
+                },
+              ]
+            : s.messages,
+        }));
+        return;
+      }
+      case "complete": {
+        set({ status: "completed" });
+        return;
+      }
+      case "error": {
+        set({
+          status: "error",
+          errorMessage: event.content ?? "swarm error",
+        });
+        return;
+      }
+    }
+  },
+
   setRoleModel: async (roleId, modelId) => {
     // setRoleModel is the legacy "set primary only" path. Persist as a
     // one-element chain so the YAML form stays consistent with the
@@ -249,7 +523,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         roleChains: { ...s.roleChains, [roleId]: [modelId] },
         availableRoles: s.availableRoles.map((r) =>
           r.id === roleId
-            ? { ...r, model: modelId, modelChain: [modelId] }
+            ? { ...r, defaultModelTier: modelId, modelChain: [modelId] }
             : r
         ),
       }));
@@ -282,7 +556,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           : s.roleModels,
         availableRoles: s.availableRoles.map((r) =>
           r.id === roleId
-            ? { ...r, model: primary, modelChain: persisted }
+            ? { ...r, defaultModelTier: primary, modelChain: persisted }
             : r
         ),
       }));
@@ -313,4 +587,239 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   toggleConfigPanel: () =>
     set((s) => ({ configPanelOpen: !s.configPanelOpen })),
+
+  // ─── Workflow editor ────────────────────────────────────────────
+
+  openWorkflowEditor: (payload) =>
+    set({
+      editingWorkflow: structuredClone(payload),
+      editingOriginal: structuredClone(payload),
+      editingDirty: false,
+      editingError: null,
+    }),
+
+  openNewWorkflowEditor: () => {
+    const id = `custom_${Date.now().toString(36)}`;
+    const blank: WorkflowPayload = {
+      id,
+      name: "新建工作流",
+      kind: "planned",
+      roles: ["pm", "programmer"],
+      steps: [
+        {
+          name: "需求",
+          roles: ["pm"],
+        },
+        {
+          name: "实现",
+          roles: ["programmer"],
+        },
+      ],
+      maxRounds: 1,
+      plannerRole: "",
+      workerRoles: [],
+      maxSteps: 4,
+    };
+    set({
+      editingWorkflow: blank,
+      editingOriginal: structuredClone(blank),
+      editingDirty: false,
+      editingError: null,
+    });
+  },
+
+  closeWorkflowEditor: () =>
+    set({
+      editingWorkflow: null,
+      editingOriginal: null,
+      editingDirty: false,
+      editingError: null,
+    }),
+
+  patchEditingWorkflow: (patch) =>
+    set((s) => {
+      if (!s.editingWorkflow) return s;
+      const next = { ...s.editingWorkflow, ...patch };
+      return {
+        editingWorkflow: next,
+        editingDirty:
+          s.editingOriginal != null &&
+          JSON.stringify(next) !== JSON.stringify(s.editingOriginal),
+      };
+    }),
+
+  patchEditingStep: (index, patch) =>
+    set((s) => {
+      if (!s.editingWorkflow) return s;
+      if (index < 0 || index >= s.editingWorkflow.steps.length) return s;
+      const steps = s.editingWorkflow.steps.slice();
+      steps[index] = { ...steps[index], ...patch };
+      const next = { ...s.editingWorkflow, steps };
+      return {
+        editingWorkflow: next,
+        editingDirty:
+          s.editingOriginal != null &&
+          JSON.stringify(next) !== JSON.stringify(s.editingOriginal),
+      };
+    }),
+
+  addEditingStep: () =>
+    set((s) => {
+      if (!s.editingWorkflow) return s;
+      const steps = [
+        ...s.editingWorkflow.steps,
+        { name: `步骤 ${s.editingWorkflow.steps.length + 1}`, roles: [] },
+      ];
+      const next = { ...s.editingWorkflow, steps };
+      return {
+        editingWorkflow: next,
+        editingDirty:
+          s.editingOriginal != null &&
+          JSON.stringify(next) !== JSON.stringify(s.editingOriginal),
+      };
+    }),
+
+  removeEditingStep: (index) =>
+    set((s) => {
+      if (!s.editingWorkflow) return s;
+      if (index < 0 || index >= s.editingWorkflow.steps.length) return s;
+      const steps = s.editingWorkflow.steps.filter((_, i) => i !== index);
+      const next = { ...s.editingWorkflow, steps };
+      return {
+        editingWorkflow: next,
+        editingDirty:
+          s.editingOriginal != null &&
+          JSON.stringify(next) !== JSON.stringify(s.editingOriginal),
+      };
+    }),
+
+  moveEditingStep: (index, direction) =>
+    set((s) => {
+      if (!s.editingWorkflow) return s;
+      const target = index + direction;
+      if (
+        index < 0 ||
+        index >= s.editingWorkflow.steps.length ||
+        target < 0 ||
+        target >= s.editingWorkflow.steps.length
+      ) {
+        return s;
+      }
+      const steps = s.editingWorkflow.steps.slice();
+      const tmp = steps[index];
+      steps[index] = steps[target];
+      steps[target] = tmp;
+      const next = { ...s.editingWorkflow, steps };
+      return {
+        editingWorkflow: next,
+        editingDirty:
+          s.editingOriginal != null &&
+          JSON.stringify(next) !== JSON.stringify(s.editingOriginal),
+      };
+    }),
+
+  saveEditingWorkflow: async () => {
+    const wf = get().editingWorkflow;
+    if (!wf) return;
+    set({ editingSaving: true, editingError: null });
+    try {
+      const result = await apiSaveWorkflow(wf);
+      const saved = result.workflow ?? wf;
+      // Refresh the workflow list so the dropdown shows the new
+      // name / kind. Also clear `editingDirty` by syncing the
+      // canonical form.
+      await get().loadWorkflows();
+      if (saved.kind === "planned") {
+        set({ selectedWorkflow: saved.id });
+      }
+      set({
+        editingWorkflow: saved,
+        editingOriginal: structuredClone(saved),
+        editingDirty: false,
+        editingSaving: false,
+      });
+    } catch (e) {
+      set({ editingSaving: false, editingError: String(e) });
+    }
+  },
+
+  deleteEditingWorkflow: async () => {
+    const wf = get().editingWorkflow;
+    if (!wf) return;
+    set({ editingSaving: true, editingError: null });
+    try {
+      await apiDeleteWorkflow(wf.id);
+      await get().loadWorkflows();
+      // If we just deleted the selected workflow, drop back to
+      // `discuss` so the dropdown has a valid value.
+      if (get().selectedWorkflow === wf.id) {
+        set({ selectedWorkflow: "discuss" });
+      }
+      set({
+        editingWorkflow: null,
+        editingOriginal: null,
+        editingDirty: false,
+        editingSaving: false,
+      });
+    } catch (e) {
+      set({ editingSaving: false, editingError: String(e) });
+    }
+  },
+
+  /**
+   * Wipe `roles.yaml` and rebuild it from the embedded defaults
+   * (Chinese role names + the `quick_task` swarm preset).
+   *
+   * Existing users with an old `roles.yaml` only see the migration
+   * deltas (new role/workflow entries appended). Their pre-existing
+   * English-named roles stay English. This action is the explicit
+   * "tear it down and start over" path. The backend returns the
+   * fresh `RoleConfigResponse` so we can refresh every dependent
+   * field in one setState.
+   */
+  resetRolesToDefaults: async () => {
+    set({ editingSaving: true, editingError: null });
+    try {
+      const config = await apiResetRolesToDefaults();
+      // Rebuild the `availableRoles` shape the store expects.
+      const roleModels: Record<string, string> = {};
+      const roleChains: Record<string, string[]> = {};
+      const availableRoles = config.roles.map((r) => {
+        const chain =
+          r.modelChain && r.modelChain.length > 0
+            ? r.modelChain
+            : r.defaultModelTier
+              ? [r.defaultModelTier]
+              : [];
+        roleChains[r.id] = chain;
+        roleModels[r.id] = chain[0] ?? config.defaultModel;
+        return r;
+      });
+      set({
+        // Workflow / role list re-derived from the reset response.
+        availableRoles,
+        availableWorkflows: config.workflows.map((w) => ({
+          id: w.id,
+          name: w.name,
+          kind: (w.kind ?? "planned") as "planned" | "swarm",
+        })),
+        defaultModel: config.defaultModel,
+        roleModels,
+        roleChains,
+        modelsPath: config.modelsPath,
+        rolesPath: config.rolesPath,
+        // If the editor was open on a now-reset workflow, close it.
+        editingWorkflow: null,
+        editingOriginal: null,
+        editingDirty: false,
+        editingSaving: false,
+        editingError: null,
+        // Drop the dropdown back to a known preset so the panel
+        // doesn't render a stale id after the reset.
+        selectedWorkflow: "discuss",
+      });
+    } catch (e) {
+      set({ editingSaving: false, editingError: String(e) });
+    }
+  },
 }));

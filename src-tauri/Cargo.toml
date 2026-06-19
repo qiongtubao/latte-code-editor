@@ -4,11 +4,14 @@ version = "0.1.0"
 description = "A cross-platform lightweight code editor with code graph integration"
 authors = ["Latte Team"]
 edition = "2021"
+# Tauri picks the app binary by name. The reset_user_roles helper
+# is a manual one-shot, not the dev target — pin `default-run` so
+# `cargo run` (called by `tauri dev`) doesn't need `--bin`.
+default-run = "latte-code-editor"
 
 [lib]
 name = "latte_code_editor_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

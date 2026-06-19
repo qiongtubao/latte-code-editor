@@ -1,13 +1,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 
-use super::global_config::{load_global_models, load_roles_config, global_models_path, roles_config_path};
+use super::global_config::{load_global_models, load_roles_config, write_roles_config, global_models_path, roles_config_path, WorkflowDef, WorkflowKind, WorkflowStep};
 use super::session::{default_role_ids, run_discussion, WORKFLOW_PRESETS};
 use super::types::*;
 
 static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
-
-/// List available models from ~/.latte/models.yaml
 #[tauri::command]
 pub async fn chat_list_models() -> Result<Vec<ModelInfo>, String> {
     let global_config = load_global_models();
@@ -63,9 +62,26 @@ pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
         .map(|(id, w)| WorkflowInfo {
             id: id.clone(),
             name: w.name.clone(),
-            description: format!("Roles: {}", w.roles.join(", ")),
+            description: match w.kind {
+                super::global_config::WorkflowKind::Swarm => {
+                    format!(
+                        "🪄 Swarm — planner-driven ({}). Workers: {}",
+                        if w.planner_role.is_empty() { "manager" } else { w.planner_role.as_str() },
+                        if w.worker_roles.is_empty() { "all".to_string() } else { w.worker_roles.join(", ") }
+                    )
+                }
+                super::global_config::WorkflowKind::Planned => {
+                    format!("Roles: {}", w.roles.join(", "))
+                }
+            },
             default_roles: w.roles.clone(),
             steps: vec![],
+            kind: match w.kind {
+                super::global_config::WorkflowKind::Swarm => "swarm".into(),
+                super::global_config::WorkflowKind::Planned => "planned".into(),
+            },
+            planner_role: w.planner_role.clone(),
+            worker_roles: w.worker_roles.clone(),
         })
         .collect();
 
@@ -77,6 +93,33 @@ pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
         roles_path: roles_config_path().to_string_lossy().to_string(),
     })
 }
+/// Fetch the full editable payload for one workflow, by id. The
+/// `chat_get_role_config` summary returns only the flat roles list;
+/// the editor needs the per-step breakdown.
+#[tauri::command]
+pub async fn chat_get_workflow_full(id: String) -> Result<WorkflowPayload, String> {
+    let role_config = load_roles_config();
+    let wf = role_config
+        .workflows
+        .get(&id)
+        .ok_or_else(|| format!("未找到工作流 `{id}`"))?;
+    Ok(workflow_def_to_payload(&id, wf))
+}
+
+/// List full editable payloads for every workflow. Used when the
+/// editor wants to show the full picture (e.g. "duplicate this
+/// workflow" action). The dropdown uses `chat_get_role_config`'s
+/// slimmer summary.
+#[tauri::command]
+pub async fn chat_list_workflows_full() -> Result<Vec<WorkflowPayload>, String> {
+    let role_config = load_roles_config();
+    Ok(role_config
+        .workflows
+        .iter()
+        .map(|(id, w)| workflow_def_to_payload(id, w))
+        .collect())
+}
+
 
 /// Set model for a specific role
 #[tauri::command]
@@ -196,15 +239,32 @@ pub async fn chat_list_workflows() -> Result<Vec<WorkflowInfo>, String> {
             .map(|(id, w)| WorkflowInfo {
                 id: id.clone(),
                 name: w.name.clone(),
-                description: format!("Roles: {}", w.roles.join(", ")),
+                description: match w.kind {
+                    super::global_config::WorkflowKind::Swarm => {
+                        format!(
+                            "🪄 Swarm — planner `{}`, max {} steps",
+                            if w.planner_role.is_empty() { "manager" } else { w.planner_role.as_str() },
+                            w.max_steps
+                        )
+                    }
+                    super::global_config::WorkflowKind::Planned => {
+                        format!("Roles: {}", w.roles.join(", "))
+                    }
+                },
                 default_roles: w.roles.clone(),
                 steps: vec![],
+                kind: match w.kind {
+                    super::global_config::WorkflowKind::Swarm => "swarm".into(),
+                    super::global_config::WorkflowKind::Planned => "planned".into(),
+                },
+                planner_role: w.planner_role.clone(),
+                worker_roles: w.worker_roles.clone(),
             })
             .collect();
         return Ok(workflows);
     }
 
-    // Fallback to built-in presets
+    // Fallback to built-in presets (all planned; no swarm preset here)
     let out: Vec<WorkflowInfo> = WORKFLOW_PRESETS
         .iter()
         .map(|(id, _wf_id, default_roles, _rounds, label)| WorkflowInfo {
@@ -219,6 +279,9 @@ pub async fn chat_list_workflows() -> Result<Vec<WorkflowInfo>, String> {
             },
             default_roles: default_roles.iter().map(|s| s.to_string()).collect(),
             steps: vec![],
+            kind: "planned".into(),
+            planner_role: String::new(),
+            worker_roles: Vec::new(),
         })
         .collect();
 
@@ -315,8 +378,295 @@ pub async fn chat_continue(
     Ok(())
 }
 
+/// Request from frontend to launch a swarm-mode discussion.
+///
+/// `name` matches `roles.yaml`'s workflow id when set; otherwise
+/// defaults to `quick_task`. `topic` is the user's task.
+/// `workspace` is an optional override for the swarm persistence root
+/// (defaults to the env-var-pinned / cwd workspace).
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartSwarmRequest {
+    pub topic: String,
+    #[serde(default = "default_swarm_name")]
+    pub name: String,
+    #[serde(default)]
+    pub workspace: Option<String>,
+}
+
+fn default_swarm_name() -> String {
+    "quick_task".to_string()
+}
+
+/// Start a swarm-mode discussion. Returns the session id immediately;
+/// progress is streamed via `chat:swarm_event` (`plan` / `step` /
+/// `summary` / `file` / `complete` / `error`).
+#[tauri::command]
+pub async fn chat_start_swarm(
+    app: AppHandle,
+    request: StartSwarmRequest,
+) -> Result<usize, String> {
+    let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
+    let name = request.name.clone();
+    let topic = request.topic.clone();
+    let workspace = request.workspace.clone();
+    // Spawn on the Tauri runtime so the IPC reply goes back fast and
+    // streamed `chat:swarm_event`s reach the UI in lock-step.
+    let app_for_task = app.clone();
+    tokio::spawn(async move {
+        match super::swarm::run_swarm(
+            &app_for_task,
+            &name,
+            &topic,
+            workspace.as_deref(),
+        )
+        .await
+        {
+            Ok(_state) => {
+                // `run_swarm` already emits the `complete` event;
+                // nothing left to do here.
+            }
+            Err(e) => {
+                app_for_task
+                    .emit(
+                        "chat:swarm_event",
+                        &super::types::SwarmEvent {
+                            kind: "error".into(),
+                            swarm_id: name,
+                            steps: None,
+                            turn: None,
+                            content: Some(e),
+                            path: None,
+                            file_kind: None,
+                        },
+                    )
+                    .ok();
+            }
+        }
+    });
+    Ok(session_id)
+}
+
 /// Cancel a running discussion
 #[tauri::command]
 pub async fn chat_cancel(session_id: usize) -> Result<(), String> {
     Ok(())
+}
+
+/// Validate a workflow id. Must be a stable identifier usable as a
+/// YAML map key and a workflow dropdown value. Keeps users from
+/// injecting whitespace or path-traversal characters.
+pub(crate) fn validate_workflow_id(id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("工作流 id 不能为空".into());
+    }
+    if id.len() > 64 {
+        return Err("工作流 id 过长（最多 64 字符）".into());
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':')
+    {
+        return Err(format!(
+            "工作流 id 含有非法字符 `{}`，仅允许字母数字、`-`、`_`、`:`",
+            id
+        ));
+    }
+    Ok(())
+}
+
+/// Convert a `WorkflowPayload` into the persisted `WorkflowDef`.
+///
+/// Validation lives here so the UI can surface the same error
+/// messages verbatim. Returns `Err` with a Chinese message on bad
+/// input; the frontend shows it directly.
+pub(crate) fn workflow_payload_to_def(p: &WorkflowPayload) -> Result<WorkflowDef, String> {
+    validate_workflow_id(&p.id)?;
+    if p.name.trim().is_empty() {
+        return Err("工作流名称不能为空".into());
+    }
+    let kind = match p.kind.as_str() {
+        "planned" | "" => WorkflowKind::Planned,
+        "swarm" => WorkflowKind::Swarm,
+        other => return Err(format!("未知的工作流类型 `{other}`（期望 `planned` 或 `swarm`）")),
+    };
+    if p.max_rounds == 0 {
+        return Err("轮数（max_rounds）必须 ≥ 1".into());
+    }
+    if p.max_steps == 0 {
+        return Err("最大步骤数（max_steps）必须 ≥ 1".into());
+    }
+    // Validate every step has at least one role.
+    let mut steps = Vec::with_capacity(p.steps.len());
+    for (i, s) in p.steps.iter().enumerate() {
+        if s.roles.is_empty() {
+            return Err(format!("第 {} 步「{}」至少需要一个角色", i + 1, s.name));
+        }
+    }
+    for s in &p.steps {
+        steps.push(WorkflowStep {
+            name: s.name.clone(),
+            roles: s.roles.clone(),
+        });
+    }
+    Ok(WorkflowDef {
+        name: p.name.trim().to_string(),
+        kind,
+        roles: p.roles.clone(),
+        steps,
+        max_rounds: p.max_rounds,
+        planner_role: p.planner_role.trim().to_string(),
+        worker_roles: p.worker_roles.clone(),
+        max_steps: p.max_steps,
+    })
+}
+
+/// Convert a stored `WorkflowDef` back to the editor-friendly
+/// `WorkflowPayload`. Used so the UI gets a populated editor after
+/// reload, and as the post-save echo.
+pub(crate) fn workflow_def_to_payload(id: &str, w: &WorkflowDef) -> WorkflowPayload {
+    WorkflowPayload {
+        id: id.to_string(),
+        name: w.name.clone(),
+        kind: match w.kind {
+            WorkflowKind::Planned => "planned".into(),
+            WorkflowKind::Swarm => "swarm".into(),
+        },
+        roles: w.roles.clone(),
+        steps: w
+            .steps
+            .iter()
+            .map(|s| WorkflowStepPayload {
+                name: s.name.clone(),
+                roles: s.roles.clone(),
+            })
+            .collect(),
+        max_rounds: w.max_rounds,
+        planner_role: w.planner_role.clone(),
+        worker_roles: w.worker_roles.clone(),
+        max_steps: w.max_steps,
+    }
+}
+
+/// Upsert (create or update) one workflow. Returns the updated
+/// payload so the frontend can re-render immediately. Triggers a
+/// `workflows:changed` event so other panels stay in sync.
+#[tauri::command]
+pub async fn chat_save_workflow(
+    app: AppHandle,
+    payload: WorkflowPayload,
+) -> Result<WorkflowMutationResult, String> {
+    let def = workflow_payload_to_def(&payload)?;
+    let mut config = load_roles_config();
+    let id = payload.id.clone();
+    config.workflows.insert(id.clone(), def);
+    write_roles_config(&roles_config_path(), &config)
+        .map_err(|e| format!("写入 roles.yaml 失败：{e}"))?;
+    let updated = workflow_def_to_payload(
+        &id,
+        config.workflows.get(&id).expect("just inserted"),
+    );
+    let _ = app.emit("workflows:changed", &id);
+    Ok(WorkflowMutationResult {
+        workflow: Some(updated),
+        deleted: false,
+    })
+}
+
+/// Delete a workflow by id. Refuses to remove built-in presets so
+/// the user can't lock themselves out of every workflow.
+#[tauri::command]
+pub async fn chat_delete_workflow(
+    app: AppHandle,
+    id: String,
+) -> Result<WorkflowMutationResult, String> {
+    validate_workflow_id(&id)?;
+    let protected: &[&str] = &["default", "plan", "code_review", "debug"];
+    if protected.contains(&id.as_str()) {
+        return Err(format!(
+            "工作流 `{id}` 是内置预设，不能删除（可以新建一个同名变体来覆盖）"
+        ));
+    }
+    let mut config = load_roles_config();
+    if config.workflows.remove(&id).is_none() {
+        return Err(format!("未找到工作流 `{id}`"));
+    }
+    write_roles_config(&roles_config_path(), &config)
+        .map_err(|e| format!("写入 roles.yaml 失败：{e}"))?;
+    let _ = app.emit("workflows:changed", &id);
+    Ok(WorkflowMutationResult {
+        workflow: None,
+        deleted: true,
+    })
+}
+/// Wipe the user `roles.yaml` and replace it with the current
+/// defaults (Chinese-named roles + 5 workflow presets including
+/// `quick_task` swarm). Use as the "reset to defaults" button in the
+/// workflow editor for users whose existing `roles.yaml` predates
+/// the Chinese-name migration — `migrate_roles_config` is
+/// non-destructive (it only ADDS missing roles/workflows), so the
+/// only way to surface the new Chinese names to existing users is
+/// an explicit reset.
+#[tauri::command]
+pub async fn chat_reset_roles_to_defaults() -> Result<RoleConfigResponse, String> {
+    let path = roles_config_path();
+    let config = crate::chat_panel::global_config::create_default_roles();
+    write_roles_config(&path, &config)
+        .map_err(|e| format!("写入 roles.yaml 失败：{e}"))?;
+
+    let global_config = load_global_models();
+    let roles: Vec<RoleInfo> = config
+        .roles
+        .iter()
+        .map(|(id, r)| {
+            let chain = r.chain();
+            let primary = chain
+                .first()
+                .cloned()
+                .unwrap_or_else(|| config.default_model.clone());
+            RoleInfo {
+                id: id.clone(),
+                name: r.name.clone(),
+                icon: r.icon.clone(),
+                category: r.category.clone(),
+                default_model_tier: primary,
+                model_chain: chain,
+            }
+        })
+        .collect();
+    let workflows: Vec<WorkflowInfo> = config
+        .workflows
+        .iter()
+        .map(|(id, w)| WorkflowInfo {
+            id: id.clone(),
+            name: w.name.clone(),
+            description: match w.kind {
+                super::global_config::WorkflowKind::Swarm => {
+                    format!(
+                        "🪄 Swarm — planner `{}`，最多 {} 步",
+                        if w.planner_role.is_empty() { "manager" } else { w.planner_role.as_str() },
+                        w.max_steps
+                    )
+                }
+                super::global_config::WorkflowKind::Planned => {
+                    format!("角色：{}", w.roles.join("、"))
+                }
+            },
+            default_roles: w.roles.clone(),
+            steps: vec![],
+            kind: match w.kind {
+                super::global_config::WorkflowKind::Swarm => "swarm".into(),
+                super::global_config::WorkflowKind::Planned => "planned".into(),
+            },
+            planner_role: w.planner_role.clone(),
+            worker_roles: w.worker_roles.clone(),
+        })
+        .collect();
+    Ok(RoleConfigResponse {
+        default_model: config.default_model,
+        roles,
+        workflows,
+        models_path: global_models_path().to_string_lossy().to_string(),
+        roles_path: roles_config_path().to_string_lossy().to_string(),
+    })
 }

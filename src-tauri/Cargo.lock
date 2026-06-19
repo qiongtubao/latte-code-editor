@@ -2428,16 +2428,13 @@ dependencies = [
 name = "latte-ai"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "futures-util",
- "parking_lot",
  "reqwest 0.12.28",
  "reqwest-eventsource",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
- "toml 0.8.2",
  "tracing",
 ]
 
@@ -2486,12 +2483,9 @@ name = "latte-rs-agent-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
  "chrono",
  "futures",
  "glob",
- "globset",
- "ignore",
  "log",
  "path-clean",
  "regex",

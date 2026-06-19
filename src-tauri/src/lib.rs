@@ -8,7 +8,7 @@ mod debug;
 mod ai;
 use std::sync::Arc;
 mod doc_gen;
-mod chat_panel;
+pub mod chat_panel;
 mod screenshot;
 use tauri::Manager;
 
@@ -110,8 +110,11 @@ pub fn run() {
             crate::chat_panel::commands::chat_set_role_model_chain,
             crate::chat_panel::commands::chat_set_default_model,
             crate::chat_panel::commands::chat_open_config,
-            // screenshot
-            crate::screenshot::screenshot_window,
+            crate::chat_panel::commands::chat_start_swarm,
+            crate::chat_panel::commands::chat_save_workflow,
+            crate::chat_panel::commands::chat_delete_workflow,
+            crate::chat_panel::commands::chat_list_workflows_full,
+            crate::chat_panel::commands::chat_reset_roles_to_defaults,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

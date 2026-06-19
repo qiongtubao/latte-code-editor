@@ -102,12 +102,102 @@ impl RoleDef {
 }
 
 /// Workflow preset
+///
+/// Two kinds:
+/// - `planned` (default): the classic sequential-discussion flow where
+///   every role in `roles` speaks in order, `max_rounds` times. Same
+///   shape the chat panel has always had.
+/// - `swarm`: planner-driven. A single `planner_role` (default
+///   `manager`) breaks the topic into a small list of worker tasks,
+///   each executed by a role from `worker_roles`, then a final
+///   synthesis step writes a summary. Use this for open-ended tasks
+///   where the steps aren't known up front — modeled after
+///   oh-my-pi's `swarm-extension`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WorkflowDef {
     pub name: String,
+    /// `planned` (sequential, role-by-role rounds) or `swarm`
+    /// (planner-driven dynamic step generation).
+    #[serde(default = "default_workflow_kind")]
+    pub kind: WorkflowKind,
+    /// Roles that participate in a `planned` workflow. Kept as the
+    /// canonical flat list when `steps` is empty; the runner treats
+    /// `roles` as a one-step-per-role pipeline.
+    #[serde(default)]
     pub roles: Vec<String>,
+    /// Ordered per-step definition. Each step may name one or more
+    /// roles (v1 runs them sequentially; the schema already supports
+    /// parallel speakers for the future). When non-empty this takes
+    /// precedence over `roles`.
+    #[serde(default)]
+    pub steps: Vec<WorkflowStep>,
+    /// Maximum number of rounds for `planned`; ignored for `swarm`.
     #[serde(default = "default_max_rounds")]
     pub max_rounds: usize,
+    /// Role that plans + synthesizes the swarm. Defaults to `manager`.
+    #[serde(default)]
+    pub planner_role: String,
+    /// Roles the swarm may pick as workers. If empty, all roles are
+    /// eligible.
+    #[serde(default)]
+    pub worker_roles: Vec<String>,
+    /// Cap on worker steps the planner may emit per task.
+    #[serde(default = "default_max_steps")]
+    pub max_steps: usize,
+}
+
+/// One step in a multi-role workflow.
+///
+/// Multiple `roles` per step are allowed so a future runner can do
+/// parallel "round-table" steps; the v1 runner speaks them in order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkflowStep {
+    /// Human-readable label shown in the editor (`"设计阶段"` etc.).
+    pub name: String,
+    /// Role ids that speak in this step, in order.
+    pub roles: Vec<String>,
+}
+
+impl Default for WorkflowStep {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            roles: Vec::new(),
+        }
+    }
+}
+
+/// `planned` — original sequential-discussion workflow (default).
+/// `swarm` — planner-driven dynamic step generation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowKind {
+    Planned,
+    Swarm,
+}
+
+fn default_workflow_kind() -> WorkflowKind {
+    WorkflowKind::Planned
+}
+fn default_max_steps() -> usize {
+    5
+}
+
+impl Default for WorkflowDef {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            kind: WorkflowKind::Planned,
+            roles: Vec::new(),
+            steps: Vec::new(),
+            max_rounds: 1,
+            planner_role: String::new(),
+            worker_roles: Vec::new(),
+            max_steps: default_max_steps(),
+        }
+    }
 }
 
 /// Global models config
@@ -241,10 +331,9 @@ fn write_models_config(path: &std::path::Path, config: &GlobalModelConfig) {
 /// Load roles config
 pub fn load_roles_config() -> RoleConfig {
     let path = roles_config_path();
-
     if !path.exists() {
         let config = create_default_roles();
-        write_roles_config(&path, &config);
+        let _ = write_roles_config(&path, &config);
         return config;
     }
 
@@ -259,24 +348,25 @@ pub fn load_roles_config() -> RoleConfig {
         }
     };
 
-    // Forward-migrate: add any default role / workflow the user's
-    // config is missing. Non-destructive — the user's custom roles
-    // and their customizations of existing roles are preserved.
-    // Required so users running an older single-role + debug-workflow
-    // config see the new 10 roles / 4 workflows after restart.
     if migrate_roles_config(&mut config) {
         eprintln!(
             "[chat] roles.yaml updated with new defaults (multi-role + workflows) at {:?}",
             path
         );
-        write_roles_config(&path, &config);
+        let _ = write_roles_config(&path, &config);
     }
 
     config
 }
 
-/// Add any default role / workflow not already in the config.
-/// Returns `true` if anything was added (so the caller can persist).
+pub fn write_roles_config(path: &std::path::Path, config: &RoleConfig) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_yaml::to_string(config).unwrap_or_default())?;
+    Ok(())
+}
+
 fn migrate_roles_config(config: &mut RoleConfig) -> bool {
     let defaults = create_default_roles();
     let mut changed = false;
@@ -296,13 +386,6 @@ fn migrate_roles_config(config: &mut RoleConfig) -> bool {
     }
 
     changed
-}
-
-fn write_roles_config(path: &std::path::Path, config: &RoleConfig) {
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(path, serde_yaml::to_string(config).unwrap_or_default());
 }
 
 /// Expand env vars in ${VAR} format
@@ -396,7 +479,7 @@ fn create_default_models() -> GlobalModelConfig {
     }
 }
 
-fn create_default_roles() -> RoleConfig {
+pub fn create_default_roles() -> RoleConfig {
     let mut roles = HashMap::new();
 
     // Mirror `latte-rs-agents/config/agents.toml` (10 roles). Each role
@@ -405,123 +488,123 @@ fn create_default_roles() -> RoleConfig {
     // editing the YAML. Inline `prompt` is a fallback for missing files
     // — `load_role_prompt` only reads the file when it exists.
     roles.insert("pm".into(), RoleDef {
-        name: "Product Manager".into(),
+        name: "产品经理".into(),
         icon: "📋".into(),
-        category: "planning".into(),
+        category: "规划".into(),
         model_tier: "standard".into(),
         model_chain: vec![],
         temperature: 0.7,
         tools: vec!["read".into(), "search".into()],
         prompt_file: "prompts/pm.md".into(),
-        prompt: "You are a Product Manager.".into(),
+        prompt: "你是一名产品经理，负责澄清需求、范围与验收标准。".into(),
         ..Default::default()
     });
     roles.insert("architect".into(), RoleDef {
-        name: "System Architect".into(),
+        name: "系统架构师".into(),
         icon: "🏗️".into(),
-        category: "planning".into(),
+        category: "规划".into(),
         model_tier: "premium".into(),
         model_chain: vec![],
         temperature: 0.5,
         tools: vec!["read".into(), "search".into()],
         prompt_file: "prompts/architect.md".into(),
-        prompt: "You are a System Architect.".into(),
+        prompt: "你是一名系统架构师，负责给出模块、接口与数据流方案。".into(),
         ..Default::default()
     });
     roles.insert("programmer".into(), RoleDef {
-        name: "Software Engineer".into(),
+        name: "软件工程师".into(),
         icon: "💻".into(),
-        category: "execution".into(),
+        category: "执行".into(),
         model_tier: "budget".into(),
         model: None,
         model_chain: vec!["deepseek-chat".into()],
         temperature: 0.3,
         tools: vec!["read".into(), "write".into(), "bash".into(), "search".into()],
         prompt_file: "prompts/programmer.md".into(),
-        prompt: "You are a Software Engineer.".into(),
+        prompt: "你是一名软件工程师，负责写出可运行、可测试的代码。".into(),
     });
     roles.insert("tester".into(), RoleDef {
-        name: "QA Engineer".into(),
+        name: "测试工程师".into(),
         icon: "🧪".into(),
-        category: "verification".into(),
+        category: "验证".into(),
         model_tier: "budget".into(),
         model_chain: vec![],
         temperature: 0.4,
         tools: vec!["read".into(), "bash".into(), "search".into()],
         prompt_file: "prompts/tester.md".into(),
-        prompt: "You are a QA Engineer.".into(),
+        prompt: "你是一名测试工程师，负责列出边界条件、构造测试用例与回归清单。".into(),
         ..Default::default()
     });
     roles.insert("reviewer".into(), RoleDef {
-        name: "Code Reviewer".into(),
+        name: "代码审查员".into(),
         icon: "🔍".into(),
-        category: "verification".into(),
+        category: "验证".into(),
         model_tier: "standard".into(),
         model_chain: vec![],
         temperature: 0.4,
         tools: vec!["read".into(), "search".into()],
         prompt_file: "prompts/reviewer.md".into(),
-        prompt: "You are a Code Reviewer.".into(),
+        prompt: "你是一名代码审查员，关注正确性、可读性与潜在缺陷。".into(),
         ..Default::default()
     });
     roles.insert("devops".into(), RoleDef {
-        name: "DevOps Engineer".into(),
+        name: "运维工程师".into(),
         icon: "🚀".into(),
-        category: "execution".into(),
+        category: "执行".into(),
         model_tier: "budget".into(),
         model_chain: vec![],
         temperature: 0.3,
         tools: vec!["read".into(), "bash".into(), "write".into()],
         prompt_file: "prompts/devops.md".into(),
-        prompt: "You are a DevOps Engineer.".into(),
+        prompt: "你是一名运维工程师，关注部署、监控、回滚与运行成本。".into(),
         ..Default::default()
     });
     roles.insert("security".into(), RoleDef {
-        name: "Security Auditor".into(),
+        name: "安全审计员".into(),
         icon: "🛡️".into(),
-        category: "verification".into(),
+        category: "验证".into(),
         model_tier: "standard".into(),
         model_chain: vec![],
         temperature: 0.4,
         tools: vec!["read".into(), "search".into()],
         prompt_file: "prompts/security.md".into(),
-        prompt: "You are a Security Auditor.".into(),
+        prompt: "你是一名安全审计员，关注输入校验、权限、注入与信息泄露。".into(),
         ..Default::default()
     });
     roles.insert("designer".into(), RoleDef {
-        name: "UI/UX Designer".into(),
+        name: "UI/UX 设计师".into(),
         icon: "🎨".into(),
-        category: "planning".into(),
+        category: "规划".into(),
         model_tier: "standard".into(),
         model_chain: vec![],
         temperature: 0.7,
         tools: vec!["read".into()],
         prompt_file: "prompts/designer.md".into(),
-        prompt: "You are a UI/UX Designer.".into(),
+        prompt: "你是一名 UI/UX 设计师，关注信息层级、交互路径与可访问性。".into(),
         ..Default::default()
     });
     roles.insert("tech_writer".into(), RoleDef {
-        name: "Technical Writer".into(),
+        name: "技术写作".into(),
         icon: "📝".into(),
-        category: "execution".into(),
+        category: "执行".into(),
         model_tier: "budget".into(),
         model_chain: vec![],
         temperature: 0.5,
         tools: vec!["read".into(), "write".into()],
         prompt_file: "prompts/tech_writer.md".into(),
-        prompt: "You are a Technical Writer.".into(),
+        prompt: "你是一名技术写作，负责把方案浓缩成对用户友好的中文说明。".into(),
         ..Default::default()
     });
     roles.insert("manager".into(), RoleDef {
-        name: "Engineering Manager".into(),
+        name: "工程经理".into(),
         icon: "👔".into(),
-        category: "planning".into(),
+        category: "规划".into(),
         model_tier: "premium".into(),
         model_chain: vec![],
         temperature: 0.5,
         tools: vec!["read".into()],
         prompt_file: "prompts/manager.md".into(),
-        prompt: "You are an Engineering Manager.".into(),
+        prompt: "你是一名工程经理，负责拆分任务、排序依赖、决定谁来做。".into(),
         ..Default::default()
     });
 
@@ -529,7 +612,8 @@ fn create_default_roles() -> RoleConfig {
     // the `loadRoleConfig` consumers see consistent ids.
     let mut workflows = HashMap::new();
     workflows.insert("default".into(), WorkflowDef {
-        name: "💬 Default — full team".into(),
+        name: "💬 默认 — 全员讨论".into(),
+        kind: WorkflowKind::Planned,
         roles: vec![
             "pm".into(),
             "architect".into(),
@@ -540,23 +624,68 @@ fn create_default_roles() -> RoleConfig {
             "manager".into(),
         ],
         max_rounds: 3,
+        steps: vec![
+            WorkflowStep { name: "需求澄清".into(), roles: vec!["pm".into()] },
+            WorkflowStep { name: "方案与架构".into(), roles: vec!["architect".into()] },
+            WorkflowStep { name: "实现".into(), roles: vec!["programmer".into()] },
+            WorkflowStep { name: "测试与回归".into(), roles: vec!["tester".into(), "reviewer".into()] },
+            WorkflowStep { name: "发布与运维".into(), roles: vec!["devops".into()] },
+        ],
+        ..Default::default()
     });
     workflows.insert("plan".into(), WorkflowDef {
-        name: "🗺️ Plan — design and architect".into(),
+        name: "🗺️ 规划 — 设计与架构".into(),
+        kind: WorkflowKind::Planned,
         roles: vec!["pm".into(), "architect".into(), "designer".into()],
         max_rounds: 2,
+        steps: vec![
+            WorkflowStep { name: "需求与目标".into(), roles: vec!["pm".into()] },
+            WorkflowStep { name: "架构方案".into(), roles: vec!["architect".into()] },
+            WorkflowStep { name: "UX 流程".into(), roles: vec!["designer".into()] },
+        ],
+        ..Default::default()
     });
     workflows.insert("code_review".into(), WorkflowDef {
-        name: "🔍 Code Review".into(),
+        name: "🔍 代码审查".into(),
+        kind: WorkflowKind::Planned,
         roles: vec!["reviewer".into(), "programmer".into()],
         max_rounds: 1,
+        steps: vec![
+            WorkflowStep { name: "审查发现".into(), roles: vec!["reviewer".into()] },
+            WorkflowStep { name: "作者回应".into(), roles: vec!["programmer".into()] },
+        ],
+        ..Default::default()
     });
     workflows.insert("debug".into(), WorkflowDef {
-        name: "🪲 Debug".into(),
+        name: "🪲 排查与修复".into(),
+        kind: WorkflowKind::Planned,
         roles: vec!["tester".into(), "programmer".into(), "devops".into()],
         max_rounds: 1,
+        steps: vec![
+            WorkflowStep { name: "复现与定位".into(), roles: vec!["tester".into()] },
+            WorkflowStep { name: "修复方案".into(), roles: vec!["programmer".into()] },
+            WorkflowStep { name: "回归与上线".into(), roles: vec!["devops".into()] },
+        ],
+        ..Default::default()
     });
-
+    // Swarm-mode workflow: planner-driven. Use when the user just
+    // drops a topic into the chat and the system has to figure out
+    // which roles to involve and in what order. Cap of 4 worker
+    // steps keeps small tasks small.
+    workflows.insert("quick_task".into(), WorkflowDef {
+        name: "🪄 快速任务 — 智能多角色".into(),
+        kind: WorkflowKind::Swarm,
+        worker_roles: vec![
+            "pm".into(),
+            "architect".into(),
+            "programmer".into(),
+            "reviewer".into(),
+            "tester".into(),
+            "tech_writer".into(),
+        ],
+        max_steps: 4,
+        ..Default::default()
+    });
     RoleConfig {
         default_model: "deepseek-chat".into(),
         roles,
@@ -578,7 +707,7 @@ mod migration_tests {
     // ─── roles migration ──────────────────────────────────────────
 
     #[test]
-    fn old_single_role_gets_10_roles_and_4_workflows() {
+    fn old_single_role_gets_10_roles_and_5_workflows() {
         // Simulate a v1 config: 1 role (programmer) + 1 workflow (debug)
         let mut cfg = RoleConfig {
             default_model: "deepseek-chat".into(),
@@ -593,16 +722,18 @@ mod migration_tests {
                 "debug".into(),
                 WorkflowDef {
                     name: "🪲 Debug".into(),
+                    kind: WorkflowKind::Planned,
                     roles: vec!["programmer".into()],
                     max_rounds: 1,
+                    ..Default::default()
                 },
             )]),
         };
         assert!(migrate_roles_config(&mut cfg));
         // 10 default roles total
         assert_eq!(cfg.roles.len(), 10);
-        // 4 default workflows total
-        assert_eq!(cfg.workflows.len(), 4);
+        // 5 default workflows total (default, plan, code_review, debug, quick_task)
+        assert_eq!(cfg.workflows.len(), 5);
         // User's custom programmer override is preserved (not
         // overwritten by the default)
         assert_eq!(cfg.roles["programmer"].name, "Custom Programmer");

@@ -296,9 +296,110 @@ fn build_agent_runners(
             latte_ai::params::GenerateParams::default(),
         )
         .map_err(|e| format!("build agent '{role_id}': {e}"))?;
-        agents.insert(role_id_owned, AgentRunner::new(agent));
+    agents.insert(role_id_owned, AgentRunner::new(agent));
     }
     Ok(agents)
+}
+
+/// Per-role result of the pre-flight check. Emitted to the frontend as
+/// one synthetic `chat:turn` per broken role so the user sees the
+/// avatar + role name + which models are missing keys, and can retry
+/// without re-typing the topic.
+#[derive(Clone, Debug)]
+pub(crate) struct PreflightRoleError {
+    pub role_id: String,
+    pub role_name: String,
+    pub icon: String,
+    pub missing_models: Vec<String>,
+    /// Human-readable summary in Chinese — what the chat bubble shows.
+    pub message: String,
+}
+
+/// Walk each role's resolved chain and surface roles whose every model
+/// is missing an API key. Returns `Ok(())` when every role has at
+/// least one usable model, otherwise `Err(Vec<PreflightRoleError>)`.
+///
+/// This is the per-role "you forgot to set the API key" report. The
+/// orchestrator's run-time error lumps all failures together; this
+/// pre-check gives the user one bubble per broken role (with the
+/// role's icon) so they can fix the right thing.
+pub(crate) fn preflight_check(
+    resolver: &ModelResolver,
+    roles_config: &RoleConfig,
+    role_ids: &[String],
+) -> Result<(), Vec<PreflightRoleError>> {
+    let mut errors = Vec::new();
+    for role_id in role_ids {
+        let role_def = match roles_config.roles.get(role_id) {
+            Some(r) => r,
+            None => {
+                errors.push(PreflightRoleError {
+                    role_id: role_id.clone(),
+                    role_name: role_id.clone(),
+                    icon: "❓".into(),
+                    missing_models: vec![],
+                    message: format!("role `{role_id}` 未在 roles.yaml 中定义"),
+                });
+                continue;
+            }
+        };
+        let chain = role_def.chain();
+        let chain_tail: Vec<String> = chain.iter().skip(1).cloned().collect();
+        let resolved = match resolver.resolve_chain(role_id, ModelTier::Standard, &chain_tail) {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(PreflightRoleError {
+                    role_id: role_id.clone(),
+                    role_name: role_def.name.clone(),
+                    icon: role_def.icon.clone(),
+                    missing_models: vec![],
+                    message: format!("无法解析 `{}` 的模型链：{}", role_id, e),
+                });
+                continue;
+            }
+        };
+        if resolved.is_empty() {
+            errors.push(PreflightRoleError {
+                role_id: role_id.clone(),
+                role_name: role_def.name.clone(),
+                icon: role_def.icon.clone(),
+                missing_models: vec![],
+                message: format!("`{}` 的模型链为空，请检查 roles.yaml", role_id),
+            });
+            continue;
+        }
+        let missing: Vec<String> = resolved
+            .iter()
+            .filter(|m| m.api_key.trim().is_empty())
+            .map(|m| m.id.clone())
+            .collect();
+        if missing.len() == resolved.len() {
+            // Every model in the chain is missing — no way to run
+            // this role at all.
+            let role_name = &role_def.name;
+            let message = format!(
+                "`{}` 缺少 API key：{}（请在 ~/.latte/models.yaml 中设置）",
+                role_name,
+                if missing.is_empty() {
+                    "无可用模型".to_string()
+                } else {
+                    missing.join("、")
+                }
+            );
+            errors.push(PreflightRoleError {
+                role_id: role_id.clone(),
+                role_name: role_def.name.clone(),
+                icon: role_def.icon.clone(),
+                missing_models: missing,
+                message,
+            });
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 /// Build the orchestrator's `DiscussionWorkflow` from the project's
@@ -386,11 +487,32 @@ async fn run_live_discussion(
     let resolver = ModelResolver::from_config(&agent_config)
         .map_err(|e| format!("model resolver init: {e}"))?;
 
-    // 3. Build agent runners
-    let agents = build_agent_runners(&resolver, roles_config, &roles_to_use)?;
-
-    // 4. Build workflow; respect `req.max_rounds` if set, else use the
-    //    value the workflow builder defaulted to.
+    // 2.5. Pre-flight: report broken roles BEFORE the orchestrator
+    //      runs. Each broken role gets its own synthetic `chat:turn`
+    //      so the chat list shows an avatar + role name + the
+    //      specific missing keys. This is what the user wanted —
+    //      they should never see a single opaque "未配置 API 密钥"
+    //      line and have no idea which role failed.
+    if let Err(broken_roles) = preflight_check(&resolver, roles_config, &roles_to_use) {
+        for broken in &broken_roles {
+            let payload = TurnPayload {
+                agent: broken.role_name.clone(),
+                role_id: broken.role_id.clone(),
+                icon: broken.icon.clone(),
+                response: format!("⚠️ {}\n\n（无需手动解决：检查 ~/.latte/models.yaml 中 {} 的 API key）",
+                    broken.message,
+                    broken.missing_models.join("、")),
+                round: 0,
+                step_id: format!("__preflight_error__{}", broken.role_id),
+                turn_number: 0,
+            };
+            let _ = app.emit("chat:turn", &payload);
+        }
+        return Err(format!(
+            "{} 个角色缺少 API key，已在上方列出",
+            broken_roles.len()
+        ));
+    }
     let workflow = build_workflow(req, &roles_to_use);
 
     // 5. Variables used by the orchestrator's handlebars rendering.
@@ -409,6 +531,11 @@ async fn run_live_discussion(
         context_token_budget: 32_000,
         variables,
     };
+
+    // 3. Build agent runners (resolver + per-role chain are already
+    //    validated by the pre-flight above; the runner build itself
+    //    shouldn't fail unless a role id is unknown to the resolver).
+    let agents = build_agent_runners(&resolver, roles_config, &roles_to_use)?;
 
     // 6. Construct + run the orchestrator with per-turn Tauri emission
     let mut orchestrator = DiscussionOrchestrator::new(agents, config)

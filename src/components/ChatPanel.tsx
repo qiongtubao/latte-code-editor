@@ -2,14 +2,18 @@ import { useEffect, useState } from "react";
 import { useChatStore } from "../hooks/useChatStore";
 import { MessageList } from "./MessageList";
 import { RoleChainEditor } from "./RoleChainEditor";
+import { WorkflowEditor } from "./WorkflowEditor";
 import { openFile } from "../api/commands";
 import { useEditorStore } from "../hooks/useEditorStore";
+import type { WorkflowPayload } from "../api/chat";
+import { getWorkflowFull } from "../api/chat";
 
 interface Props {
   onClose: () => void;
 }
 export function ChatPanel({ onClose }: Props) {
   const {
+    mode,
     messages,
     status,
     errorMessage,
@@ -21,6 +25,10 @@ export function ChatPanel({ onClose }: Props) {
     modelsPath,
     rolesPath,
     configPanelOpen,
+    swarmPlan,
+    swarmFiles,
+    swarmSummary,
+    setMode,
     setWorkflow,
     loadWorkflows,
     loadModels,
@@ -32,9 +40,13 @@ export function ChatPanel({ onClose }: Props) {
     setDefaultModel,
     openConfigFile,
     toggleConfigPanel,
+    openWorkflowEditor,
+    openNewWorkflowEditor,
+    closeWorkflowEditor,
+    editingWorkflow,
   } = useChatStore();
   const [input, setInput] = useState("");
-  useEffect(() => {
+   useEffect(() => {
     loadWorkflows();
     loadModels();
     loadRoleConfig();
@@ -49,13 +61,21 @@ export function ChatPanel({ onClose }: Props) {
     }
   };
 
+  const handleEditExistingWorkflow = async (id: string) => {
+    try {
+      const full = await getWorkflowFull(id);
+      openWorkflowEditor(full);
+    } catch (e) {
+      console.error("打开工作流编辑器失败：", e);
+    }
+  };
+
   const handleSend = () => {
     if (!input.trim() || status === "running") return;
     const msg = input;
     setInput("");
     void sendMessage(msg);
   };
-
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -63,21 +83,59 @@ export function ChatPanel({ onClose }: Props) {
     }
   };
 
+  // Swarm workflows get filtered out of the workflow dropdown when
+  // the user is in `discuss` mode — there's no point selecting a
+  // planner-driven workflow if the runner won't auto-route. When
+  // the user switches to swarm mode, swarm workflows appear and
+  // planned workflows disappear.
+  const filteredWorkflows = availableWorkflows.filter((w) =>
+    mode === "swarm" ? w.kind === "swarm" : w.kind !== "swarm",
+  );
+
   return (
     <div className="flex flex-col h-full bg-[#1e1e1e] border-l border-gray-700">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 bg-[#252526] border-b border-gray-700">
         <span className="text-base">💬</span>
         <span className="font-semibold text-sm text-gray-200">Chat</span>
+        {/* Mode toggle: discuss (planned) vs swarm (planner-driven). */}
+        <div className="ml-2 flex items-center bg-[#1e1e1e] rounded border border-gray-700 text-[10px]">
+          <button
+            onClick={() => setMode("discuss")}
+            className={
+              "px-2 py-0.5 rounded-l " +
+              (mode === "discuss"
+                ? "bg-[#007acc] text-white"
+                : "text-gray-400 hover:text-gray-200")
+            }
+            title="Planned discussion — fixed roles speak in order"
+          >
+            💬 Discuss
+          </button>
+          <button
+            onClick={() => setMode("swarm")}
+            className={
+              "px-2 py-0.5 rounded-r " +
+              (mode === "swarm"
+                ? "bg-[#007acc] text-white"
+                : "text-gray-400 hover:text-gray-200")
+            }
+            title="Swarm — planner breaks the topic into ordered worker steps"
+          >
+            🪄 Swarm
+          </button>
+        </div>
         <select
           value={selectedWorkflow}
           onChange={(e) => setWorkflow(e.target.value)}
-          className="ml-2 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
+          className="ml-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
         >
-          {availableWorkflows.length === 0 && (
-            <option value="default_workflow">default_workflow</option>
+          {filteredWorkflows.length === 0 && (
+            <option value={mode === "swarm" ? "quick_task" : "default_workflow"}>
+              {mode === "swarm" ? "quick_task" : "default_workflow"}
+            </option>
           )}
-          {availableWorkflows.map((w) => (
+          {filteredWorkflows.map((w) => (
             <option key={w.id} value={w.id}>
               {w.name}
             </option>
@@ -162,11 +220,7 @@ export function ChatPanel({ onClose }: Props) {
                   // loaded from a pre-chain config still render a
                   // functional editor.
                   serverChain={
-                    role.modelChain.length > 0
-                      ? role.modelChain
-                      : role.model
-                        ? [role.model]
-                        : []
+                    role.modelChain.length > 0 ? role.modelChain : []
                   }
                   availableModels={availableModels}
                   onSave={(chain) => setRoleModelChain(role.id, chain)}
@@ -175,32 +229,91 @@ export function ChatPanel({ onClose }: Props) {
             </div>
           </div>
 
-          <div className="flex gap-2 text-[10px]">
+          {/* ── Workflow settings ───────────────────────────── */}
+          <div className="mt-3 pt-3 border-t border-gray-700">
+            <div className="flex items-center mb-2">
+              <div className="font-semibold text-gray-200 flex-1">
+                🪄 工作流流程
+              </div>
+              <button
+                onClick={() => openNewWorkflowEditor()}
+                className="px-2 py-0.5 bg-[#007acc] hover:bg-[#1f8ad2] text-white text-[10px] rounded"
+                type="button"
+              >
+                ＋ 新建
+              </button>
+            </div>
+            <div className="text-[10px] text-gray-500 mb-1">
+              选定一个流程，点 ✏️ 编辑 ——
+              <span className="text-gray-400">
+                改名称、步骤顺序、每步角色后点保存。
+              </span>
+            </div>
+            <div className="max-h-48 overflow-y-auto space-y-1">
+              {availableWorkflows.map((w) => (
+                <div
+                  key={w.id}
+                  className="flex items-center gap-1 px-2 py-1 bg-[#2a2a2a] rounded"
+                >
+                  <button
+                    onClick={() => handleEditExistingWorkflow(w.id)}
+                    className="flex-1 text-left text-[11px] text-gray-200 hover:text-white truncate"
+                    title={`点击编辑 ${w.name}`}
+                    type="button"
+                  >
+                    <span className="mr-1">
+                      {w.kind === "swarm" ? "🪄" : "💬"}
+                    </span>
+                    {w.name}{" "}
+                    <span className="text-gray-500 text-[10px]">({w.id})</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-2 text-[10px] mt-3">
             <button
               onClick={() => openConfigFile("models")}
               className="px-2 py-1 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded"
+              type="button"
             >
               📄 models.yaml
             </button>
             <button
               onClick={() => openConfigFile("roles")}
               className="px-2 py-1 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded"
+              type="button"
             >
               📄 roles.yaml
             </button>
           </div>
-          
+
           <div className="mt-2 text-[10px] text-gray-500">
-            配置文件:<br/>
-            {modelsPath}<br/>
+            配置文件:
+            <br />
+            {modelsPath}
+            <br />
             {rolesPath}
           </div>
         </div>
       )}
 
+      {/* Swarm status: visible only in swarm mode and only when the
+          swarm produced structured output worth showing (plan, files,
+          or summary). The conversation transcript is still in
+          MessageList; this is a compact at-a-glance summary. */}
+      {mode === "swarm" && (swarmPlan.length > 0 || swarmFiles.length > 0 || swarmSummary) && (
+        <SwarmStatus
+          plan={swarmPlan}
+          files={swarmFiles}
+          summary={swarmSummary}
+          onFileClick={handleFileClick}
+        />
+      )}
+
       {/* Messages */}
       <MessageList messages={messages} status={status} onFileClick={handleFileClick} />
-
       {/* Error display */}
       {errorMessage && (
         <div className="mx-3 mb-2 p-3 bg-red-900/30 border border-red-700 rounded text-sm text-red-200">
@@ -237,7 +350,9 @@ export function ChatPanel({ onClose }: Props) {
           placeholder={
             status === "running"
               ? "Waiting for agents..."
-              : "Type a topic or follow-up..."
+              : mode === "swarm"
+                ? "Drop a small task — planner will pick the right roles…"
+                : "Type a topic or follow-up..."
           }
           disabled={status === "running"}
           rows={2}
@@ -265,6 +380,70 @@ export function ChatPanel({ onClose }: Props) {
           </span>
         </div>
       </div>
+
+      {/* Workflow editor modal — only mounted when an editing session is open. */}
+      {editingWorkflow && <WorkflowEditor />}
+    </div>
+  );
+}
+
+interface SwarmStatusProps {
+  plan: { id: string; role: string; instruction: string }[];
+  files: { path: string; kind: "plan" | "output" | "summary" }[];
+  summary: string | null;
+  onFileClick: (path: string) => void;
+}
+
+/**
+ * Compact swarm summary shown above the message list when the user
+ * is in swarm mode. Renders the planner's emitted steps and the
+ * files the runner wrote. The full conversation stays in
+ * MessageList — this is a structural overview.
+ */
+function SwarmStatus({ plan, files, summary, onFileClick }: SwarmStatusProps) {
+  return (
+    <div className="px-3 py-2 bg-[#252526] border-b border-gray-700 text-[11px] text-gray-300 space-y-2 max-h-48 overflow-y-auto">
+      <div className="font-semibold text-gray-200 flex items-center gap-2">
+        <span>🪄 Swarm plan</span>
+        <span className="text-gray-500 font-normal">
+          ({plan.length} step{plan.length === 1 ? "" : "s"})
+        </span>
+      </div>
+      {plan.length === 0 ? (
+        <div className="text-gray-500 italic">No plan yet.</div>
+      ) : (
+        <ol className="space-y-1 pl-4 list-decimal">
+          {plan.map((s) => (
+            <li key={s.id} className="leading-snug">
+              <span className="font-mono text-[10px] text-gray-400 mr-1">{s.role}</span>
+              <span>{s.instruction}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {files.length > 0 && (
+        <div className="pt-1 border-t border-gray-700">
+          <div className="text-gray-500 mb-1">Output files</div>
+          <div className="flex flex-col gap-1">
+            {files.map((f) => (
+              <button
+                key={f.path}
+                onClick={() => onFileClick(f.path)}
+                className="flex items-center gap-2 text-left text-[10px] px-2 py-1 bg-[#2a2a2a] hover:bg-[#333] rounded font-mono"
+                title={`${f.kind} — click to open`}
+              >
+                <span className="text-gray-400">[{f.kind}]</span>
+                <span className="truncate">{f.path}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {summary && (
+        <div className="pt-1 border-t border-gray-700 text-[10px] text-gray-400">
+          ✨ Synthesis ready (see message list).
+        </div>
+      )}
     </div>
   );
 }
