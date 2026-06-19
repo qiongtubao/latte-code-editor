@@ -20,7 +20,7 @@ import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
 import { useChatStore } from "./hooks/useChatStore";
 import type { ChatTurn } from "./hooks/useChatStore";
-import type { SwarmEvent } from "./api/chat";
+import type { DecisionRequest, SwarmEvent } from "./api/chat";
 import { useLspStore } from "./hooks/useLspStore";
 import { LspManagerPanel } from "./components/LspManagerPanel";
 import { DebugBar } from "./components/DebugBar";
@@ -50,6 +50,7 @@ function App() {
   const setChatComplete = useChatStore((s) => s.setComplete);
   const setChatError = useChatStore((s) => s.setError);
   const applySwarmEvent = useChatStore((s) => s.applySwarmEvent);
+  const applyNeedDecision = useChatStore((s) => s.applyNeedDecision);
   const { openFileOrSwitch } = useEditorStore();
   const { filePath } = useEditorStore();
   const { graphData } = useGraphStore();
@@ -104,6 +105,11 @@ function App() {
       }),
     );
     unlistens.push(
+      listen<DecisionRequest>("chat:need_decision", (e) => {
+        applyNeedDecision(e.payload);
+      }),
+    );
+    unlistens.push(
       listen<unknown>("chat:complete", () => {
         setChatComplete();
       }),
@@ -116,7 +122,7 @@ function App() {
     return () => {
       for (const p of unlistens) p.then((fn) => fn());
     };
-  }, [addTurn, applySwarmEvent, setChatComplete, setChatError]);
+  }, [addTurn, applySwarmEvent, applyNeedDecision, setChatComplete, setChatError]);
 
   const folderRoot = activeMeta?.project_root ?? null;
 

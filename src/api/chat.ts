@@ -223,6 +223,142 @@ export async function startSwarm(
 ): Promise<number> {
   return invoke<number>("chat_start_swarm", { request });
 }
+
+// ─── Manager-led workflow ────────────────────────────────────────────
+//
+// Interactive flow where a manager role reads the topic, decides what
+// to do next, and pauses for user input via option buttons. Backend
+// streams `chat:turn` for manager / worker bubbles and
+// `chat:need_decision` for the option panel.
+
+/**
+ * One option offered by the manager when it pauses to ask the
+ * user. `workerRole` is `null` for "conclude" / "skip" options
+ * that don't dispatch a worker.
+ */
+export interface DecisionOption {
+  id: string;
+  label: string;
+  description: string;
+  workerRole: string | null;
+  /** Rough USD cost so the user can pick with eyes open. */
+  estimatedCostUsd: number;
+}
+
+/**
+ * Event payload the backend emits when the manager needs the user
+ * to pick. The frontend renders these as option-button panels
+ * under the most recent manager bubble.
+ */
+export interface DecisionRequest {
+  sessionId: number;
+  question: string;
+  reason: string;
+  options: DecisionOption[];
+  contextSummary: string;
+}
+
+/** User's choice posted back to `chat_user_decision`. */
+export interface UserDecision {
+  sessionId: number;
+  optionId: string;
+  freeText?: string | null;
+}
+
+/** One turn in the manager-led conversation (manager / worker / user). */
+export interface ManagerTurn {
+  turnNumber: number;
+  roleId: string;
+  roleName: string;
+  icon: string;
+  content: string;
+  action?: ManagerAction | null;
+  userDecision?: UserDecision | null;
+  weight: number;
+  pinned: boolean;
+  tsMs: number;
+}
+
+/** Discriminated union matching the backend `ManagerAction`. */
+export type ManagerAction =
+  | {
+      kind: "needDecision";
+      question: string;
+      reason: string;
+      options: DecisionOption[];
+    }
+  | { kind: "assignWorker"; workerRole: string; instruction: string }
+  | { kind: "finalize"; summary: string }
+  | { kind: "conclude" };
+
+/** Full session snapshot. Persisted to state.json on every transition. */
+export interface ManagerSessionState {
+  sessionId: number;
+  state:
+    | "idle"
+    | "planning"
+    | "awaitingDecision"
+    | "assigningWorker"
+    | "workerRunning"
+    | "reflecting"
+    | "finalizing"
+    | "done"
+    | "failed";
+  topic: string;
+  managerRoleId: string;
+  availableRoles: string[];
+  maxTotalSteps: number;
+  maxUserDecisions: number;
+  stepsTaken: number;
+  decisionsTaken: number;
+  turns: ManagerTurn[];
+  startedAtMs: number;
+  finishedAtMs: number | null;
+  summary: string | null;
+}
+
+/** Start a manager-led session. Returns the new session_id. */
+export async function startManagerSession(
+  topic: string,
+  workspace?: string | null
+): Promise<number> {
+  return invoke<number>("chat_start_manager_session", {
+    topic,
+    workspace: workspace ?? null,
+  });
+}
+
+/** Post a user's choice (or free-text only) to the manager session. */
+export async function submitUserDecision(
+  decision: UserDecision
+): Promise<void> {
+  return invoke("chat_user_decision", { decision });
+}
+
+/** Push the session forward without picking an option. */
+export async function submitUserContinue(
+  sessionId: number,
+  message?: string | null
+): Promise<void> {
+  return invoke("chat_user_continue", { sessionId, message: message ?? null });
+}
+
+/** Snapshot a manager session. `null` if not found in this process. */
+export async function getManagerState(
+  sessionId: number
+): Promise<ManagerSessionState | null> {
+  return invoke<ManagerSessionState | null>("chat_get_manager_state", {
+    sessionId,
+  });
+}
+
+/** Force-stop a manager session with a reason recorded in state. */
+export async function abortManagerSession(
+  sessionId: number,
+  reason: string
+): Promise<void> {
+  return invoke("chat_abort_manager_session", { sessionId, reason });
+}
 /**
  * Cancel discussion
  */

@@ -14,6 +14,9 @@ import {
   saveWorkflow as apiSaveWorkflow,
   deleteWorkflow as apiDeleteWorkflow,
   resetRolesToDefaults as apiResetRolesToDefaults,
+  startManagerSession as startManagerSessionApi,
+  submitUserDecision as submitUserDecisionApi,
+  submitUserContinue as submitUserContinueApi,
 } from "../api/chat";
 import { useEditorStore } from "./useEditorStore";
 import { openFile } from "../api/commands";
@@ -24,7 +27,7 @@ export type ChatStatus = "idle" | "running" | "completed" | "error";
  * discussion runner; `"swarm"` is the planner-driven flow where the
  * planner breaks the topic into ordered worker steps.
  */
-export type ChatMode = "discuss" | "swarm";
+export type ChatMode = "discuss" | "swarm" | "manager";
 
 export interface ChatMessage {
   id: string;
@@ -101,6 +104,26 @@ interface ChatStore {
   /** Send a swarm-mode prompt. No-op when `mode !== "swarm"` or
    *  a swarm is already running. */
   sendSwarm: (topic: string) => Promise<void>;
+  // ─── Manager-led workflow state ──────────────────────────────────
+  /** Most recent pending decision request. Non-null while the UI
+   *  should show option buttons under the last manager bubble. */
+  pendingDecision: import("../api/chat").DecisionRequest | null;
+  /** Currently-active manager session id (assigned by
+   *  `chat_start_manager_session`). `null` until first launch. */
+  managerSessionId: number | null;
+  /** Start a manager-led workflow. Sets state to running and emits
+   *  the user's topic message + the manager's first turn. */
+  startManagerSession: (topic: string) => Promise<void>;
+  /** User picked an option (with optional free text). */
+  submitManagerDecision: (
+    optionId: string,
+    freeText?: string | null,
+  ) => Promise<void>;
+  /** User pushed the session forward without picking an option. */
+  managerContinue: (message?: string | null) => Promise<void>;
+  /** Apply one `chat:need_decision` event from the backend. */
+  applyNeedDecision: (req: import("../api/chat").DecisionRequest) => void;
+
 
   // Config management
   setRoleModel: (roleId: string, modelId: string) => Promise<void>;
@@ -187,13 +210,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   modelsPath: "",
   rolesPath: "",
   configPanelOpen: false,
+
+  // Manager-led workflow
+  pendingDecision: null,
+  managerSessionId: null,
+
   // Workflow editor
   editingWorkflow: null,
   editingDirty: false,
   editingOriginal: null,
   editingSaving: false,
   editingError: null,
-
   setMode: (mode) => set({ mode, errorMessage: null }),
 
   setWorkflow: (id) => set({ selectedWorkflow: id }),
@@ -270,10 +297,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sendMessage: async (content) => {
     const trimmed = content.trim();
     if (!trimmed) return;
-    // Swarm mode has its own send path so the user gets streamed
-    // `chat:swarm_event`s rather than the planned-discussion stream.
+    // Swarm and Manager modes each have their own send path so the
+    // user gets the right event stream for the active workflow.
     if (get().mode === "swarm") {
       await get().sendSwarm(trimmed);
+      return;
+    }
+    if (get().mode === "manager") {
+      await get().startManagerSession(trimmed);
       return;
     }
     const userMsg: ChatMessage = {
@@ -368,8 +399,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       swarmSummary: null,
       errorMessage: null,
       lastUserTopic: null,
+      pendingDecision: null,
+      managerSessionId: null,
     }),
-
   addTurn: (turn) => {
     const agentMsg: ChatMessage = {
       id: uid(),
@@ -821,5 +853,85 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     } catch (e) {
       set({ editingSaving: false, editingError: String(e) });
     }
+  },
+
+
+  // ─── Manager-led workflow actions ────────────────────────────────
+  /**
+   * Start a manager-led interactive session. Drops any stale
+   * decisions, records the user's topic as the first message, and
+   * fires the backend command. The backend then emits `chat:turn`
+   * for the manager's first decision + `chat:need_decision` for the
+   * option panel.
+   */
+  startManagerSession: async (topic) => {
+    const trimmed = topic.trim();
+    if (!trimmed) return;
+    if (get().status === "running") return;
+    const userMsg: ChatMessage = {
+      id: uid(),
+      role: "user",
+      content: trimmed,
+      timestamp: Date.now(),
+    };
+    set((s) => ({
+      messages: [...s.messages, userMsg],
+      status: "running",
+      errorMessage: null,
+      pendingDecision: null,
+    }));
+    try {
+      const sessionId = await startManagerSessionApi(trimmed, null);
+      set({ managerSessionId: sessionId });
+    } catch (e) {
+      set({ status: "idle", errorMessage: String(e) });
+    }
+  },
+
+  /**
+   * User picked an option. The backend advances the state machine
+   * from `AwaitingDecision` → worker dispatch or finalize, and the
+   * resulting events come back through the existing `addTurn` /
+   * `applyNeedDecision` channels.
+   */
+  submitManagerDecision: async (optionId, freeText) => {
+    const sid = get().managerSessionId;
+    if (sid === null) return;
+    // Optimistically clear pendingDecision so the user can't double-
+    // click; the backend will emit a fresh decision or run a worker.
+    set({ pendingDecision: null });
+    try {
+      await submitUserDecisionApi({
+        sessionId: sid,
+        optionId,
+        freeText: freeText ?? null,
+      });
+    } catch (e) {
+      set({ status: "error", errorMessage: String(e) });
+    }
+  },
+
+  /**
+   * Push the session forward without picking an option. Useful when
+   * the user wants to inject their own instruction.
+   */
+  managerContinue: async (message) => {
+    const sid = get().managerSessionId;
+    if (sid === null) return;
+    set({ pendingDecision: null });
+    try {
+      await submitUserContinueApi(sid, message ?? null);
+    } catch (e) {
+      set({ status: "error", errorMessage: String(e) });
+    }
+  },
+
+  /**
+   * Replace the pending decision request. Called when the backend
+   * emits `chat:need_decision`. Each new request supersedes the
+   * previous one — the UI only shows the latest decision's options.
+   */
+  applyNeedDecision: (req) => {
+    set({ pendingDecision: req });
   },
 }));

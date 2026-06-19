@@ -797,3 +797,166 @@ describe("useChatStore — retry path", () => {
     expect(m.content).toBe("先做 API 草案");
   });
 });
+
+// ─── Manager-led workflow tests ──────────────────────────────────────
+//
+// Covers the in-memory pipeline that backs the DecisionBubble +
+// manager-mode toggle: starting a session, applying
+// chat:need_decision events, picking an option, and the
+// pendingDecision lifecycle.
+
+describe("useChatStore — manager-led", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useChatStore.setState({
+      mode: "manager",
+      messages: [],
+      status: "idle",
+      sessionId: null,
+      swarmSessionId: null,
+      activeSwarmId: null,
+      swarmPlan: [],
+      swarmFiles: [],
+      swarmSummary: null,
+      errorMessage: null,
+      lastUserTopic: null,
+      pendingDecision: null,
+      managerSessionId: null,
+      selectedWorkflow: "discuss",
+      availableWorkflows: [],
+      availableRoles: [],
+      availableModels: [],
+      defaultModel: "deepseek-chat",
+      roleModels: {},
+      roleChains: {},
+      modelsPath: "",
+      rolesPath: "",
+      configPanelOpen: false,
+      editingWorkflow: null,
+      editingDirty: false,
+      editingOriginal: null,
+      editingSaving: false,
+      editingError: null,
+    });
+  });
+
+  it("startManagerSession 触发 chat_start_manager_session 并记录 managerSessionId", async () => {
+    invokeMock.mockResolvedValueOnce(42);
+    await useChatStore.getState().startManagerSession("设计登录页");
+    const s = useChatStore.getState();
+    expect(invokeMock).toHaveBeenCalledWith("chat_start_manager_session", {
+      topic: "设计登录页",
+      workspace: null,
+    });
+    expect(s.managerSessionId).toBe(42);
+    expect(s.status).toBe("running");
+    // User's topic is recorded as the first message.
+    expect(s.messages[0].role).toBe("user");
+    expect(s.messages[0].content).toBe("设计登录页");
+  });
+
+  it("startManagerSession 在 running 时是 no-op", async () => {
+    useChatStore.setState({ status: "running" });
+    await useChatStore.getState().startManagerSession("任何话题");
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("applyNeedDecision 写入 pendingDecision", () => {
+    useChatStore.getState().applyNeedDecision({
+      sessionId: 1,
+      question: "下一步让谁先动手？",
+      reason: "需要决定先做需求还是先做架构",
+      options: [
+        {
+          id: "pm",
+          label: "只让 PM",
+          description: "先写需求",
+          workerRole: "pm",
+          estimatedCostUsd: 0.005,
+        },
+        {
+          id: "arch",
+          label: "只让架构师",
+          description: "直接出架构",
+          workerRole: "architect",
+          estimatedCostUsd: 0.008,
+        },
+      ],
+      contextSummary: "",
+    });
+    const s = useChatStore.getState();
+    expect(s.pendingDecision?.question).toBe("下一步让谁先动手？");
+    expect(s.pendingDecision?.options).toHaveLength(2);
+  });
+
+  it("submitManagerDecision 调用 chat_user_decision 并清掉 pendingDecision", async () => {
+    useChatStore.setState({ managerSessionId: 7 });
+    useChatStore.getState().applyNeedDecision({
+      sessionId: 7,
+      question: "Q?",
+      reason: "r",
+      options: [
+        { id: "a", label: "A", description: "", workerRole: "pm", estimatedCostUsd: 0.001 },
+      ],
+      contextSummary: "",
+    });
+    invokeMock.mockResolvedValueOnce(undefined);
+    await useChatStore.getState().submitManagerDecision("a", "请加急");
+    expect(invokeMock).toHaveBeenCalledWith("chat_user_decision", {
+      decision: { sessionId: 7, optionId: "a", freeText: "请加急" },
+    });
+    expect(useChatStore.getState().pendingDecision).toBe(null);
+  });
+
+  it("submitManagerDecision 没有 session_id 时是 no-op", async () => {
+    await useChatStore.getState().submitManagerDecision("a");
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("managerContinue 调用 chat_user_continue", async () => {
+    useChatStore.setState({ managerSessionId: 9 });
+    useChatStore.getState().applyNeedDecision({
+      sessionId: 9,
+      question: "Q?",
+      reason: "r",
+      options: [],
+      contextSummary: "",
+    });
+    invokeMock.mockResolvedValueOnce(undefined);
+    await useChatStore.getState().managerContinue("额外补充");
+    expect(invokeMock).toHaveBeenCalledWith("chat_user_continue", {
+      sessionId: 9,
+      message: "额外补充",
+    });
+    expect(useChatStore.getState().pendingDecision).toBe(null);
+  });
+
+  it("clearChat 同时清掉 managerSessionId 和 pendingDecision", () => {
+    useChatStore.setState({
+      managerSessionId: 5,
+      pendingDecision: {
+        sessionId: 5,
+        question: "Q",
+        reason: "r",
+        options: [],
+        contextSummary: "",
+      },
+    });
+    useChatStore.getState().clearChat();
+    const s = useChatStore.getState();
+    expect(s.managerSessionId).toBe(null);
+    expect(s.pendingDecision).toBe(null);
+    expect(s.messages).toEqual([]);
+  });
+
+  it("sendMessage 在 manager 模式下走 startManagerSession 路径", async () => {
+    useChatStore.setState({ mode: "manager", status: "idle" });
+    invokeMock.mockResolvedValueOnce(11);
+    await useChatStore.getState().sendMessage("任务 X");
+    expect(invokeMock).toHaveBeenCalledWith("chat_start_manager_session", {
+      topic: "任务 X",
+      workspace: null,
+    });
+    expect(useChatStore.getState().managerSessionId).toBe(11);
+  });
+});

@@ -44,12 +44,14 @@ export function ChatPanel({ onClose }: Props) {
     openNewWorkflowEditor,
     closeWorkflowEditor,
     editingWorkflow,
+    pendingDecision,
+    submitManagerDecision,
+    managerContinue,
   } = useChatStore();
   const [input, setInput] = useState("");
    useEffect(() => {
     loadWorkflows();
     loadModels();
-    loadRoleConfig();
   }, [loadWorkflows, loadModels, loadRoleConfig]);
 
   const handleFileClick = async (path: string) => {
@@ -98,12 +100,12 @@ export function ChatPanel({ onClose }: Props) {
       <div className="flex items-center gap-2 px-3 py-2 bg-[#252526] border-b border-gray-700">
         <span className="text-base">💬</span>
         <span className="font-semibold text-sm text-gray-200">Chat</span>
-        {/* Mode toggle: discuss (planned) vs swarm (planner-driven). */}
-        <div className="ml-2 flex items-center bg-[#1e1e1e] rounded border border-gray-700 text-[10px]">
+        {/* Mode toggle: discuss / swarm / manager. */}
+        <div className="ml-2 flex items-center bg-[#1e1e1e] rounded border border-gray-700 text-[10px] overflow-hidden">
           <button
             onClick={() => setMode("discuss")}
             className={
-              "px-2 py-0.5 rounded-l " +
+              "px-2 py-0.5 " +
               (mode === "discuss"
                 ? "bg-[#007acc] text-white"
                 : "text-gray-400 hover:text-gray-200")
@@ -115,7 +117,7 @@ export function ChatPanel({ onClose }: Props) {
           <button
             onClick={() => setMode("swarm")}
             className={
-              "px-2 py-0.5 rounded-r " +
+              "px-2 py-0.5 border-l border-gray-700 " +
               (mode === "swarm"
                 ? "bg-[#007acc] text-white"
                 : "text-gray-400 hover:text-gray-200")
@@ -124,23 +126,42 @@ export function ChatPanel({ onClose }: Props) {
           >
             🪄 Swarm
           </button>
+          <button
+            onClick={() => setMode("manager")}
+            className={
+              "px-2 py-0.5 border-l border-gray-700 " +
+              (mode === "manager"
+                ? "bg-[#a06ec2] text-white"
+                : "text-gray-400 hover:text-gray-200")
+            }
+            title="Manager-led — interactive flow with option-button pauses"
+          >
+            👔 Manager
+          </button>
         </div>
-        <select
-          value={selectedWorkflow}
-          onChange={(e) => setWorkflow(e.target.value)}
-          className="ml-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
-        >
-          {filteredWorkflows.length === 0 && (
-            <option value={mode === "swarm" ? "quick_task" : "default_workflow"}>
-              {mode === "swarm" ? "quick_task" : "default_workflow"}
-            </option>
-          )}
-          {filteredWorkflows.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name}
-            </option>
-          ))}
-        </select>
+        {mode !== "manager" && (
+          <select
+            value={selectedWorkflow}
+            onChange={(e) => setWorkflow(e.target.value)}
+            className="ml-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
+          >
+            {filteredWorkflows.length === 0 && (
+              <option value={mode === "swarm" ? "quick_task" : "default_workflow"}>
+                {mode === "swarm" ? "quick_task" : "default_workflow"}
+              </option>
+            )}
+            {filteredWorkflows.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+          </select>
+        )}
+        {mode === "manager" && (
+          <span className="ml-2 text-[10px] text-purple-300 px-2 py-0.5 bg-purple-900/40 border border-purple-700/50 rounded">
+            👔 Manager 主导 — 流程由 manager 调度
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={toggleConfigPanel}
@@ -341,45 +362,58 @@ export function ChatPanel({ onClose }: Props) {
         </div>
       )}
 
-      {/* Input */}
-      <div className="px-3 py-2 bg-[#252526] border-t border-gray-700">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKey}
-          placeholder={
-            status === "running"
-              ? "Waiting for agents..."
-              : mode === "swarm"
-                ? "Drop a small task — planner will pick the right roles…"
-                : "Type a topic or follow-up..."
-          }
-          disabled={status === "running"}
-          rows={2}
-          className="w-full px-2 py-1.5 bg-[#3a3a3a] text-gray-200 text-sm rounded border border-gray-600 outline-none focus:border-[#007acc] resize-none disabled:opacity-50"
+      {/* Manager-led: when the backend emits chat:need_decision,
+          the user must pick an option (or push forward without
+          picking). We replace the regular input with an
+          option-button panel until the user resolves the decision. */}
+      {mode === "manager" && pendingDecision ? (
+        <DecisionBubble
+          decision={pendingDecision}
+          onPick={submitManagerDecision}
+          onSkip={managerContinue}
         />
-        <div className="flex items-center gap-2 mt-2">
-          {status === "running" ? (
-            <button
-              onClick={cancelDiscussion}
-              className="px-3 py-1 bg-red-700 hover:bg-red-600 text-white text-xs rounded"
-            >
-              Cancel
-            </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="px-3 py-1 bg-[#007acc] hover:bg-[#1f8ad2] text-white text-xs rounded disabled:opacity-50"
-            >
-              Send
-            </button>
-          )}
-          <span className="text-[10px] text-gray-500 ml-auto">
-            Enter to send · Shift+Enter newline
-          </span>
+      ) : (
+        <div className="px-3 py-2 bg-[#252526] border-t border-gray-700">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKey}
+            placeholder={
+              mode === "manager"
+                ? "manager 主导 — 等 manager 问问题时再回"
+                : status === "running"
+                  ? "Waiting for agents..."
+                  : mode === "swarm"
+                    ? "Drop a small task — planner will pick the right roles…"
+                    : "Type a topic or follow-up..."
+            }
+            disabled={status === "running"}
+            rows={2}
+            className="w-full px-2 py-1.5 bg-[#3a3a3a] text-gray-200 text-sm rounded border border-gray-600 outline-none focus:border-[#007acc] resize-none disabled:opacity-50"
+          />
+          <div className="flex items-center gap-2 mt-2">
+            {status === "running" ? (
+              <button
+                onClick={cancelDiscussion}
+                className="px-3 py-1 bg-red-700 hover:bg-red-600 text-white text-xs rounded"
+              >
+                Cancel
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!input.trim()}
+                className="px-3 py-1 bg-[#007acc] hover:bg-[#1f8ad2] text-white text-xs rounded disabled:opacity-50"
+              >
+                Send
+              </button>
+            )}
+            <span className="text-[10px] text-gray-500 ml-auto">
+              Enter to send · Shift+Enter newline
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Workflow editor modal — only mounted when an editing session is open. */}
       {editingWorkflow && <WorkflowEditor />}
@@ -444,6 +478,111 @@ function SwarmStatus({ plan, files, summary, onFileClick }: SwarmStatusProps) {
           ✨ Synthesis ready (see message list).
         </div>
       )}
+    </div>
+  );
+}
+
+interface DecisionBubbleProps {
+  decision: import("../api/chat").DecisionRequest;
+  onPick: (optionId: string, freeText?: string) => Promise<void> | void;
+  onSkip: (message?: string) => Promise<void> | void;
+}
+
+/**
+ * Purple-bordered option panel rendered in place of the regular
+ * text input when the manager pauses to ask the user.
+ *
+ * Each option shows label / description / estimated cost. Picking
+ * one (or pressing the "我说了算" skip button at the bottom) calls
+ * the corresponding store action which IPCs back to the backend.
+ */
+function DecisionBubble({ decision, onPick, onSkip }: DecisionBubbleProps) {
+  const [freeText, setFreeText] = useState("");
+  return (
+    <div className="px-3 py-3 bg-purple-950/30 border-t-2 border-purple-700/60 space-y-2">
+      <div className="text-[10px] uppercase tracking-wide text-purple-300 font-semibold">
+        👔 manager 正在等你决定
+      </div>
+      <div className="text-sm text-purple-100 font-medium leading-snug">
+        {decision.question}
+      </div>
+      {decision.reason && (
+        <div className="text-[11px] text-purple-200/70 italic leading-snug">
+          _{decision.reason}_
+        </div>
+      )}
+      {decision.contextSummary && (
+        <details className="text-[10px] text-purple-200/60">
+          <summary className="cursor-pointer hover:text-purple-200">
+            当前上下文
+          </summary>
+          <pre className="mt-1 px-2 py-1 bg-purple-900/30 rounded whitespace-pre-wrap font-mono text-[10px]">
+            {decision.contextSummary}
+          </pre>
+        </details>
+      )}
+      <div className="flex flex-col gap-1.5 pt-1">
+        {decision.options.map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={() => onPick(opt.id, freeText.trim() || undefined)}
+            className="text-left px-3 py-2 bg-purple-900/40 hover:bg-purple-800/60 border border-purple-700/50 rounded transition-colors group"
+          >
+            <div className="flex items-start gap-2">
+              <span className="text-base shrink-0">
+                {opt.workerRole === "conclude" || opt.workerRole === null
+                  ? "✅"
+                  : opt.workerRole
+                    ? "▶️"
+                    : "❓"}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-purple-100 font-medium">
+                    {opt.label}
+                  </span>
+                  {opt.estimatedCostUsd > 0 && (
+                    <span className="text-[10px] text-orange-300 px-1.5 py-0.5 bg-orange-900/40 border border-orange-800/60 rounded shrink-0">
+                      ≈ ${opt.estimatedCostUsd.toFixed(3)}
+                    </span>
+                  )}
+                  {opt.workerRole && (
+                    <span className="text-[10px] text-purple-300/70 font-mono shrink-0">
+                      → {opt.workerRole}
+                    </span>
+                  )}
+                </div>
+ {opt.description && (
+                  <div className="text-[11px] text-purple-200/70 mt-0.5 leading-snug">
+                    {opt.description}
+                  </div>
+                )}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={freeText}
+        onChange={(e) => setFreeText(e.target.value)}
+        placeholder="（可选）补充说明，会跟选项一起发给 manager"
+        rows={2}
+        className="w-full px-2 py-1.5 bg-[#2a1f3a] text-purple-100 text-xs rounded border border-purple-800 outline-none focus:border-purple-500 resize-none"
+      />
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          type="button"
+          onClick={() => onSkip(freeText.trim() || undefined)}
+          className="px-2 py-1 text-[11px] text-purple-300 hover:text-purple-100 hover:bg-purple-900/40 rounded"
+          title="不选选项，让 manager 继续"
+        >
+          我说了算（manager 自己定）→
+        </button>
+        <span className="text-[10px] text-purple-300/60 ml-auto">
+          {decision.options.length} 个选项
+        </span>
+      </div>
     </div>
   );
 }
