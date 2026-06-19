@@ -268,6 +268,11 @@ pub enum ManagerState {
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum ManagerAction {
     NeedDecision {
+        /// Short label shown in the decision bubble header (e.g.
+        /// "🎨 设计任务" / "🪲 Bug 排查" / "🧭 通用"). Lets the
+        /// user see which heuristic the manager fired and whether
+        /// to override it.
+        branch_label: String,
         question: String,
         reason: String,
         options: Vec<DecisionOption>,
@@ -295,6 +300,9 @@ pub struct DecisionOption {
 #[serde(rename_all = "camelCase")]
 pub struct DecisionRequest {
     pub session_id: usize,
+    /// Short label shown in the decision bubble header — same value
+    /// as `ManagerAction::NeedDecision::branch_label`.
+    pub branch_label: String,
     pub question: String,
     pub reason: String,
     pub options: Vec<DecisionOption>,

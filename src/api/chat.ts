@@ -252,6 +252,9 @@ export interface DecisionOption {
  */
 export interface DecisionRequest {
   sessionId: number;
+  /** Short branch label so the user knows which heuristic fired
+   *  (e.g. "🎨 设计任务" / "🪲 Bug 排查" / "🧭 通用" / "🔁 反射"). */
+  branchLabel: string;
   question: string;
   reason: string;
   options: DecisionOption[];

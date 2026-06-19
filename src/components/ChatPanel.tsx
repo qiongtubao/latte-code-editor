@@ -500,8 +500,18 @@ function DecisionBubble({ decision, onPick, onSkip }: DecisionBubbleProps) {
   const [freeText, setFreeText] = useState("");
   return (
     <div className="px-3 py-3 bg-purple-950/30 border-t-2 border-purple-700/60 space-y-2">
-      <div className="text-[10px] uppercase tracking-wide text-purple-300 font-semibold">
-        👔 manager 正在等你决定
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[10px] uppercase tracking-wide text-purple-300 font-semibold">
+          👔 manager 正在等你决定
+        </div>
+        {decision.branchLabel && (
+          <div
+            className="text-[10px] px-1.5 py-0.5 bg-purple-900/60 border border-purple-700/50 text-purple-200 rounded font-mono"
+            title="manager 根据关键词判断的话题类型"
+          >
+            {decision.branchLabel}
+          </div>
+        )}
       </div>
       <div className="text-sm text-purple-100 font-medium leading-snug">
         {decision.question}

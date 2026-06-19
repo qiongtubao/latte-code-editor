@@ -864,6 +864,7 @@ describe("useChatStore — manager-led", () => {
   it("applyNeedDecision 写入 pendingDecision", () => {
     useChatStore.getState().applyNeedDecision({
       sessionId: 1,
+      branchLabel: "通用",
       question: "下一步让谁先动手？",
       reason: "需要决定先做需求还是先做架构",
       options: [
@@ -887,12 +888,14 @@ describe("useChatStore — manager-led", () => {
     const s = useChatStore.getState();
     expect(s.pendingDecision?.question).toBe("下一步让谁先动手？");
     expect(s.pendingDecision?.options).toHaveLength(2);
+    expect(s.pendingDecision?.branchLabel).toBe("通用");
   });
 
   it("submitManagerDecision 调用 chat_user_decision 并清掉 pendingDecision", async () => {
     useChatStore.setState({ managerSessionId: 7 });
     useChatStore.getState().applyNeedDecision({
       sessionId: 7,
+      branchLabel: "通用",
       question: "Q?",
       reason: "r",
       options: [
@@ -917,6 +920,7 @@ describe("useChatStore — manager-led", () => {
     useChatStore.setState({ managerSessionId: 9 });
     useChatStore.getState().applyNeedDecision({
       sessionId: 9,
+      branchLabel: "通用",
       question: "Q?",
       reason: "r",
       options: [],

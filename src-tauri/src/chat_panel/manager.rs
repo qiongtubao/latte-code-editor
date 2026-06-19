@@ -66,47 +66,65 @@ fn stub_action_for_topic(
             ),
         };
     }
+    // Categorize the topic by keyword. Each branch returns (label,
+    // question, options). The label is shown in the decision
+    // bubble header so the user knows which heuristic fired and
+    // can override if the heuristic was wrong.
+    let (branch_label, q, opts) =
+        if lower.contains("设计") || lower.contains("design") || lower.contains("架构") {
+            (
+                "🎨 设计任务",
+                "下一步让谁先动手？",
+                vec![
+                    option("pm_only", "只让产品经理写需求", "先把范围、验收标准钉死再谈架构", Some("pm"), 0.005),
+                    option("arch_only", "只让系统架构师画方案", "已经有大致想法，直接出架构草图", Some("architect"), 0.008),
+                    option("pm_then_arch", "PM → 架构师 顺序两轮", "严谨路径：先需求后方案", Some("pm"), 0.018),
+                    option("all_three", "PM + 架构师 + 测试工程师 并行", "一次出三份方案，但费用高", None, 0.045),
+                ],
+            )
+        } else if lower.contains("bug") || lower.contains("fix") || lower.contains("错误") {
+            (
+                "🪲 Bug 排查",
+                "怎么排查这个 bug？",
+                vec![
+                    option("repro_first", "先让测试工程师复现", "拿到稳定的复现步骤再动手", Some("tester"), 0.005),
+                    option("devops_logs", "先看 devops 日志 / 监控", "从运维侧找异常更快", Some("devops"), 0.004),
+                    option("code_dive", "直接让软件工程师读代码", "可能是个明显的逻辑错误", Some("programmer"), 0.006),
+                    option("security_check", "怀疑安全相关 → 安全审计员先看", "涉及权限 / 输入校验时优先", Some("security"), 0.008),
+                ],
+            )
+        } else if lower.contains("解释") || lower.contains("explain") || lower.contains("文档") {
+            (
+                "📝 文档 / 解释",
+                "要写成什么样的文档？",
+                vec![
+                    option("tech_writer", "让技术写作写中文说明", "面向团队内部阅读", Some("tech_writer"), 0.004),
+                    option("architect", "让架构师写 ADR / 设计文档", "需要技术决策依据", Some("architect"), 0.008),
+                    option("video", "不写了，先口头解释 (Conclude)", "口头说清楚就行", None, 0.0),
+                ],
+            )
+        } else {
+            (
+                "🧭 通用",
+                "我不太确定怎么拆解这个任务 —— 你想怎么开始？",
+                vec![
+                    option("ask_pm", "先让产品经理理清需求", "任务多半隐含没说明的需求", Some("pm"), 0.005),
+                    option("ask_arch", "先让架构师看可行性", "技术风险高的先排除", Some("architect"), 0.008),
+                    option("just_do", "直接让软件工程师开干", "需求清晰，重在实现", Some("programmer"), 0.006),
+                ],
+            )
+        };
 
-    let (q, opts) = if lower.contains("设计") || lower.contains("design") || lower.contains("架构") {
-        (
-            "下一步让谁先动手？",
-            vec![
-                option("pm_only", "只让产品经理写需求", "先把范围、验收标准钉死再谈架构", Some("pm"), 0.005),
-                option("arch_only", "只让系统架构师画方案", "已经有大致想法，直接出架构草图", Some("architect"), 0.008),
-                option("pm_then_arch", "PM → 架构师 顺序两轮", "严谨路径：先需求后方案", Some("pm"), 0.018),
-                option("all_three", "PM + 架构师 + 测试工程师 并行", "一次出三份方案，但费用高", None, 0.045),
-            ],
-        )
-    } else if lower.contains("bug") || lower.contains("fix") || lower.contains("错误") {
-        (
-            "怎么排查这个 bug？",
-            vec![
-                option("repro_first", "先让测试工程师复现", "拿到稳定的复现步骤再动手", Some("tester"), 0.005),
-                option("devops_logs", "先看 devops 日志 / 监控", "从运维侧找异常更快", Some("devops"), 0.004),
-                option("code_dive", "直接让软件工程师读代码", "可能是个明显的逻辑错误", Some("programmer"), 0.006),
-                option("security_check", "怀疑安全相关 → 安全审计员先看", "涉及权限 / 输入校验时优先", Some("security"), 0.008),
-            ],
-        )
-    } else if lower.contains("解释") || lower.contains("explain") || lower.contains("文档") {
-        (
-            "要写成什么样的文档？",
-            vec![
-                option("tech_writer", "让技术写作写中文说明", "面向团队内部阅读", Some("tech_writer"), 0.004),
-                option("architect", "让架构师写 ADR / 设计文档", "需要技术决策依据", Some("architect"), 0.008),
-                option("video", "不写了，先口头解释 (Conclude)", "口头说清楚就行", None, 0.0),
-            ],
-        )
-    } else {
-        (
-            "我不太确定怎么拆解这个任务 —— 你想怎么开始？",
-            vec![
-                option("ask_pm", "先让产品经理理清需求", "任务多半隐含没说明的需求", Some("pm"), 0.005),
-                option("ask_arch", "先让架构师看可行性", "技术风险高的先排除", Some("architect"), 0.008),
-                option("just_do", "直接让软件工程师开干", "需求清晰，重在实现", Some("programmer"), 0.006),
-                option("user_continue", "我自己想想，先不分配", "暂停在这里", None, 0.0),
-            ],
-        )
-    };
+    // Every decision must include the generic escape hatch — never
+    // trap the user in a topical choice. Cost-free (no LLM call).
+    let mut opts = opts;
+    opts.push(option(
+        "user_continue",
+        "我说了算（让 manager 自己定 / 跳过）",
+        "不要上面这些选项，让 manager 自己决定下一步",
+        None,
+        0.0,
+    ));
 
     // Validate roles: any option pointing at a missing role gets
     // filtered out so the UI never offers a dead end.
@@ -131,10 +149,11 @@ fn stub_action_for_topic(
     };
 
     ManagerAction::NeedDecision {
+        branch_label: branch_label.to_string(),
         question: q.to_string(),
         reason: format!(
-            "Stub-mode heuristic: topic='{}', decisions_taken={}, steps_taken={}",
-            topic, decisions_taken, steps_taken
+            "Stub-mode heuristic: branch={}, topic='{}', decisions_taken={}, steps_taken={}",
+            branch_label, topic, decisions_taken, steps_taken
         ),
         options: opts,
     }
@@ -169,25 +188,43 @@ fn stub_reflection(_role: &str, topic: &str) -> ManagerAction {
     // After a worker runs, the manager usually wants to ask another
     // question. In stub mode we cycle through the available roles
     // so the user can see the full UI shape.
+    // Post-worker reflection: every decision gets the generic
+    // escape hatch appended so the user can always say "manager
+    // 自己定 / 跳过".
+    let mut reflection_opts = vec![
+        option(
+            "ask_another",
+            "再请一个角色补充视角",
+            "比如再让 reviewer 或 tester 看看",
+            Some("reviewer"),
+            0.006,
+        ),
+        option(
+            "wrap_up",
+            "够了，开始收尾",
+            "整理成 summary",
+            None,
+            0.004,
+        ),
+        option(
+            "user_continue",
+            "我说了算（让 manager 自己定 / 跳过）",
+            "不要上面这些选项，让 manager 自己决定下一步",
+            None,
+            0.0,
+        ),
+    ];
+    // Filter out worker options whose role isn't actually available.
+    let roles = load_roles_config();
+    reflection_opts.retain(|o| match &o.worker_role {
+        None => true,
+        Some(r) => roles.roles.contains_key(r),
+    });
     ManagerAction::NeedDecision {
+        branch_label: "🔁 反射".to_string(),
         question: "已经收到 worker 的回复。下一步？".into(),
         reason: format!("stub-mode 反射：已收到 `{topic}` 的工作输出"),
-        options: vec![
-            option(
-                "ask_another",
-                "再请一个角色补充视角",
-                "比如再让 reviewer 或 tester 看看",
-                Some("reviewer"),
-                0.006,
-            ),
-            option(
-                "wrap_up",
-                "够了，开始收尾",
-                "整理成 summary",
-                None,
-                0.004,
-            ),
-        ],
+        options: reflection_opts,
     }
 }
 
@@ -197,8 +234,8 @@ fn stub_reflection(_role: &str, topic: &str) -> ManagerAction {
 /// (option buttons).
 fn action_to_bubble_text(action: &ManagerAction) -> String {
     match action {
-        ManagerAction::NeedDecision { question, reason, options } => format!(
-            "**{question}**\n\n_{reason}_\n\n{}",
+        ManagerAction::NeedDecision { branch_label, question, reason, options } => format!(
+            "[{branch_label}]\n\n**{question}**\n\n_{reason}_\n\n{}",
             options
                 .iter()
                 .map(|o| format!(
@@ -342,8 +379,14 @@ where
         let action = action_fn(&s);
         let bubble = action_to_bubble_text(&action);
         let decision = match &action {
-            ManagerAction::NeedDecision { question, reason, options } => Some(DecisionRequest {
+            ManagerAction::NeedDecision {
+                branch_label,
+                question,
+                reason,
+                options,
+            } => Some(DecisionRequest {
                 session_id: s.session_id,
+                branch_label: branch_label.clone(),
                 question: question.clone(),
                 reason: reason.clone(),
                 options: options.clone(),
@@ -612,6 +655,7 @@ pub async fn submit_user_continue(
             stub_action_for_topic(&topic, 0, 0, &state_arc.lock().available_roles)
         }
         _ => ManagerAction::NeedDecision {
+            branch_label: "🧭 通用".into(),
             question: "下一步？".into(),
             reason: "用户主动推进，但 manager 没有明确指令".into(),
             options: vec![
@@ -622,7 +666,6 @@ pub async fn submit_user_continue(
             ],
         },
     };
-
     take_manager_turn(app, &state_arc, &workspace, &topic, next_turn, |_| action)
 }
 
@@ -732,7 +775,6 @@ mod tests {
             other => panic!("expected NeedDecision, got {other:?}"),
         }
     }
-
     #[test]
     fn stub_zero_roles_falls_back_to_conclude() {
         let action = stub_action_for_topic("任何话题", 0, 0, &[]);
@@ -742,6 +784,89 @@ mod tests {
                 assert!(options[0].worker_role.is_none());
             }
             other => panic!("expected NeedDecision, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn each_branch_returns_distinct_label() {
+        // The branch_label tells the user which heuristic fired so
+        // they can override if the manager guessed wrong.
+        let design = stub_action_for_topic(
+            "设计登录页",
+            0,
+            0,
+            &["pm".into(), "architect".into()],
+        );
+        let bug = stub_action_for_topic(
+            "fix login bug",
+            0,
+            0,
+            &["tester".into(), "programmer".into()],
+        );
+        let docs = stub_action_for_topic(
+            "解释一下",
+            0,
+            0,
+            &["tech_writer".into(), "architect".into()],
+        );
+        let generic = stub_action_for_topic(
+            "随便聊聊",
+            0,
+            0,
+            &["pm".into()],
+        );
+        let (d, b, doc, g) = (
+            extract_label(&design),
+            extract_label(&bug),
+            extract_label(&docs),
+            extract_label(&generic),
+        );
+        assert_eq!(d, "🎨 设计任务");
+        assert_eq!(b, "🪲 Bug 排查");
+        assert_eq!(doc, "📝 文档 / 解释");
+        assert_eq!(g, "🧭 通用");
+    }
+
+    #[test]
+    fn every_decision_includes_user_continue_escape_hatch() {
+        // The user must always be able to say "manager 自己定 / 跳过"
+        // regardless of which branch fired. This is the core fix for
+        // the "没有显示出通用" UX bug — the generic escape hatch is
+        // present even in topical branches.
+        let all_roles = vec![
+            "pm".into(),
+            "architect".into(),
+            "programmer".into(),
+            "tester".into(),
+            "devops".into(),
+            "tech_writer".into(),
+        ];
+        for topic in &[
+            "设计登录页",
+            "fix login bug",
+            "解释一下",
+            "随便聊聊",
+            "Hello",
+        ] {
+            let action = stub_action_for_topic(topic, 0, 0, &all_roles);
+            let opts = match action {
+                ManagerAction::NeedDecision { options, .. } => options,
+                _ => panic!("{topic} did not produce NeedDecision"),
+            };
+            assert!(
+                opts.iter().any(|o| o.id == "user_continue"),
+                "{topic}: must always offer the user_continue escape hatch, got {opts:?}"
+            );
+            let escape = opts.iter().find(|o| o.id == "user_continue").unwrap();
+            assert!(escape.worker_role.is_none(), "escape hatch shouldn't dispatch a worker");
+            assert_eq!(escape.estimated_cost_usd, 0.0, "escape hatch is cost-free");
+        }
+    }
+
+    fn extract_label(action: &ManagerAction) -> String {
+        match action {
+            ManagerAction::NeedDecision { branch_label, .. } => branch_label.clone(),
+            _ => panic!("expected NeedDecision, got {action:?}"),
         }
     }
 }
