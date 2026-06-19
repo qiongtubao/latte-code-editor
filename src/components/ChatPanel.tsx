@@ -84,22 +84,18 @@ export function ChatPanel({ onClose }: Props) {
       handleSend();
     }
   };
-
-  // Workflow dropdown is filtered by `mode` rather than `kind` so
-  // that:
-  //   - manager mode shows workflows tagged `mode: "manager_led"`
-  //     (any workflow whose id starts with `manager_` per
-  //     `derive_mode` in commands.rs);
-  //   - swarm mode shows `mode: "swarm"` workflows;
-  //   - discuss mode shows everything else.
-  // The auto-switch in `setWorkflow` keeps `mode` aligned with the
-  // workflow's `mode` so the dropdown stays in sync.
-  const filteredWorkflows = availableWorkflows.filter((w) => {
-    const wfMode = w.mode ?? w.kind;
-    if (mode === "manager") return wfMode === "manager_led";
-    if (mode === "swarm") return wfMode === "swarm";
-    return wfMode !== "manager_led" && wfMode !== "swarm";
-  });
+  // Show every workflow in the dropdown, regardless of the current
+  // chat mode. Each entry carries a small mode tag (planned / swarm /
+  // manager) so the user can see what mode picking it will activate.
+  // Filtering workflows out by mode hid manager_led from users who
+  // hadn't yet clicked the manager button — they had no way to
+  // discover the 通用 workflow.
+  const filteredWorkflows = availableWorkflows;
+  const modeTagFor = (id: string, kind: string): string => {
+    if (id.startsWith("manager_")) return "👔 manager";
+    if (kind === "swarm") return "🪄 swarm";
+    return "💬 planned";
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#1e1e1e] border-l border-gray-700">
@@ -162,7 +158,7 @@ export function ChatPanel({ onClose }: Props) {
           )}
           {filteredWorkflows.map((w) => (
             <option key={w.id} value={w.id}>
-              {w.name}
+              {w.name}  [{modeTagFor(w.id, w.kind ?? "planned")}]
             </option>
           ))}
         </select>
