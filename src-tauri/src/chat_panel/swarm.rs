@@ -40,7 +40,7 @@ use tauri::{AppHandle, Emitter};
 use super::global_config::{
     load_global_models, load_roles_config, RoleConfig, WorkflowKind,
 };
-use super::session::run_discussion;
+use super::session::{build_turn_payload, run_discussion};
 use super::types::{
     SwarmEvent, SwarmStepSpec, StartDiscussionRequest, TurnPayload,
 };
@@ -337,15 +337,16 @@ pub async fn run_swarm(
             }
         };
 
-        let turn = TurnPayload {
-            agent: step.role.clone(),
-            role_id: step.role.clone(),
-            icon: icon_for(&roles_config, &step.role),
-            response: response.clone(),
-            round: idx,
-            step_id: step.id.clone(),
-            turn_number: idx,
-        };
+        let turn = build_turn_payload(
+            0,
+            idx,
+            &step.role,
+            &step.role,
+            &icon_for(&roles_config, &step.role),
+            response.clone(),
+            step.id.clone(),
+            idx,
+        );
         emit_swarm_event(
             app,
             SwarmEvent {

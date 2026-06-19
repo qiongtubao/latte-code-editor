@@ -39,6 +39,34 @@ pub fn default_role_ids() -> &'static [&'static str] {
     &["pm", "architect", "programmer", "tester", "reviewer", "devops", "security", "designer", "tech_writer", "manager"]
 }
 
+/// Construct a `TurnPayload` with default weight + pinned=false +
+/// a stable `message_id` derived from `(session_id, turn_number)`.
+/// Centralizes the defaults so call sites don't have to repeat them
+/// — and gives every message a deterministic id the frontend can
+/// target for delete / edit / weight-adjust.
+pub fn build_turn_payload(
+    session_id: usize,
+    turn_number: usize,
+    role_id: &str,
+    agent: &str,
+    icon: &str,
+    response: String,
+    step_id: String,
+    round: usize,
+) -> TurnPayload {
+    TurnPayload {
+        agent: agent.to_string(),
+        role_id: role_id.to_string(),
+        icon: icon.to_string(),
+        response,
+        round,
+        step_id,
+        turn_number,
+        weight: 1.0,
+        message_id: format!("{session_id}:{turn_number}"),
+        pinned: false,
+    }
+}
 /// Run a discussion — uses real LLM if API keys are configured, else stub.
 pub async fn run_discussion(
     app: &AppHandle,
@@ -495,17 +523,18 @@ async fn run_live_discussion(
     //      line and have no idea which role failed.
     if let Err(broken_roles) = preflight_check(&resolver, roles_config, &roles_to_use) {
         for broken in &broken_roles {
-            let payload = TurnPayload {
-                agent: broken.role_name.clone(),
-                role_id: broken.role_id.clone(),
-                icon: broken.icon.clone(),
-                response: format!("⚠️ {}\n\n（无需手动解决：检查 ~/.latte/models.yaml 中 {} 的 API key）",
+            let payload = build_turn_payload(
+                0, // preflight errors predate session creation
+                broken_roles.iter().position(|b| std::ptr::eq(b, broken)).unwrap_or(0),
+                &broken.role_id,
+                &broken.role_name,
+                &broken.icon,
+                format!("⚠️ {}\n\n（无需手动解决：检查 ~/.latte/models.yaml 中 {} 的 API key）",
                     broken.message,
                     broken.missing_models.join("、")),
-                round: 0,
-                step_id: format!("__preflight_error__{}", broken.role_id),
-                turn_number: 0,
-            };
+                format!("__preflight_error__{}", broken.role_id),
+                0,
+            );
             let _ = app.emit("chat:turn", &payload);
         }
         return Err(format!(
@@ -547,15 +576,20 @@ async fn run_live_discussion(
                 .get(&turn.role_id)
                 .map(|r| r.icon.clone())
                 .unwrap_or_else(|| "💬".to_string());
-            let payload = TurnPayload {
-                agent: turn.agent.clone(),
-                role_id: turn.role_id.clone(),
-                icon,
-                response: turn.response.clone(),
-                round: turn.round,
-                step_id: turn.step_id.clone(),
-                turn_number: turn.turn_number,
-            };
+            let payload = build_turn_payload(
+                0, // session_id assigned by frontend when calling startDiscussion
+                turn.turn_number,
+                &turn.role_id,
+                &turn.agent,
+                &roles_config
+                    .roles
+                    .get(&turn.role_id)
+                    .map(|r| r.icon.clone())
+                    .unwrap_or_else(|| "💬".to_string()),
+                turn.response.clone(),
+                turn.step_id.clone(),
+                turn.round,
+            );
             let _ = app.emit("chat:turn", &payload);
         })
         .await
@@ -570,19 +604,20 @@ async fn run_live_discussion(
             turns: r
                 .turns
                 .iter()
-                .map(|t| TurnPayload {
-                    agent: t.agent.clone(),
-                    role_id: t.role_id.clone(),
-                    icon: roles_config
+                .map(|t| build_turn_payload(
+                    0,
+                    t.turn_number,
+                    &t.role_id,
+                    &t.agent,
+                    &roles_config
                         .roles
                         .get(&t.role_id)
-                        .map(|rd| rd.icon.clone())
-                        .unwrap_or_else(|| "💬".to_string()),
-                    response: t.response.clone(),
-                    round: t.round,
-                    step_id: t.step_id.clone(),
-                    turn_number: t.turn_number,
-                })
+                    .map(|rd| rd.icon.clone())
+                    .unwrap_or_else(|| "💬".to_string()),
+                    t.response.clone(),
+                    t.step_id.clone(),
+                    t.round,
+                ))
                 .collect(),
             consensus_reached: r.consensus_reached,
         })
@@ -663,15 +698,16 @@ async fn run_stub_discussion(
                 .replace("{Slug}", &capitalize(&slug))
                 .replace("{Topic}", &capitalize(&topic_pretty));
 
-            let turn = TurnPayload {
-                agent: rid.to_string(),
-                role_id: rid.to_string(),
-                icon: icon.to_string(),
-                response: response.clone(),
-                round: round_num,
-                step_id: format!("step_{}", idx),
-                turn_number: turns.len(),
-            };
+            let turn = build_turn_payload(
+                0,
+                turns.len(),
+                rid,
+                rid,
+                icon,
+                response.clone(),
+                format!("step_{}", idx),
+                round_num,
+            );
             total_input_tokens += (topic_pretty.len() / 4) as u32 + 200;
             total_output_tokens += (response.len() / 4) as u32;
             let _ = app.emit("chat:turn", &turn);

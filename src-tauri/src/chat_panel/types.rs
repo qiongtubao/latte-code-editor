@@ -11,6 +11,25 @@ pub struct TurnPayload {
     pub round: usize,
     pub step_id: String,
     pub turn_number: usize,
+    /// Importance weight (0.0 = droppable, 1.0 = default, 5.0 = pinned).
+    /// Editor UI lets the user adjust this. The summarizer uses it to
+    /// decide which turns to keep verbatim vs. summarize vs. drop
+    /// when the model-view byte cap is hit.
+    #[serde(default = "default_weight")]
+    pub weight: f32,
+    /// Stable id so the frontend can target a specific message for
+    /// delete / edit operations. Backend sets this to
+    /// `{session_id}:{turn_number}`.
+    #[serde(default)]
+    pub message_id: String,
+    /// Whether the user marked this message as pinned (weight >= 5.0).
+    /// Pinned messages are never dropped by the summarizer.
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+fn default_weight() -> f32 {
+    1.0
 }
 
 #[derive(Clone, Serialize)]
