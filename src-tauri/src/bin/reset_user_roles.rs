@@ -14,7 +14,8 @@ use std::fs;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use latte_code_editor_lib::chat_panel::global_config::{
-    create_default_roles, roles_config_path, write_roles_config, write_workflow_file,
+    create_default_roles, roles_config_path, write_role_file, write_roles_config,
+    write_workflow_file,
 };
 
 fn main() {
@@ -33,23 +34,27 @@ fn main() {
     roles_only.workflows = HashMap::new();
     write_roles_config(&path, &roles_only).expect("write defaults");
 
-    // Also write each default workflow as its own file under
-    // `~/.latte-code-editor/workflows/<id>.yaml`. Without this
-    // step, on-disk workflow files stay on whatever shape they had
-    // from a previous reset — and a workflow added in a later
-    // commit (e.g. `manager_role: tech_director`) never reaches the
-    // user until they manually delete the file.
+    // Write per-role files (`roles/<id>.yaml`) and per-workflow
+    // files (`workflows/<id>.yaml`). Without this step, on-disk
+    // files stay on whatever shape they had from a previous reset —
+    // and a field added in a later commit (e.g. `manager_role:
+    // tech_director` on `manager_default`, or `tools` on a role)
+    // never reaches the user until they manually delete the file.
     for (id, wf) in &config.workflows {
         write_workflow_file(id, wf)
             .unwrap_or_else(|e| panic!("write workflows/{id}.yaml failed: {e}"));
     }
+    for (id, role) in &config.roles {
+        write_role_file(id, role)
+            .unwrap_or_else(|e| panic!("write roles/{id}.yaml failed: {e}"));
+    }
 
     println!(
-        "OK — wrote Chinese defaults ({} roles, {} workflow files)",
+        "OK — wrote Chinese defaults ({} roles + {} role files, {} workflow files)",
+        config.roles.len(),
         config.roles.len(),
         config.workflows.len(),
     );
-
     // Sanity-check: the on-disk file contains the new Chinese names.
     let raw = fs::read_to_string(&path).expect("re-read");
     let expectations = [

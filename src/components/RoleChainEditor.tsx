@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ModelInfo } from "../api/chat";
+import { openConfigFile } from "../api/commands";
 
 interface Props {
-  roleId: string;
   icon: string;
   name: string;
   /** Server-side chain (source of truth). When this changes, local
@@ -96,11 +96,18 @@ export function RoleChainEditor({
         <span className="font-semibold text-gray-300">
           {icon} {name}
         </span>
-        <span className="ml-auto">
+        <span className="ml-auto flex items-center gap-1">
+          <button
+            onClick={() => openConfigFile(`role:${roleId}`)}
+            className="px-1 text-gray-400 hover:text-white"
+            title={`打开 roles/${roleId}.yaml`}
+            type="button"
+          >
+            📄
+          </button>
           {status === "saving" ? "💾 …" : status === "error" ? "⚠️" : null}
         </span>
       </div>
-      <div className="space-y-0.5">
         {chain.map((modelId, idx) => (
           <div key={`${idx}-${modelId}`} className="flex items-center gap-1">
             <span className="w-4 text-right text-gray-500 text-[10px]">

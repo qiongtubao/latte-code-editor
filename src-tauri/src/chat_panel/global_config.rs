@@ -385,6 +385,117 @@ pub fn read_all_workflow_files() -> HashMap<String, WorkflowDef> {
     out
 }
 
+// ─── Per-role file storage ──────────────────────────────────────
+//
+// Each role lives in its own file under
+// `~/.latte-code-editor/roles/<id>.yaml` so users can open a role's
+// config from the settings panel without scrolling through a
+// monolithic roles.yaml. Workflow files (under `workflows/`) already
+// follow this pattern; the same conventions apply here — one file
+// per role, auto-migrated from roles.yaml on first load, and fully
+// owned by the user once on disk.
+
+/// Directory holding per-role YAML files (`<id>.yaml`). Override
+/// with `LATTE_ROLES_DIR` for tests.
+pub fn roles_dir() -> PathBuf {
+    if let Ok(p) = env::var("LATTE_ROLES_DIR") {
+        return PathBuf::from(p);
+    }
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".latte-code-editor")
+        .join("roles")
+}
+
+/// Sanitize a role id for use as a filename. Mirrors
+/// `sanitize_workflow_id`.
+pub(crate) fn sanitize_role_id(id: &str) -> String {
+    id.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Read a single role file by id (`roles/<id>.yaml`). Returns
+/// `Ok(None)` when the file is missing — caller should fall back to
+/// the inline `roles.yaml` entry. Files that fail to parse are
+/// surfaced as `Err`.
+pub fn read_role_file(id: &str) -> Result<Option<RoleDef>, String> {
+    let path = roles_dir().join(format!("{}.yaml", sanitize_role_id(id)));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("read {}: {e}", path.display()))?;
+    serde_yaml::from_str::<RoleDef>(&raw)
+        .map(Some)
+        .map_err(|e| format!("parse {}: {e}", path.display()))
+}
+
+/// Write a role file (`roles/<id>.yaml`). Creates the parent dir
+/// if missing.
+pub fn write_role_file(id: &str, def: &RoleDef) -> std::io::Result<()> {
+    let dir = roles_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.yaml", sanitize_role_id(id)));
+    let yaml = serde_yaml::to_string(def).unwrap_or_default();
+    std::fs::write(path, yaml)
+}
+
+/// Delete a role file. Returns `true` if the file existed.
+pub fn delete_role_file(id: &str) -> std::io::Result<bool> {
+    let path = roles_dir().join(format!("{}.yaml", sanitize_role_id(id)));
+    if !path.exists() {
+        return Ok(false);
+    }
+    std::fs::remove_file(&path)?;
+    Ok(true)
+}
+
+/// Read every role file under `roles_dir()`. Returns a map
+/// (id → def). Files that fail to parse are skipped with a stderr
+/// warning — a single bad role file must not lock the user out.
+pub fn read_all_role_files() -> HashMap<String, RoleDef> {
+    let dir = roles_dir();
+    let mut out: HashMap<String, RoleDef> = HashMap::new();
+    let entries = match fs::read_dir(&dir) {
+        Ok(it) => it,
+        Err(_) => return out,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+            continue;
+        }
+        let raw = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[chat] skip role file {}: {e}", path.display());
+                continue;
+            }
+        };
+        match serde_yaml::from_str::<RoleDef>(&raw) {
+            Ok(def) => {
+                if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
+                    out.insert(id.to_string(), def);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[chat] skip malformed role file {}: {e}",
+                    path.display()
+                );
+            }
+        }
+    }
+    out
+}
+
 /// Sanitize a workflow id for use as a filename. Mirrors the
 /// `validate_workflow_id` rules in commands.rs — only
 pub(crate) fn sanitize_workflow_id(id: &str) -> String {
@@ -468,6 +579,12 @@ pub fn load_roles_config() -> RoleConfig {
         for (id, wf) in &config.workflows {
             let _ = write_workflow_file(id, wf);
         }
+        // Seed per-role files too so `roles/<id>.yaml` exists for
+        // every default role on first launch. Users can open a
+        // role's config from the settings panel right away.
+        for (id, role) in &config.roles {
+            let _ = write_role_file(id, role);
+        }
         return config;
     }
 
@@ -527,8 +644,35 @@ pub fn load_roles_config() -> RoleConfig {
             }
         }
     }
+
+    // Per-role file migration: if a role is inline in roles.yaml but
+    // no file exists under `roles/<id>.yaml`, write one so the user
+    // can open it from the settings panel. Existing per-role files
+    // override the inline entry — the file is the source of truth
+    // once it exists.
+    let roles_dir_empty = match fs::read_dir(&roles_dir()) {
+        Ok(mut it) => it.next().is_none(),
+        Err(_) => true,
+    };
+    if roles_dir_empty && !config.roles.is_empty() {
+        for (id, role) in &config.roles {
+            let _ = write_role_file(id, role);
+        }
+        eprintln!(
+            "[chat] split {} roles into {}/",
+            config.roles.len(),
+            roles_dir().display()
+        );
+    } else {
+        // Files already exist — let them override inline entries.
+        for (id, file_def) in read_all_role_files() {
+            config.roles.insert(id, file_def);
+        }
+    }
+
     config
 }
+
 pub fn write_roles_config(path: &std::path::Path, config: &RoleConfig) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

@@ -6,9 +6,10 @@
 #[cfg(test)]
 mod tests {
     use crate::chat_panel::global_config::{
-        create_default_roles, delete_workflow_file, load_roles_config, read_all_workflow_files,
-        read_workflow_file, roles_config_path, workflows_dir, write_roles_config,
-        write_workflow_file, RoleConfig, RoleDef, WorkflowDef,
+        create_default_roles, delete_workflow_file, load_roles_config, read_all_role_files,
+        read_all_workflow_files, read_role_file, read_workflow_file, roles_config_path,
+        workflows_dir, write_role_file, write_roles_config, write_workflow_file,
+        RoleConfig, RoleDef, WorkflowDef,
     };
     use parking_lot::Mutex;
     use serial_test::serial;
@@ -230,4 +231,137 @@ mod tests {
         assert!(cfg.workflows.contains_key("quick_task"));
         assert!(cfg.workflows.contains_key("manager_default"));
     }
+#[test]
+#[serial]
+fn read_role_file_returns_none_when_missing() {
+    let _guard = ENV_LOCK.lock();
+    let tmp = TempDir::new().unwrap();
+    env::set_var("LATTE_ROLES_DIR", tmp.path());
+    let result = read_role_file("does_not_exist").expect("read ok");
+    assert!(result.is_none(), "missing file must return Ok(None), got {result:?}");
+    env::remove_var("LATTE_ROLES_DIR");
+}
+
+#[test]
+#[serial]
+fn role_file_roundtrip_writes_then_reads_back() {
+    let _guard = ENV_LOCK.lock();
+    let tmp = TempDir::new().unwrap();
+    env::set_var("LATTE_ROLES_DIR", tmp.path());
+
+    let role = RoleDef {
+        name: "Round Trip".into(),
+        icon: "🧪".into(),
+        category: "test".into(),
+        model_tier: "standard".into(),
+        model: None,
+        model_chain: vec!["deepseek-chat".into()],
+        temperature: 0.0,
+        tools: vec![],
+        prompt_file: "".into(),
+        prompt: "echo round-trip".into(),
+    };
+    write_role_file("round_trip", &role).expect("write");
+    let read = read_role_file("round_trip")
+        .expect("read ok")
+        .expect("file exists");
+    assert_eq!(read.name, "Round Trip");
+    assert_eq!(read.model_chain, vec!["deepseek-chat".to_string()]);
+    assert_eq!(read.prompt, "echo round-trip");
+    env::remove_var("LATTE_ROLES_DIR");
+}
+
+#[test]
+#[serial]
+fn read_all_role_files_skips_invalid_yaml() {
+    let _guard = ENV_LOCK.lock();
+    let tmp = TempDir::new().unwrap();
+    env::set_var("LATTE_ROLES_DIR", tmp.path());
+
+    let good = RoleDef {
+        name: "Good".into(),
+        icon: "✅".into(),
+        category: "".into(),
+        model_tier: "standard".into(),
+        model: None,
+        model_chain: vec!["deepseek-chat".into()],
+        temperature: 0.0,
+        tools: vec![],
+        prompt_file: "".into(),
+        prompt: "".into(),
+    };
+    write_role_file("good", &good).unwrap();
+    // Drop a malformed file alongside.
+    std::fs::write(tmp.path().join("bad.yaml"), "name: broken
+  - : : :")
+        .unwrap();
+
+    let all = read_all_role_files();
+    assert!(all.contains_key("good"), "good role should load: {all:?}");
+    assert!(!all.contains_key("bad"), "malformed role must be skipped");
+    env::remove_var("LATTE_ROLES_DIR");
+}
+
+#[test]
+#[serial]
+fn load_roles_config_overrides_inline_with_file_role() {
+    // Set up an isolated workspace:
+    //   <tmp>/roles.yaml        → role "pm" with inline prompt
+    //   <tmp>/roles/pm.yaml     → role "pm" with different (file) prompt
+    // After load_roles_config() the inline role must be REPLACED by
+    // the file version (file is source of truth once it exists).
+    let _guard = ENV_LOCK.lock();
+    let tmp = TempDir::new().unwrap();
+    let roles_yaml = tmp.path().join("roles.yaml");
+    let roles_dir = tmp.path().join("roles");
+    std::fs::create_dir_all(&roles_dir).unwrap();
+
+    let mut inline_cfg = create_default_roles();
+    inline_cfg.workflows.clear();
+    inline_cfg.roles.insert(
+        "pm".into(),
+        RoleDef {
+            name: "Inline PM".into(),
+            icon: "📋".into(),
+            category: "".into(),
+            model_tier: "standard".into(),
+            model: None,
+            model_chain: vec!["deepseek-chat".into()],
+            temperature: 0.0,
+            tools: vec![],
+            prompt_file: "".into(),
+            prompt: "inline prompt".into(),
+        },
+    );
+    write_roles_config(&roles_yaml, &inline_cfg).unwrap();
+
+    env::set_var("LATTE_ROLES_PATH", roles_yaml.clone());
+    env::set_var("LATTE_ROLES_DIR", roles_dir.clone());
+    env::set_var("LATTE_WORKFLOWS_DIR", tmp.path().join("workflows"));
+
+    // Now write the file role — `write_role_file` routes through
+    // `LATTE_ROLES_DIR` so this lands at `<tmp>/roles/pm.yaml`.
+    let file_role = RoleDef {
+        name: "File PM".into(),
+        icon: "📋".into(),
+        category: "".into(),
+        model_tier: "standard".into(),
+        model: None,
+        model_chain: vec!["deepseek-chat".into()],
+        temperature: 0.0,
+        tools: vec![],
+        prompt_file: "".into(),
+        prompt: "file prompt wins".into(),
+    };
+    write_role_file("pm", &file_role).unwrap();
+
+    let cfg = load_roles_config();
+    let pm = cfg.roles.get("pm").expect("pm present");
+    assert_eq!(pm.name, "File PM", "file role must override inline entry");
+    assert_eq!(pm.prompt, "file prompt wins");
+
+    env::remove_var("LATTE_ROLES_PATH");
+    env::remove_var("LATTE_ROLES_DIR");
+    env::remove_var("LATTE_WORKFLOWS_DIR");
+}
 }

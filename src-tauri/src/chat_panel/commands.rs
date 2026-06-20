@@ -235,6 +235,7 @@ pub async fn chat_set_default_model(model_id: String) -> Result<(), String> {
 /// - `"models"` → `~/.latte-code-editor/models.yaml`
 /// - `"roles"` → `~/.latte-code-editor/roles.yaml`
 /// - `"workflow:<id>"` → `~/.latte-code-editor/workflows/<id>.yaml`
+/// - `"role:<id>"` → `~/.latte-code-editor/roles/<id>.yaml`
 #[tauri::command]
 pub async fn chat_open_config(config_type: String) -> Result<String, String> {
     let path = if let Some(id) = config_type.strip_prefix("workflow:") {
@@ -246,6 +247,13 @@ pub async fn chat_open_config(config_type: String) -> Result<String, String> {
         // Don't create the file — just return the path so the editor
         // opens an existing one (or shows "not found" if absent).
         dir.join(format!("{}.yaml", super::global_config::sanitize_workflow_id(id)))
+    } else if let Some(id) = config_type.strip_prefix("role:") {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("role:<id> 需要 id".to_string());
+        }
+        let dir = super::global_config::roles_dir();
+        dir.join(format!("{}.yaml", super::global_config::sanitize_role_id(id)))
     } else {
         match config_type.as_str() {
             "models" => super::global_config::global_models_path(),
