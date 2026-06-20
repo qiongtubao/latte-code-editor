@@ -299,6 +299,14 @@ export function ChatPanel({ onClose }: Props) {
                     {w.name}{" "}
                     <span className="text-gray-500 text-[10px]">({w.id})</span>
                   </button>
+                  <button
+                    onClick={() => openConfigFile(`workflow:${w.id}`)}
+                    className="px-1 text-gray-400 hover:text-white text-[11px]"
+                    title={`打开 workflows/${w.id}.yaml`}
+                    type="button"
+                  >
+                    📄
+                  </button>
                 </div>
               ))}
             </div>

@@ -436,23 +436,50 @@ pub(crate) fn preflight_check(
 /// Each role becomes one step; the prompt injects `{{role_name}}` and
 /// `{{topic}}` so the orchestrator can substitute at run time. The
 /// upstream `default_workflow` in `discussion.toml` uses the same
-/// one-step-per-speaker pattern, so this is consistent.
+/// Build the upstream `DiscussionWorkflow` from the project-side
+/// `StartDiscussionRequest` + the resolved role list.
+///
+/// If `step_plan` is non-empty, we emit one upstream step per
+/// `step_plan` entry, with `speakers = entry` (in order). This is
+/// how the project's `WorkflowDef::steps` shape maps onto the
+/// orchestrator's "ordered step with multiple speakers" model —
+/// without it every role speaks in parallel regardless of `steps`.
+///
+/// Otherwise we fall back to one step per flat role id (the legacy
+/// "round-robin per role" behaviour for workflows with empty
+/// `steps`, e.g. user-curated custom workflows).
 fn build_workflow(
     req: &StartDiscussionRequest,
     role_ids: &[String],
+    step_plan: Option<&[Vec<String>]>,
 ) -> DiscussionWorkflow {
-    let steps: Vec<WorkflowStep> = role_ids
-        .iter()
-        .map(|role_id| WorkflowStep {
-            id: format!("{role_id}_speak"),
-            description: format!("{role_id} speaks"),
-            speakers: vec![role_id.clone()],
-            prompt: "You are {{{{role_name}}}}. Topic: {{{{topic}}}}. Share your perspective."
-                .to_string(),
-            hooks: vec![],
-            output_key: None,
-        })
-        .collect();
+    let steps: Vec<WorkflowStep> = match step_plan {
+        Some(plan) if !plan.is_empty() => plan
+            .iter()
+            .enumerate()
+            .map(|(i, speakers)| WorkflowStep {
+                id: format!("step_{i}"),
+                description: format!("step {i}"),
+                speakers: speakers.clone(),
+                prompt: "Step {{step}}: speakers are {{{{speakers}}}}. Topic: {{{{topic}}}}."
+                    .to_string(),
+                hooks: vec![],
+                output_key: None,
+            })
+            .collect(),
+        _ => role_ids
+            .iter()
+            .map(|role_id| WorkflowStep {
+                id: format!("{role_id}_speak"),
+                description: format!("{role_id} speaks"),
+                speakers: vec![role_id.clone()],
+                prompt: "You are {{{{role_name}}}}. Topic: {{{{topic}}}}. Share your perspective."
+                    .to_string(),
+                hooks: vec![],
+                output_key: None,
+            })
+            .collect(),
+    };
     DiscussionWorkflow {
         name: req.workflow.clone(),
         description: String::new(),
@@ -461,29 +488,48 @@ fn build_workflow(
         context_token_budget: 32_000,
     }
 }
-
-/// Resolve which roles and how many rounds to use for a request.
+/// `steps` is `Some(Vec<Vec<String>>)` when the workflow defines an
+/// ordered step list (project `WorkflowDef::steps`). Each inner vec
+/// is the set of role ids that should speak during that step, in
+/// order. Callers should:
+/// - emit one upstream `WorkflowStep` per inner vec, with
+///   `speakers = inner_vec`, when `steps` is `Some`;
+/// - else fall back to one step per flat `roles`.
 ///
 /// Lookup order: `roles.yaml` workflow → `WORKFLOW_PRESETS` → all defaults.
 fn resolve_workflow_roles(
     roles_config: &RoleConfig,
     req: &StartDiscussionRequest,
-) -> (Vec<String>, usize) {
+) -> (Vec<String>, usize, Option<Vec<Vec<String>>>) {
     if let Some(wf) = roles_config.workflows.get(&req.workflow) {
-        return (wf.roles.clone(), wf.max_rounds);
+        let steps = if wf.steps.is_empty() {
+            None
+        } else {
+            Some(
+                wf.steps
+                    .iter()
+                    .map(|s| s.roles.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        return (wf.roles.clone(), wf.max_rounds, steps);
     }
     if let Some((_, _, roles, rounds, _)) = WORKFLOW_PRESETS
         .iter()
         .find(|(id, _, _, _, _)| *id == req.workflow)
     {
-        return (roles.iter().map(|s| s.to_string()).collect(), *rounds);
+        return (
+            roles.iter().map(|s| s.to_string()).collect(),
+            *rounds,
+            None,
+        );
     }
     (
         default_role_ids().iter().map(|s| s.to_string()).collect(),
         1,
+        None,
     )
 }
-
 // ─── Live discussion (upstream `DiscussionOrchestrator`) ─────────────
 //
 // The runner no longer hand-rolls chain walking / cooldown / round
@@ -503,8 +549,12 @@ async fn run_live_discussion(
     global_config: &GlobalModelConfig,
     roles_config: &RoleConfig,
 ) -> Result<DiscussionPayload, String> {
-    // 1. Which roles participate? (workflow → custom → defaults)
-    let (default_roles, _preset_rounds) = resolve_workflow_roles(roles_config, req);
+    // 1. Which roles participate? (workflow → custom → defaults).
+    //    `steps` is the workflow's ordered step list (when set) so
+    //    the orchestrator runs pm → architect → programmer … in
+    //    sequence instead of every role speaking in parallel.
+    let (default_roles, _preset_rounds, step_plan) =
+        resolve_workflow_roles(roles_config, req);
     let roles_to_use: Vec<String> = req.custom_roles.clone().unwrap_or(default_roles);
     if roles_to_use.is_empty() {
         return Err("No roles selected for discussion".to_string());
@@ -535,17 +585,15 @@ async fn run_live_discussion(
                 format!("__preflight_error__{}", broken.role_id),
                 0,
             );
-            let _ = app.emit("chat:turn", &payload);
         }
         return Err(format!(
             "{} 个角色缺少 API key，已在上方列出",
             broken_roles.len()
         ));
     }
-    let workflow = build_workflow(req, &roles_to_use);
+    let workflow = build_workflow(req, &roles_to_use, step_plan.as_deref());
 
     // 5. Variables used by the orchestrator's handlebars rendering.
-    //    `topic` is mandatory; `step` / `role_name` / `step_id` are
     //    injected per turn by the orchestrator itself.
     let mut variables = HashMap::new();
     variables.insert("topic".into(), req.topic.clone());
@@ -662,26 +710,33 @@ async fn run_stub_discussion(
         req.topic.clone()
     };
 
-    let preset = WORKFLOW_PRESETS.iter().find(|(name, _, _, _, _)| *name == req.workflow);
-    let roles: Vec<String> = match preset {
-        Some((_, _, default_roles, _, _)) => req
-            .custom_roles
-            .clone()
-            .unwrap_or_else(|| default_roles.iter().map(|s| s.to_string()).collect()),
-        None => req
-            .custom_roles
-            .clone()
-            .unwrap_or_else(|| default_role_ids().iter().map(|s| s.to_string()).collect()),
-    };
+    // Mirror `run_live_discussion`: prefer the workflow's ordered step
+    // list when the workflow file defines one, so the stub speaks
+    // PM → architect → programmer → … in order rather than every role
+    // at once. Falls back to the flat role list when `step_plan` is
+    // empty (user-curated custom workflows or legacy presets).
+    let roles_config = global_config::load_roles_config();
+    let (default_roles, _preset_rounds, step_plan) =
+        resolve_workflow_roles(&roles_config, req);
+    let roles: Vec<String> = req.custom_roles.clone().unwrap_or(default_roles);
 
     let total_rounds = req.max_rounds.unwrap_or(1).max(1);
     let mut rounds: Vec<RoundPayload> = Vec::new();
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
 
+    let speakers_per_round: Vec<Vec<String>> = match step_plan {
+        Some(plan) if !plan.is_empty() => plan.clone(),
+        _ => roles.iter().map(|r| vec![r.clone()]).collect(),
+    };
+
     for round_num in 0..total_rounds {
         let mut turns: Vec<TurnPayload> = Vec::new();
-        for (idx, role_id) in roles.iter().enumerate() {
+        for (idx, role_id) in speakers_per_round
+            .iter()
+            .flat_map(|step| step.iter())
+            .enumerate()
+        {
             let template = ROLE_TEMPLATES
                 .iter()
                 .find(|(id, _, _)| *id == role_id)
@@ -761,5 +816,108 @@ fn capitalize(s: &str) -> String {
     match chars.next() {
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat_panel::global_config::{WorkflowDef, WorkflowKind, WorkflowStep};
+    use std::collections::HashMap;
+
+    fn req(workflow: &str) -> StartDiscussionRequest {
+        StartDiscussionRequest {
+            topic: "设计一个登录页".into(),
+            workflow: workflow.into(),
+            custom_roles: None,
+            max_rounds: None,
+        }
+    }
+
+    #[test]
+    fn resolve_returns_step_plan_when_workflow_has_steps() {
+        let mut workflows = HashMap::new();
+        workflows.insert(
+            "default".into(),
+            WorkflowDef {
+                name: "默认".into(),
+                kind: WorkflowKind::Planned,
+                roles: vec!["pm".into(), "architect".into(), "programmer".into()],
+                steps: vec![
+                    WorkflowStep {
+                        name: "需求澄清".into(),
+                        roles: vec!["pm".into()],
+                    },
+                    WorkflowStep {
+                        name: "架构".into(),
+                        roles: vec!["architect".into()],
+                    },
+                    WorkflowStep {
+                        name: "实现".into(),
+                        roles: vec!["programmer".into()],
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+        let rc = RoleConfig {
+            roles: HashMap::new(),
+            default_model: String::new(),
+            workflows,
+        };
+        let (roles, rounds, steps) = resolve_workflow_roles(&rc, &req("default"));
+        assert_eq!(roles, vec!["pm", "architect", "programmer"]);
+        assert_eq!(rounds, 1);
+        let plan = steps.expect("default workflow should have a step plan");
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[0], vec!["pm"]);
+        assert_eq!(plan[1], vec!["architect"]);
+        assert_eq!(plan[2], vec!["programmer"]);
+    }
+
+    #[test]
+    fn resolve_returns_none_when_steps_empty() {
+        let mut workflows = HashMap::new();
+        workflows.insert(
+            "legacy".into(),
+            WorkflowDef {
+                name: "Legacy".into(),
+                kind: WorkflowKind::Planned,
+                roles: vec!["pm".into()],
+                steps: vec![],
+                ..Default::default()
+            },
+        );
+        let rc = RoleConfig {
+            roles: HashMap::new(),
+            default_model: String::new(),
+            workflows,
+        };
+        let (_roles, _rounds, steps) = resolve_workflow_roles(&rc, &req("legacy"));
+        assert!(steps.is_none(), "empty steps must fall back to flat");
+    }
+
+    #[test]
+    fn build_workflow_emits_one_step_per_project_step() {
+        let r = req("default");
+        let plan = vec![
+            vec!["pm".to_string()],
+            vec!["architect".to_string(), "reviewer".to_string()],
+        ];
+        let flat = vec!["pm".to_string(), "architect".to_string()];
+        let wf = build_workflow(&r, &flat, Some(&plan));
+        assert_eq!(wf.steps.len(), 2);
+        assert_eq!(wf.steps[0].speakers, vec!["pm"]);
+        assert_eq!(wf.steps[1].speakers, vec!["architect", "reviewer"]);
+    }
+
+    #[test]
+    fn build_workflow_falls_back_to_flat_roles() {
+        let r = req("legacy");
+        let flat = vec!["pm".to_string(), "architect".to_string()];
+        let wf = build_workflow(&r, &flat, None);
+        assert_eq!(wf.steps.len(), 2);
+        assert_eq!(wf.steps[0].speakers, vec!["pm"]);
+        assert_eq!(wf.steps[1].speakers, vec!["architect"]);
     }
 }

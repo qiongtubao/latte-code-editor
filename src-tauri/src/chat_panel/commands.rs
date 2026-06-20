@@ -231,18 +231,31 @@ pub async fn chat_set_default_model(model_id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Open config file in editor
+/// Open config file in editor. `config_type` may be:
+/// - `"models"` → `~/.latte-code-editor/models.yaml`
+/// - `"roles"` → `~/.latte-code-editor/roles.yaml`
+/// - `"workflow:<id>"` → `~/.latte-code-editor/workflows/<id>.yaml`
 #[tauri::command]
 pub async fn chat_open_config(config_type: String) -> Result<String, String> {
-    let path = match config_type.as_str() {
-        "models" => global_models_path(),
-        "roles" => roles_config_path(),
-        _ => return Err(format!("Unknown config type: {}", config_type)),
+    let path = if let Some(id) = config_type.strip_prefix("workflow:") {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("workflow:<id> 需要 id".to_string());
+        }
+        let dir = super::global_config::workflows_dir();
+        // Don't create the file — just return the path so the editor
+        // opens an existing one (or shows "not found" if absent).
+        dir.join(format!("{}.yaml", super::global_config::sanitize_workflow_id(id)))
+    } else {
+        match config_type.as_str() {
+            "models" => super::global_config::global_models_path(),
+            "roles" => super::global_config::roles_config_path(),
+            _ => return Err(format!("Unknown config type: {}", config_type)),
+        }
     };
 
     Ok(path.to_string_lossy().to_string())
 }
-
 /// List workflows
 #[tauri::command]
 pub async fn chat_list_workflows() -> Result<Vec<WorkflowInfo>, String> {

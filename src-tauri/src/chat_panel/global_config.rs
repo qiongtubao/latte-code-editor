@@ -387,8 +387,7 @@ pub fn read_all_workflow_files() -> HashMap<String, WorkflowDef> {
 
 /// Sanitize a workflow id for use as a filename. Mirrors the
 /// `validate_workflow_id` rules in commands.rs — only
-/// alphanumeric, `-`, `_`, `:`.
-fn sanitize_workflow_id(id: &str) -> String {
+pub(crate) fn sanitize_workflow_id(id: &str) -> String {
     id.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':' {
