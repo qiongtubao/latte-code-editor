@@ -349,6 +349,57 @@ pub(crate) fn resolve_manager_role_id(workflow_id: Option<&str>) -> String {
         .unwrap_or_else(|| "manager".to_string())
 }
 
+/// Resolve which roles the manager may pick as workers for a given
+/// workflow. Two sources, in priority order:
+///
+/// 1. `WorkflowDef::initial_workers` — when the workflow file
+///    defines a non-empty pool, that's the strict list (intersected
+///    with `roles.yaml` so dead ids are dropped). The user sets
+///    this in the workflow editor's "ManagerFields → 初始可调度
+///    角色" picker.
+///
+/// 2. Otherwise: every role in `roles.yaml` except
+///    `(manager_role_id, "manager")` (the built-in 工程经理). The
+///    manager must NOT be allowed to dispatch itself — that would
+///    deadlock the state machine (manager running manager).
+///
+/// Returns an empty Vec if the workflow doesn't exist; the caller
+/// surfaces that as a stub fallback (the manager will offer only the
+/// `user_continue` escape hatch so the user can change the
+/// workflow).
+pub(crate) fn resolve_worker_pool(
+    workflow_id: Option<&str>,
+    manager_role_id: &str,
+) -> Vec<String> {
+    let mut pool: Vec<String> = if let Some(wf_id) = workflow_id.filter(|s| !s.is_empty()) {
+        if let Some(def) = read_all_workflow_files().get(wf_id) {
+            if !def.initial_workers.is_empty() {
+                def.initial_workers.clone()
+            } else {
+                Vec::new() // signal "fall back to all"
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    if pool.is_empty() {
+        let cfg = load_roles_config();
+        pool = cfg
+            .roles
+            .keys()
+            .filter(|id| id.as_str() != manager_role_id && id.as_str() != "manager")
+            .cloned()
+            .collect();
+    }
+    // Always drop the manager role even if user typed it into
+    // initial_workers (defence-in-depth: never let the manager
+    // dispatch itself).
+    pool.retain(|id| id != manager_role_id && id != "manager");
+    pool
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -412,7 +463,6 @@ pub(crate) fn compute_manager_status(state: &ManagerSessionState) -> ManagerStat
         .sum();
     let summary_bytes = state.summary.as_ref().map(|s| s.len() as u32).unwrap_or(0);
     let tokens_estimated = (transcript_bytes / 3).saturating_add(summary_bytes / 3);
-
     let elapsed_ms = now_ms().saturating_sub(state.started_at_ms);
     let last_step_at_ms = state.turns.last().map(|t| t.ts_ms).unwrap_or(0);
 
@@ -438,7 +488,6 @@ pub(crate) fn compute_manager_status(state: &ManagerSessionState) -> ManagerStat
         last_step_at_ms,
     }
 }
-
 /// Emit a status payload for the given session. Safe to call after
 /// any state mutation — the chat panel just renders the latest
 /// payload it received.
@@ -463,23 +512,16 @@ pub async fn start_manager_session(
         return Err("话题不能为空".to_string());
     }
 
-    let roles_config = load_roles_config();
-    let available_roles: Vec<String> = roles_config
-        .roles
-        .keys()
-        .filter(|id| id.as_str() != "manager")
-        .cloned()
-        .collect();
+    // Resolve the manager FIRST so the worker pool correctly
+    // excludes whichever role ends up being the manager (the
+    // manager must never dispatch itself). `resolve_worker_pool`
+    // honours `workflow.initial_workers` when set, otherwise falls
+    // back to "every role except the manager".
+    let manager_role_id = resolve_manager_role_id(workflow_id);
+    let available_roles = resolve_worker_pool(workflow_id, &manager_role_id);
 
     let session_id = next_session_id();
     let workspace = ensure_workspace(workspace);
-
-    // Resolve which role acts as the manager. Without this call,
-    // `manager_default` workflow (configured to use
-    // `manager_role: tech_director`) would still be driven by the
-    // built-in `manager` role. The resolver reads
-    // `workflows/<id>.yaml` and falls back to `"manager"`.
-    let manager_role_id = resolve_manager_role_id(workflow_id);
 
     let state = ManagerSessionState {
         session_id,
@@ -500,20 +542,39 @@ pub async fn start_manager_session(
     let state_arc = Arc::new(Mutex::new(state));
     sessions().lock().insert(session_id, state_arc.clone());
 
+    // Snapshot state for the LLM call so we don't hold the lock
+    // across `.await`. `live_manager_decide` is the real path —
+    // the manager role's prompt + model_chain are used to call
+    // `claude-sonnet-4` (or `deepseek-chat` fallback). When it
+    // fails (no API key, parse error, network error) we degrade
+    // gracefully to the smart stub so the user still sees a
+    // coherent first turn instead of an opaque error.
+    let snapshot = state_arc.lock().clone();
+    let precomputed_action = match super::manager_decide::live_manager_decide(app, &snapshot).await {
+        Ok(action) => Some(action),
+        Err(reason) => {
+            eprintln!("[chat] live manager decide fell back to stub: {reason}");
+            None
+        }
+    };
+
     // Persist + emit first decision.
-    take_manager_turn(app, &state_arc, &workspace, topic, 0, |s| {
-        let last = last_worker_role(s);
-        stub_action_for_topic(
-            topic,
-            s.decisions_taken,
-            s.steps_taken,
-            &available_roles,
-            last.as_deref(),
-        )
+    take_manager_turn(app, &state_arc, &workspace, topic, 0, move |s| {
+        if let Some(action) = precomputed_action {
+            action
+        } else {
+            let last = last_worker_role(s);
+            stub_action_for_topic(
+                topic,
+                s.decisions_taken,
+                s.steps_taken,
+                &available_roles,
+                last.as_deref(),
+            )
+        }
     })?;
     Ok(session_id)
 }
-
 /// Called internally to compute and emit the manager's next
 /// `chat:turn` + (optionally) `chat:need_decision`. Updates state,
 /// persists, and emits events.
@@ -1118,6 +1179,93 @@ mod tests {
             resolve_manager_role_id(Some("blank_default")),
             "manager"
         );
+        std::env::remove_var("LATTE_WORKFLOWS_DIR");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ─── resolve_worker_pool ─────────────────────────────────────
+    //
+    // The pool must always EXCLUDE the manager role (regardless of
+    // what `manager_role` resolves to) and respect
+    // `workflow.initial_workers` when set. Without the exclusion,
+    // the LLM is free to dispatch the manager to itself, which
+    // deadlocks the state machine.
+
+    #[test]
+    fn resolve_worker_pool_excludes_manager_role() {
+        // No workflow → falls back to "every role except manager".
+        let pool = resolve_worker_pool(None, "manager");
+        assert!(
+            !pool.contains(&"manager".to_string()),
+            "manager must never be in its own pool: {pool:?}"
+        );
+        // Tech director pool also excludes tech_director itself.
+        let pool = resolve_worker_pool(None, "tech_director");
+        assert!(
+            !pool.contains(&"tech_director".to_string()),
+            "manager must never be in its own pool: {pool:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_worker_pool_uses_initial_workers_when_set() {
+        let tmp = std::env::temp_dir().join(format!(
+            "latte_worker_pool_init_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::set_var("LATTE_WORKFLOWS_DIR", &tmp);
+        // manager_role = tech_director, initial_workers = [pm, architect]
+        let yaml = r#"name: "Test"
+kind: planned
+roles: ["pm"]
+max_rounds: 1
+planner_role: ""
+worker_roles: []
+max_steps: 4
+manager_role: "tech_director"
+initial_workers: ["pm", "architect"]
+max_total_steps: 8
+max_user_decisions: 5
+steps: []
+"#;
+        std::fs::write(tmp.join("manager_default.yaml"), yaml).unwrap();
+        let pool = resolve_worker_pool(Some("manager_default"), "tech_director");
+        assert_eq!(pool, vec!["pm".to_string(), "architect".to_string()]);
+        std::env::remove_var("LATTE_WORKFLOWS_DIR");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_worker_pool_strips_manager_from_initial_workers() {
+        // If the user accidentally typed `manager` (or `tech_director`
+        // when they're the manager) into initial_workers, we drop it
+        // rather than risk a manager-self-dispatch deadlock.
+        let tmp = std::env::temp_dir().join(format!(
+            "latte_worker_pool_strip_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::set_var("LATTE_WORKFLOWS_DIR", &tmp);
+        let yaml = r#"name: "Test"
+kind: planned
+roles: ["pm"]
+max_rounds: 1
+planner_role: ""
+worker_roles: []
+max_steps: 4
+manager_role: "tech_director"
+initial_workers: ["manager", "pm"]
+max_total_steps: 8
+max_user_decisions: 5
+steps: []
+"#;
+        std::fs::write(tmp.join("self_dispatch.yaml"), yaml).unwrap();
+        let pool = resolve_worker_pool(Some("self_dispatch"), "tech_director");
         std::env::remove_var("LATTE_WORKFLOWS_DIR");
         let _ = std::fs::remove_dir_all(&tmp);
     }
