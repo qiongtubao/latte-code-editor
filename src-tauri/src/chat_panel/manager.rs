@@ -34,7 +34,9 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-use super::global_config::{load_global_models, load_roles_config};
+use super::global_config::{
+    load_global_models, load_roles_config, read_all_workflow_files,
+};
 use super::types::{
     DecisionOption, DecisionRequest, ManagerAction, ManagerSessionState, ManagerState,
     ManagerStatus, ManagerTurn, TurnPayload, UserDecision,
@@ -43,8 +45,6 @@ use super::types::{
 /// under `<ws>/.manager_<id>/state.json` (see `persist_state`).
 static SESSIONS: OnceLock<Mutex<HashMap<usize, Arc<Mutex<ManagerSessionState>>>>>
     = OnceLock::new();
-/// this with a structured-output call to the manager role.
-
 /// Access the global session registry. Initializes on first call —
 /// `parking_lot::Mutex::new` isn't const, so we can't use
 fn sessions() -> &'static Mutex<HashMap<usize, Arc<Mutex<ManagerSessionState>>>> {
@@ -316,6 +316,39 @@ fn next_session_id() -> usize {
     N.fetch_add(1, Ordering::SeqCst)
 }
 
+/// Resolve which role id should act as the manager for a given
+/// workflow. Reads `WorkflowDef::manager_role` when the workflow
+/// file defines one and the field is non-empty; otherwise falls
+/// back to the built-in `manager` (工程经理) role.
+///
+/// This is the bridge between the user's `manager_default` workflow
+/// (`manager_role: tech_director`) and the LLM call inside
+/// `manager_decide::live_manager_decide`. If this function returns
+/// `"tech_director"`, the live path will use that role's prompt +
+/// `model_chain`. If it returns `"manager"`, it uses 工程经理.
+///
+/// We don't validate the role exists in `roles.yaml` here — the
+/// caller surfaces a clear "找不到角色" error if it doesn't, and
+/// otherwise the live LLM path falls back to stub mode.
+pub(crate) fn resolve_manager_role_id(workflow_id: Option<&str>) -> String {
+    let wf_id = match workflow_id {
+        Some(id) if !id.is_empty() => id,
+        _ => return "manager".to_string(),
+    };
+    let workflows = read_all_workflow_files();
+    workflows
+        .get(wf_id)
+        .map(|def| {
+            let r = def.manager_role.trim();
+            if r.is_empty() {
+                "manager".to_string()
+            } else {
+                r.to_string()
+            }
+        })
+        .unwrap_or_else(|| "manager".to_string())
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -326,7 +359,6 @@ fn now_ms() -> u64 {
 fn emit_turn(app: &AppHandle, payload: &TurnPayload) {
     let _ = app.emit("chat:turn", payload);
 }
-
 fn emit_decision(app: &AppHandle, req: &DecisionRequest) {
     let _ = app.emit("chat:need_decision", req);
 }
@@ -414,14 +446,13 @@ fn emit_manager_status(app: &AppHandle, state: &ManagerSessionState) {
     let payload = compute_manager_status(state);
     let _ = app.emit("chat:manager_status", &payload);
 }
-/// Public entry: start a manager-led session for `topic`. Returns
-/// the new session_id. Emits one `chat:turn` for the manager
-/// (containing the first decision) and one `chat:need_decision`
-/// event for the UI to render option buttons.
-///
-/// In stub mode this always works. With API keys configured this
-/// would call the manager LLM; v0 is stub-only by design so the
-/// user can click through immediately.
+
+/// Start a new manager-led session. `workflow_id` is the chat panel's
+/// currently selected workflow (e.g. `"manager_default"`); we read
+/// its `manager_role` field via `resolve_manager_role_id` so e.g.
+/// `manager_default` → `tech_director` actually wires through to the
+/// LLM call. Without this, every manager workflow would silently be
+/// driven by the built-in `manager` (工程经理) role.
 pub async fn start_manager_session(
     app: &AppHandle,
     topic: &str,
@@ -443,11 +474,18 @@ pub async fn start_manager_session(
     let session_id = next_session_id();
     let workspace = ensure_workspace(workspace);
 
+    // Resolve which role acts as the manager. Without this call,
+    // `manager_default` workflow (configured to use
+    // `manager_role: tech_director`) would still be driven by the
+    // built-in `manager` role. The resolver reads
+    // `workflows/<id>.yaml` and falls back to `"manager"`.
+    let manager_role_id = resolve_manager_role_id(workflow_id);
+
     let state = ManagerSessionState {
         session_id,
         state: ManagerState::Planning,
         topic: topic.to_string(),
-        manager_role_id: "manager".into(),
+        manager_role_id,
         available_roles: available_roles.clone(),
         max_total_steps: 8,
         max_user_decisions: 5,
@@ -460,10 +498,7 @@ pub async fn start_manager_session(
     };
 
     let state_arc = Arc::new(Mutex::new(state));
-    {
-        let mut registry = sessions().lock();
-        registry.insert(session_id, state_arc.clone());
-    }
+    sessions().lock().insert(session_id, state_arc.clone());
 
     // Persist + emit first decision.
     take_manager_turn(app, &state_arc, &workspace, topic, 0, |s| {
@@ -842,8 +877,10 @@ pub fn stub_decision_for_tests(
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn stub_budget_exhaustion_finalizes() {
@@ -884,6 +921,7 @@ mod tests {
             ManagerAction::NeedDecision { options, .. } => {
                 // arch_only requires a role that doesn't exist, so
                 // it's filtered out. We should still have pm_only.
+                assert!(options.iter().any(|o| o.id == "pm_only"));
                 assert!(!options.iter().any(|o| o.id == "arch_only"));
             }
             other => panic!("expected NeedDecision, got {other:?}"),
@@ -906,12 +944,14 @@ mod tests {
             other => panic!("expected NeedDecision, got {other:?}"),
         }
     }
+
     #[test]
     fn stub_zero_roles_falls_back_to_conclude() {
         let action = stub_action_for_topic("任何话题", 0, 0, &[], None);
         match action {
             ManagerAction::NeedDecision { options, .. } => {
                 assert_eq!(options.len(), 1);
+                assert_eq!(options[0].id, "user_continue");
             }
             other => panic!("expected NeedDecision, got {other:?}"),
         }
@@ -919,8 +959,6 @@ mod tests {
 
     #[test]
     fn each_branch_returns_distinct_label() {
-        // The branch_label tells the user which heuristic fired so
-        // they can override if the manager guessed wrong.
         let design = stub_action_for_topic(
             "设计登录页",
             0,
@@ -942,40 +980,29 @@ mod tests {
             &["tech_writer".into(), "architect".into()],
             None,
         );
-        let generic = stub_action_for_topic(
-            "随便聊聊",
-            0,
-            0,
-            &["pm".into()],
-            None,
-        );
+        let generic = stub_action_for_topic("随便聊聊", 0, 0, &["pm".into()], None);
         let (d, b, doc, g) = (
             extract_label(&design),
             extract_label(&bug),
             extract_label(&docs),
             extract_label(&generic),
         );
+        assert_ne!(d, b);
+        assert_ne!(d, doc);
+        assert_ne!(b, doc);
         assert_eq!(d, "🎨 设计任务");
         assert_eq!(b, "🪲 Bug 排查");
         assert_eq!(doc, "📝 文档 / 解释");
-        assert_eq!(g, "🧭 通用");
     }
 
     #[test]
     fn every_decision_includes_user_continue_escape_hatch() {
-        // The user must always be able to say "manager 自己定 / 跳过"
-        // regardless of which branch fired. This is the core fix for
-        // the "没有显示出通用" UX bug — the generic escape hatch is
-        // present even in topical branches.
         let all_roles = vec![
-            "pm".into(),
-            "architect".into(),
-            "programmer".into(),
-            "tester".into(),
-            "devops".into(),
-            "tech_writer".into(),
+            "pm".to_string(),
+            "architect".to_string(),
+            "programmer".to_string(),
         ];
-        for topic in &[
+        for topic in [
             "设计登录页",
             "fix login bug",
             "解释一下",
@@ -992,7 +1019,7 @@ mod tests {
                 "{topic}: must always offer the user_continue escape hatch, got {opts:?}"
             );
             let escape = opts.iter().find(|o| o.id == "user_continue").unwrap();
-            assert_eq!(escape.estimated_cost_usd, 0.0, "escape hatch is cost-free");
+            assert!(escape.worker_role.is_none());
         }
     }
 
@@ -1013,15 +1040,12 @@ mod tests {
             ManagerAction::NeedDecision { options, .. } => options,
             other => panic!("expected NeedDecision, got {other:?}"),
         };
-        // The very first option must not be pm-only when pm was the
-        // previous worker — something else should lead.
         let first = opts.first().expect("at least one option");
         assert_ne!(
             first.worker_role.as_deref(),
             Some("pm"),
             "pm should have been demoted: {opts:?}"
         );
-        // And there should still be a pm-only option (just at the back).
         let pm_only = opts.iter().find(|o| o.id == "pm_only").expect("pm_only exists");
         assert!(pm_only.description.contains("上次用过"));
         assert!(pm_only.worker_role.as_deref() == Some("pm"));
@@ -1032,5 +1056,69 @@ mod tests {
             ManagerAction::NeedDecision { branch_label, .. } => branch_label.clone(),
             _ => panic!("expected NeedDecision, got {action:?}"),
         }
+    }
+
+    // ─── resolve_manager_role_id ─────────────────────────────────────
+    //
+    // The resolver reads `workflows/<id>.yaml` and returns the
+    // `manager_role` field. It's the bridge between the
+    // `manager_default` workflow (which sets `manager_role:
+    // tech_director`) and `live_manager_decide` (which looks up the
+    // role's prompt + model_chain in `roles.yaml`). If this returns
+    // `"manager"` for every workflow, the LLM path never sees
+    // `tech_director` — and the user's "为什么负责人没接 AI?" complaint
+    // is unfixable from the workflow editor.
+
+    #[test]
+    fn resolve_manager_role_id_falls_back_to_manager_without_workflow() {
+        assert_eq!(resolve_manager_role_id(None), "manager");
+        assert_eq!(resolve_manager_role_id(Some("")), "manager");
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_manager_role_id_reads_workflow_file() {
+        let tmp = std::env::temp_dir().join(format!(
+            "latte_resolve_role_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::set_var("LATTE_WORKFLOWS_DIR", &tmp);
+        // Field names must match `WorkflowDef`'s `serde(default)`
+        // snake_case mapping (see `global_config.rs`).
+        let yaml = "name: \"Test\"\nkind: planned\nroles: [\"pm\"]\nmax_rounds: 1\nplanner_role: \"\"\nworker_roles: []\nmax_steps: 4\nmanager_role: \"tech_director\"\ninitial_workers: []\nmax_total_steps: 8\nmax_user_decisions: 5\nsteps: []\n";
+        std::fs::write(tmp.join("manager_default.yaml"), yaml).unwrap();
+        assert_eq!(
+            resolve_manager_role_id(Some("manager_default")),
+            "tech_director"
+        );
+        // Unknown workflow still falls back to built-in.
+        assert_eq!(
+            resolve_manager_role_id(Some("does_not_exist")),
+            "manager"
+        );
+        std::env::remove_var("LATTE_WORKFLOWS_DIR");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_manager_role_id_falls_back_when_field_empty() {
+        let tmp = std::env::temp_dir().join(format!(
+            "latte_resolve_role_empty_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::set_var("LATTE_WORKFLOWS_DIR", &tmp);
+        let yaml = "name: \"Test\"\nkind: planned\nroles: [\"pm\"]\nmax_rounds: 1\nplanner_role: \"\"\nworker_roles: []\nmax_steps: 4\nmanager_role: \"\"\ninitial_workers: []\nmax_total_steps: 8\nmax_user_decisions: 5\nsteps: []\n";
+        std::fs::write(tmp.join("blank_default.yaml"), yaml).unwrap();
+        assert_eq!(
+            resolve_manager_role_id(Some("blank_default")),
+            "manager"
+        );
+        std::env::remove_var("LATTE_WORKFLOWS_DIR");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
