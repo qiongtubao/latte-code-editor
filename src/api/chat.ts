@@ -330,10 +330,12 @@ export interface ManagerSessionState {
 /** Start a manager-led session. Returns the new session_id. */
 export async function startManagerSession(
   topic: string,
+  workflowId: string | null,
   workspace?: string | null
 ): Promise<number> {
   return invoke<number>("chat_start_manager_session", {
     topic,
+    workflowId: workflowId ?? null,
     workspace: workspace ?? null,
   });
 }
@@ -447,7 +449,7 @@ export interface WorkflowStep {
 export interface WorkflowPayload {
   id: string;
   name: string;
-  kind: "planned" | "swarm";
+  kind: "planned" | "swarm" | "manager_led";
   /** Flat fallback role list — used when `steps` is empty. */
   roles: string[];
   steps: WorkflowStep[];
@@ -458,8 +460,15 @@ export interface WorkflowPayload {
   workerRoles: string[];
   /** Swarm-only: cap on planner-emitted worker steps. */
   maxSteps: number;
+  /** Manager-led: which role acts as the manager (defaults to "manager"). */
+  managerRole: string;
+  /** Manager-led: roles offered to the manager as initial candidates. */
+  initialWorkers: string[];
+  /** Manager-led: hard cap on total turns. */
+  maxTotalSteps: number;
+  /** Manager-led: cap on user-driven decision rounds. */
+  maxUserDecisions: number;
 }
-
 /** Result of a save / delete command. */
 export interface WorkflowMutationResult {
   workflow: WorkflowPayload | null;

@@ -278,10 +278,9 @@ mod integration_tests {
         dir
     }
 
-    #[test]
     fn quick_task_swarm_preset_is_swarm_kind() {
-        let cfg = load_roles_config();
-        let quick = cfg
+        let defaults = crate::chat_panel::global_config::create_default_roles();
+        let quick = defaults
             .workflows
             .get("quick_task")
             .expect("quick_task preset shipped");

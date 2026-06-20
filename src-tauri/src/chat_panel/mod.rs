@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod config;
 pub mod manager;
+pub mod manager_decide;
 pub mod session;
 pub mod types;
 pub mod global_config;

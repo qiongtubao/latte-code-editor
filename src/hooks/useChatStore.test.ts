@@ -843,9 +843,9 @@ describe("useChatStore — manager-led", () => {
     const s = useChatStore.getState();
     expect(invokeMock).toHaveBeenCalledWith("chat_start_manager_session", {
       topic: "设计登录页",
+      workflowId: "discuss",
       workspace: null,
     });
-    expect(s.managerSessionId).toBe(42);
     expect(s.status).toBe("running");
     // User's topic is recorded as the first message.
     expect(s.messages[0].role).toBe("user");
@@ -1012,8 +1012,8 @@ describe("useChatStore — manager-led", () => {
     await useChatStore.getState().sendMessage("任务 X");
     expect(invokeMock).toHaveBeenCalledWith("chat_start_manager_session", {
       topic: "任务 X",
+      workflowId: "discuss",
       workspace: null,
     });
-    expect(useChatStore.getState().managerSessionId).toBe(11);
   });
 });

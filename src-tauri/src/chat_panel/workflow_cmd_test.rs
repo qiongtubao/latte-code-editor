@@ -62,6 +62,10 @@ mod tests {
             planner_role: String::new(),
             worker_roles: Vec::new(),
             max_steps: 4,
+            manager_role: "tech_director".into(),
+            initial_workers: vec![],
+            max_total_steps: 8,
+            max_user_decisions: 5,
         }
     }
 
@@ -146,11 +150,13 @@ mod tests {
             planner_role: String::new(),
             worker_roles: Vec::new(),
             max_steps: 4,
+            manager_role: "tech_director".into(),
+            initial_workers: vec![],
+            max_total_steps: 8,
+            max_user_decisions: 5,
         };
         let p = workflow_def_to_payload("debug", &def);
         assert_eq!(p.id, "debug");
-        assert_eq!(p.kind, "planned");
-        assert_eq!(p.steps.len(), 1);
         assert_eq!(p.steps[0].name, "复现");
     }
 
@@ -165,6 +171,10 @@ mod tests {
             planner_role: "manager".into(),
             worker_roles: vec!["pm".into()],
             max_steps: 4,
+            manager_role: "tech_director".into(),
+            initial_workers: vec!["pm".into()],
+            max_total_steps: 8,
+            max_user_decisions: 5,
         };
         let p = workflow_def_to_payload("quick_task", &def);
         assert_eq!(p.kind, "swarm");

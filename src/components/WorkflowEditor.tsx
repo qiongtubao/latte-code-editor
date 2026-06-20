@@ -170,9 +170,10 @@ export function WorkflowEditor({ availableRoles, onClose }: Props) {
           {editing.kind === "swarm" && (
             <SwarmFields editing={editing} patch={patch} source={source} />
           )}
+          {editing.kind === "manager_led" && (
+            <ManagerFields editing={editing} patch={patch} source={source} />
+          )}
         </div>
-
-        {/* Error banner */}
         {error && (
           <div className="mx-4 mb-2 p-2 bg-red-900/30 border border-red-700 rounded text-xs text-red-200">
             <div className="font-semibold mb-1">⚠️ {error}</div>
@@ -534,6 +535,84 @@ function SwarmFields({
           roles={source}
           onChange={(next) => patch({ workerRoles: next })}
         />
+      </div>
+    </div>
+  );
+}
+
+function ManagerFields({
+  editing,
+  patch,
+  source,
+}: {
+  editing: WorkflowPayload;
+  patch: (p: Partial<WorkflowPayload>) => void;
+  source: RoleInfo[];
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="font-semibold text-gray-300">管理者主导（Manager-led）专属设置</div>
+      <label className="space-y-1 block">
+        <div className="text-gray-400">
+          负责人角色（让谁当 manager 来拆解任务）
+        </div>
+        <select
+          value={editing.managerRole || ""}
+          onChange={(e) => patch({ managerRole: e.target.value })}
+          className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+        >
+          <option value="">— 默认：工程经理 —</option>
+          {source
+            .filter((r) => r.id !== "manager")
+            .map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.icon} {r.name}（{r.id}）
+              </option>
+            ))}
+          {/* Built-in manager role is always available */}
+          <option value="manager">👔 工程经理（manager）</option>
+        </select>
+        <div className="text-[10px] text-gray-500 italic">
+          推荐：manager / tech_director。负责人会用自己配置的模型链和提示词做实时决策。
+        </div>
+      </label>
+      <div className="space-y-1">
+        <div className="text-gray-400">
+          初始可调度角色（负责人第一轮默认看到的候选名单；不勾选则全部可用）
+        </div>
+        <RolePicker
+          selected={editing.initialWorkers}
+          roles={source}
+          onChange={(next) => patch({ initialWorkers: next })}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="space-y-1 block">
+          <div className="text-gray-400">总轮数上限</div>
+          <input
+            type="number"
+            min={1}
+            max={64}
+            value={editing.maxTotalSteps}
+            onChange={(e) =>
+              patch({ maxTotalSteps: Math.max(1, Number(e.target.value) || 1) })
+            }
+            className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+          />
+        </label>
+        <label className="space-y-1 block">
+          <div className="text-gray-400">用户决策轮数上限</div>
+          <input
+            type="number"
+            min={0}
+            max={32}
+            value={editing.maxUserDecisions}
+            onChange={(e) =>
+              patch({ maxUserDecisions: Math.max(0, Number(e.target.value) || 0) })
+            }
+            className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+          />
+        </label>
       </div>
     </div>
   );

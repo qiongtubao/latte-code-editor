@@ -473,15 +473,22 @@ pub async fn chat_cancel(session_id: usize) -> Result<(), String> {
 ///
 /// Returns the new session_id immediately. Progress streams via
 /// `chat:turn` for manager / worker bubbles and `chat:need_decision`
-/// for the option-button panel.
+/// option-button panel.
 #[tauri::command]
 pub async fn chat_start_manager_session(
     app: AppHandle,
     topic: String,
+    workflowId: Option<String>,
     #[allow(non_snake_case)]
     workspace: Option<String>,
 ) -> Result<usize, String> {
-    super::manager::start_manager_session(&app, &topic, workspace.as_deref()).await
+    super::manager::start_manager_session(
+        &app,
+        &topic,
+        workflowId.as_deref(),
+        workspace.as_deref(),
+    )
+    .await
 }
 /// Backend advances the state machine from `AwaitingDecision` to
 /// `AssigningWorker` / `Finalizing` and emits the resulting turn.
@@ -596,6 +603,10 @@ pub(crate) fn workflow_payload_to_def(p: &WorkflowPayload) -> Result<WorkflowDef
         planner_role: p.planner_role.trim().to_string(),
         worker_roles: p.worker_roles.clone(),
         max_steps: p.max_steps,
+        manager_role: p.manager_role.trim().to_string(),
+        initial_workers: p.initial_workers.clone(),
+        max_total_steps: p.max_total_steps,
+        max_user_decisions: p.max_user_decisions,
     })
 }
 
@@ -623,6 +634,10 @@ pub(crate) fn workflow_def_to_payload(id: &str, w: &WorkflowDef) -> WorkflowPayl
         planner_role: w.planner_role.clone(),
         worker_roles: w.worker_roles.clone(),
         max_steps: w.max_steps,
+        manager_role: w.manager_role.clone(),
+        initial_workers: w.initial_workers.clone(),
+        max_total_steps: w.max_total_steps,
+        max_user_decisions: w.max_user_decisions,
     }
 }
 

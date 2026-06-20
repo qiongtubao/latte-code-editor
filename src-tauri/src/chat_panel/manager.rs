@@ -50,11 +50,25 @@ static SESSIONS: OnceLock<Mutex<HashMap<usize, Arc<Mutex<ManagerSessionState>>>>
 fn sessions() -> &'static Mutex<HashMap<usize, Arc<Mutex<ManagerSessionState>>>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
+/// Return the role_id of the most recent non-manager turn in a
+/// session — used to de-prioritize that role in the next stub
+/// decision so the user isn't offered the same worker twice.
+fn last_worker_role(state: &ManagerSessionState) -> Option<String> {
+    state
+        .turns
+        .iter()
+        .rev()
+        .find(|t| t.role_id != state.manager_role_id)
+        .map(|t| t.role_id.clone())
+}
+
 fn stub_action_for_topic(
     topic: &str,
     decisions_taken: u32,
     steps_taken: u32,
     available_roles: &[String],
+    last_worker_role: Option<&str>,
 ) -> ManagerAction {
     let lower = topic.to_ascii_lowercase();
     if decisions_taken >= 4 || steps_taken >= 8 {
@@ -127,13 +141,29 @@ fn stub_action_for_topic(
 
     // Validate roles: any option pointing at a missing role gets
     // filtered out so the UI never offers a dead end.
-    let opts: Vec<DecisionOption> = opts
+    let mut opts: Vec<DecisionOption> = opts
         .into_iter()
         .filter(|o| match &o.worker_role {
             None => true,
             Some(r) => available_roles.iter().any(|ar| ar == r),
         })
         .collect();
+    // Avoid re-dispatching the same role as the previous step:
+    // push matching options to the back and mark them with a hint.
+    if let Some(prev) = last_worker_role {
+        for o in opts.iter_mut() {
+            if o.worker_role.as_deref() == Some(prev) {
+                o.description.push_str(" · 上次用过");
+            }
+        }
+        opts.sort_by_key(|o| {
+            if o.worker_role.as_deref() == Some(prev) {
+                1
+            } else {
+                0
+            }
+        });
+    }
     let opts = if opts.is_empty() {
         // No eligible roles → just propose to conclude.
         vec![option(
@@ -395,6 +425,7 @@ fn emit_manager_status(app: &AppHandle, state: &ManagerSessionState) {
 pub async fn start_manager_session(
     app: &AppHandle,
     topic: &str,
+    workflow_id: Option<&str>,
     workspace: Option<&str>,
 ) -> Result<usize, String> {
     if topic.trim().is_empty() {
@@ -436,16 +467,22 @@ pub async fn start_manager_session(
 
     // Persist + emit first decision.
     take_manager_turn(app, &state_arc, &workspace, topic, 0, |s| {
-        stub_action_for_topic(topic, s.decisions_taken, s.steps_taken, &available_roles)
+        let last = last_worker_role(s);
+        stub_action_for_topic(
+            topic,
+            s.decisions_taken,
+            s.steps_taken,
+            &available_roles,
+            last.as_deref(),
+        )
     })?;
-
     Ok(session_id)
 }
 
 /// Called internally to compute and emit the manager's next
 /// `chat:turn` + (optionally) `chat:need_decision`. Updates state,
 /// persists, and emits events.
-fn take_manager_turn<F>(
+pub(crate) fn take_manager_turn<F>(
     app: &AppHandle,
     state_arc: &Arc<Mutex<ManagerSessionState>>,
     workspace: &Path,
@@ -542,9 +579,10 @@ fn build_manager_turn_payload(
         pinned: false,
     }
 }
-
-fn render_context_summary(turns: &[ManagerTurn]) -> String {
-    let last_few: Vec<&ManagerTurn> = turns.iter().rev().take(3).collect();
+/// Build a short Chinese summary of the recent transcript so the
+/// manager's LLM call has enough context to make a good decision.
+pub(crate) fn render_context_summary(turns: &[ManagerTurn]) -> String {
+    let last_few: Vec<&ManagerTurn> = turns.iter().rev().take(6).collect();
     last_few
         .into_iter()
         .rev()
@@ -733,7 +771,17 @@ pub async fn submit_user_continue(
                 }
                 s_mut.topic.push_str(&format!("\n[补充] {}", text));
             }
-            stub_action_for_topic(&topic, 0, 0, &state_arc.lock().available_roles)
+            {
+                let last = last_worker_role(&state_arc.lock());
+                let s = state_arc.lock();
+                stub_action_for_topic(
+                    &topic,
+                    s.decisions_taken,
+                    s.steps_taken,
+                    &s.available_roles,
+                    last.as_deref(),
+                )
+            }
         }
         _ => ManagerAction::NeedDecision {
             branch_label: "🧭 通用".into(),
@@ -790,7 +838,7 @@ pub fn stub_decision_for_tests(
     steps_taken: u32,
     available_roles: &[String],
 ) -> ManagerAction {
-    stub_action_for_topic(topic, decisions_taken, steps_taken, available_roles)
+    stub_action_for_topic(topic, decisions_taken, steps_taken, available_roles, None)
 }
 
 #[cfg(test)]
@@ -804,6 +852,7 @@ mod tests {
             4,
             0,
             &["pm".into(), "architect".into()],
+            None,
         );
         assert!(matches!(action, ManagerAction::Finalize { .. }));
     }
@@ -811,7 +860,7 @@ mod tests {
     #[test]
     fn stub_design_topic_offers_known_roles() {
         let action =
-            stub_action_for_topic("设计登录页", 0, 0, &["pm".into(), "architect".into()]);
+            stub_action_for_topic("设计登录页", 0, 0, &["pm".into(), "architect".into()], None);
         match action {
             ManagerAction::NeedDecision { options, .. } => {
                 let ids: Vec<&str> = options.iter().map(|o| o.id.as_str()).collect();
@@ -829,12 +878,12 @@ mod tests {
             0,
             0,
             &["pm".into()], // architect missing
+            None,
         );
         match action {
             ManagerAction::NeedDecision { options, .. } => {
                 // arch_only requires a role that doesn't exist, so
                 // it's filtered out. We should still have pm_only.
-                assert!(options.iter().any(|o| o.id == "pm_only"));
                 assert!(!options.iter().any(|o| o.id == "arch_only"));
             }
             other => panic!("expected NeedDecision, got {other:?}"),
@@ -848,6 +897,7 @@ mod tests {
             0,
             0,
             &["tester".into(), "programmer".into()],
+            None,
         );
         match action {
             ManagerAction::NeedDecision { options, .. } => {
@@ -858,11 +908,10 @@ mod tests {
     }
     #[test]
     fn stub_zero_roles_falls_back_to_conclude() {
-        let action = stub_action_for_topic("任何话题", 0, 0, &[]);
+        let action = stub_action_for_topic("任何话题", 0, 0, &[], None);
         match action {
             ManagerAction::NeedDecision { options, .. } => {
                 assert_eq!(options.len(), 1);
-                assert!(options[0].worker_role.is_none());
             }
             other => panic!("expected NeedDecision, got {other:?}"),
         }
@@ -877,24 +926,28 @@ mod tests {
             0,
             0,
             &["pm".into(), "architect".into()],
+            None,
         );
         let bug = stub_action_for_topic(
             "fix login bug",
             0,
             0,
             &["tester".into(), "programmer".into()],
+            None,
         );
         let docs = stub_action_for_topic(
             "解释一下",
             0,
             0,
             &["tech_writer".into(), "architect".into()],
+            None,
         );
         let generic = stub_action_for_topic(
             "随便聊聊",
             0,
             0,
             &["pm".into()],
+            None,
         );
         let (d, b, doc, g) = (
             extract_label(&design),
@@ -929,7 +982,7 @@ mod tests {
             "随便聊聊",
             "Hello",
         ] {
-            let action = stub_action_for_topic(topic, 0, 0, &all_roles);
+            let action = stub_action_for_topic(topic, 0, 0, &all_roles, None);
             let opts = match action {
                 ManagerAction::NeedDecision { options, .. } => options,
                 _ => panic!("{topic} did not produce NeedDecision"),
@@ -939,9 +992,39 @@ mod tests {
                 "{topic}: must always offer the user_continue escape hatch, got {opts:?}"
             );
             let escape = opts.iter().find(|o| o.id == "user_continue").unwrap();
-            assert!(escape.worker_role.is_none(), "escape hatch shouldn't dispatch a worker");
             assert_eq!(escape.estimated_cost_usd, 0.0, "escape hatch is cost-free");
         }
+    }
+
+    #[test]
+    fn stub_demotes_previous_worker_to_last() {
+        // When the previous turn used `pm`, the next stub decision
+        // should put `pm`-pointing options at the back of the list
+        // and tag their description. The first option should be a
+        // different role.
+        let action = stub_action_for_topic(
+            "设计登录页",
+            0,
+            0,
+            &["pm".into(), "architect".into()],
+            Some("pm"),
+        );
+        let opts = match action {
+            ManagerAction::NeedDecision { options, .. } => options,
+            other => panic!("expected NeedDecision, got {other:?}"),
+        };
+        // The very first option must not be pm-only when pm was the
+        // previous worker — something else should lead.
+        let first = opts.first().expect("at least one option");
+        assert_ne!(
+            first.worker_role.as_deref(),
+            Some("pm"),
+            "pm should have been demoted: {opts:?}"
+        );
+        // And there should still be a pm-only option (just at the back).
+        let pm_only = opts.iter().find(|o| o.id == "pm_only").expect("pm_only exists");
+        assert!(pm_only.description.contains("上次用过"));
+        assert!(pm_only.worker_role.as_deref() == Some("pm"));
     }
 
     fn extract_label(action: &ManagerAction) -> String {

@@ -145,6 +145,25 @@ pub struct WorkflowDef {
     /// Cap on worker steps the planner may emit per task.
     #[serde(default = "default_max_steps")]
     pub max_steps: usize,
+
+    // ── Manager-led fields (only used when `kind == ManagerLed`) ──
+    /// Role id that drives the manager-led workflow. Defaults to
+    /// `"manager"` when empty. The runner uses this role's prompt
+    /// template + chain to call the manager LLM (or stub).
+    #[serde(default)]
+    pub manager_role: String,
+    /// Roles the manager may pick as workers — the strict candidate
+    /// pool. When empty, falls back to all roles.
+    #[serde(default)]
+    pub initial_workers: Vec<String>,
+    /// Hard cap on total manager turns (questions + worker runs).
+    #[serde(default = "default_max_total_steps")]
+    pub max_total_steps: u32,
+    /// Hard cap on how many times the manager may bother the user
+    /// with `chat:need_decision`. Beyond this the manager must pick
+    /// itself or finalize.
+    #[serde(default = "default_max_user_decisions")]
+    pub max_user_decisions: u32,
 }
 
 /// One step in a multi-role workflow.
@@ -184,6 +203,12 @@ fn default_workflow_kind() -> WorkflowKind {
 fn default_max_steps() -> usize {
     5
 }
+fn default_max_total_steps() -> u32 {
+    8
+}
+fn default_max_user_decisions() -> u32 {
+    5
+}
 
 impl Default for WorkflowDef {
     fn default() -> Self {
@@ -196,6 +221,10 @@ impl Default for WorkflowDef {
             planner_role: String::new(),
             worker_roles: Vec::new(),
             max_steps: default_max_steps(),
+            manager_role: String::new(),
+            initial_workers: Vec::new(),
+            max_total_steps: default_max_total_steps(),
+            max_user_decisions: default_max_user_decisions(),
         }
     }
 }
@@ -434,6 +463,12 @@ pub fn load_roles_config() -> RoleConfig {
     if !path.exists() {
         let config = create_default_roles();
         let _ = write_roles_config(&path, &config);
+        // Also seed per-workflow files so `read_all_workflow_files`
+        // works on a fresh install (no roles.yaml migration step
+        // needed).
+        for (id, wf) in &config.workflows {
+            let _ = write_workflow_file(id, wf);
+        }
         return config;
     }
 
@@ -736,14 +771,57 @@ pub fn create_default_roles() -> RoleConfig {
         icon: "👔".into(),
         category: "规划".into(),
         model_tier: "premium".into(),
-        model_chain: vec![],
-        temperature: 0.5,
+        model_chain: vec!["deepseek-chat".into()],
+        temperature: 0.3,
         tools: vec!["read".into()],
         prompt_file: "prompts/manager.md".into(),
-        prompt: "你是一名工程经理，负责拆分任务、排序依赖、决定谁来做。".into(),
+        prompt: concat!(
+            "你是这家公司的工程经理。用户给你一个产品/技术任务，你的工作是：\n",
+            "1. 拆解任务（产品需求 → 架构 → 实现 → 测试 → 发布）\n",
+            "2. 派给合适的 worker（产品经理 / 系统架构师 / 软件工程师 / 测试工程师 / 代码审查员 / 运维工程师 / 安全审计员 / UI/UX 设计师 / 技术写作 / 工程经理）\n",
+            "3. 看 worker 输出后决定下一步\n",
+            "4. 综合产出中文 Markdown 方案\n\n",
+            "# 硬性约束\n",
+            "- 严格输出 4 种 JSON 之一，禁止任何其他文字\n",
+            "- worker 只能从 candidates 列表里挑\n",
+            "- 总步数 ≤ 8，问用户次数 ≤ 5\n",
+            "- 没信息就停下来问用户，不要瞎猜\n\n",
+            "# 输出 schema（必须严格遵守）\n",
+            "{\"kind\":\"need_decision\",\"question\":\"...\",\"reason\":\"...\",",
+            "\"options\":[{\"id\":\"a\",\"label\":\"...\",\"description\":\"...\",\"worker_role\":\"pm\",\"estimated_cost_usd\":0.005}]}\n",
+            "或 {\"kind\":\"assign_worker\",\"worker_role\":\"pm\",\"instruction\":\"...\"}\n",
+            "或 {\"kind\":\"finalize\",\"summary\":\"...\"}\n",
+            "或 {\"kind\":\"conclude\"}\n",
+        ).to_string(),
         ..Default::default()
     });
-
+    roles.insert("tech_director".into(), RoleDef {
+        name: "技术总监".into(),
+        icon: "🎯".into(),
+        category: "规划".into(),
+        model_tier: "premium".into(),
+        model_chain: vec!["claude-sonnet-4".into(), "deepseek-chat".into()],
+        temperature: 0.4,
+        prompt: concat!(
+            "你是这家公司的技术总监。用户给你一个产品/技术任务，你的工作比工程经理更高一层：\n",
+            "1. 先用 1-2 句话判断优先级：商业价值 vs 技术风险 vs 用户体验\n",
+            "2. 拆成 2-4 个清晰阶段，每个阶段明确指出谁来做 + 产出什么\n",
+            "3. 派给合适的 worker（产品经理 / 系统架构师 / 软件工程师 / 测试工程师 / 代码审查员 / 运维工程师 / 安全审计员 / UI/UX 设计师 / 技术写作）\n",
+            "4. 综合产出业务 + 技术双视角的最终方案\n\n",
+            "# 硬性约束（同工程经理）\n",
+            "- 严格输出 4 种 JSON 之一，无任何其他文字\n",
+            "- worker 只能从 candidates 列表里挑\n",
+            "- 总步数 ≤ 8，问用户次数 ≤ 5\n",
+            "- 没信息就停下来问用户\n\n",
+            "# 输出 schema\n",
+            "{\"kind\":\"need_decision\",\"question\":\"...\",\"reason\":\"...\",",
+            "\"options\":[{\"id\":\"a\",\"label\":\"...\",\"description\":\"...\",\"worker_role\":\"pm\",\"estimated_cost_usd\":0.005}]}\n",
+            "或 {\"kind\":\"assign_worker\",\"worker_role\":\"pm\",\"instruction\":\"...\"}\n",
+            "或 {\"kind\":\"finalize\",\"summary\":\"...\"}\n",
+            "或 {\"kind\":\"conclude\"}\n",
+        ).to_string(),
+        ..Default::default()
+    });
     // Default workflows — same naming as upstream `discussion.toml` so
     // the `loadRoleConfig` consumers see consistent ids.
     let mut workflows = HashMap::new();
@@ -831,6 +909,11 @@ pub fn create_default_roles() -> RoleConfig {
         WorkflowDef {
             name: "🧭 通用 — Manager 主导".into(),
             kind: WorkflowKind::Planned,
+            // Default to the higher-level "技术总监" role so the user
+            // gets strategic framing out of the box. The user can
+            // switch to "manager" (工程经理) or any custom role in
+            // the workflow editor.
+            manager_role: "tech_director".into(),
             ..Default::default()
         },
     );
@@ -878,8 +961,8 @@ mod migration_tests {
             )]),
         };
         assert!(migrate_roles_config(&mut cfg));
-        // 10 default roles total
-        assert_eq!(cfg.roles.len(), 10);
+        // 11 default roles total (10 original + tech_director)
+        assert_eq!(cfg.roles.len(), 11);
         // 6 default workflows total (default, plan, code_review, debug, quick_task, manager_default)
         assert_eq!(cfg.workflows.len(), 6);
         // User's custom programmer override is preserved (not

@@ -120,9 +120,7 @@ interface ChatStore {
   managerStatus: import("../api/chat").ManagerStatus | null;
   /** Currently-active manager session id (assigned by
    *  `chat_start_manager_session`). `null` until first launch. */
-  managerSessionId: number | null;
   startManagerSession: (topic: string) => Promise<void>;
-  /** User picked an option (with optional free text). */
   submitManagerDecision: (
     optionId: string,
     freeText?: string | null,
@@ -646,14 +644,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   // ─── Workflow editor ────────────────────────────────────────────
 
-  openWorkflowEditor: (payload) =>
+  openWorkflowEditor: (payload) => {
+    // Older payloads saved before `managerRole` / `initialWorkers`
+    // were added won't have these fields. Fill with defaults so the
+    // editor's `ManagerFields` panel can bind to them without
+    // conditionals everywhere.
+    const normalized: WorkflowPayload = {
+      managerRole: "",
+      initialWorkers: [],
+      maxTotalSteps: 8,
+      maxUserDecisions: 5,
+      ...payload,
+    };
     set({
-      editingWorkflow: structuredClone(payload),
-      editingOriginal: structuredClone(payload),
+      editingWorkflow: structuredClone(normalized),
+      editingOriginal: structuredClone(normalized),
       editingDirty: false,
       editingError: null,
-    }),
-
+    });
+  },
   openNewWorkflowEditor: () => {
     const id = `custom_${Date.now().toString(36)}`;
     const blank: WorkflowPayload = {
@@ -675,6 +684,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
+      managerRole: "",
+      initialWorkers: [],
+      maxTotalSteps: 8,
+      maxUserDecisions: 5,
     };
     set({
       editingWorkflow: blank,
@@ -905,7 +918,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       managerStatus: null,
     }));
     try {
-      const sessionId = await startManagerSessionApi(trimmed, null);
+      const wf = get().selectedWorkflow;
+      const sessionId = await startManagerSessionApi(
+        trimmed,
+        get().mode === "manager" ? wf : null,
+      );
       set({ managerSessionId: sessionId });
     } catch (e) {
       set({ status: "idle", errorMessage: String(e) });

@@ -231,6 +231,18 @@ pub struct WorkflowPayload {
     pub worker_roles: Vec<String>,
     #[serde(default = "default_max_steps")]
     pub max_steps: usize,
+    /// Manager-led only: role id that drives the workflow.
+    #[serde(default)]
+    pub manager_role: String,
+    /// Manager-led only: strict candidate pool the manager picks from.
+    #[serde(default)]
+    pub initial_workers: Vec<String>,
+    /// Manager-led only: hard cap on total manager turns.
+    #[serde(default)]
+    pub max_total_steps: u32,
+    /// Manager-led only: hard cap on `chat:need_decision` count.
+    #[serde(default)]
+    pub max_user_decisions: u32,
 }
 
 fn default_max_rounds() -> usize {
