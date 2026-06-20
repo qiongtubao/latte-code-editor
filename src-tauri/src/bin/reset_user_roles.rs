@@ -11,9 +11,10 @@
 
 use std::env;
 use std::fs;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use latte_code_editor_lib::chat_panel::global_config::{
-    create_default_roles, roles_config_path, write_roles_config,
+    create_default_roles, roles_config_path, write_roles_config, write_workflow_file,
 };
 
 fn main() {
@@ -22,15 +23,32 @@ fn main() {
 
     if path.exists() {
         let backup = backup_path(&path);
-        fs::copy(&path, &backup).expect("backup existing roles.yaml");
+        std::fs::copy(&path, &backup).expect("backup existing roles.yaml");
         println!("Backup → {}", backup.display());
     }
 
     let config = create_default_roles();
-    write_roles_config(&path, &config).expect("write defaults");
-    println!("OK — wrote Chinese defaults ({} roles, {} workflows)",
-             config.roles.len(),
-             config.workflows.len());
+    // Write roles.yaml with workflows stripped (per-file storage now).
+    let mut roles_only = config.clone();
+    roles_only.workflows = HashMap::new();
+    write_roles_config(&path, &roles_only).expect("write defaults");
+
+    // Also write each default workflow as its own file under
+    // `~/.latte-code-editor/workflows/<id>.yaml`. Without this
+    // step, on-disk workflow files stay on whatever shape they had
+    // from a previous reset — and a workflow added in a later
+    // commit (e.g. `manager_role: tech_director`) never reaches the
+    // user until they manually delete the file.
+    for (id, wf) in &config.workflows {
+        write_workflow_file(id, wf)
+            .unwrap_or_else(|e| panic!("write workflows/{id}.yaml failed: {e}"));
+    }
+
+    println!(
+        "OK — wrote Chinese defaults ({} roles, {} workflow files)",
+        config.roles.len(),
+        config.workflows.len(),
+    );
 
     // Sanity-check: the on-disk file contains the new Chinese names.
     let raw = fs::read_to_string(&path).expect("re-read");

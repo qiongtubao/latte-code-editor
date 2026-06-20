@@ -913,8 +913,26 @@ pub fn create_default_roles() -> RoleConfig {
             // switch to "manager" (工程经理) or any custom role in
             // the workflow editor.
             manager_role: "tech_director".into(),
+            // Pre-populate the worker pool with every non-manager
+            // role so the workflow YAML on disk looks complete and
+            // the chat panel's manager status bar shows a real list
+            // instead of "（所有角色）". The pool is recomputed
+            // (filtered) on every session start, so stale entries
+            // here just get dropped — they never cause a dead role
+            // to be dispatched.
+            initial_workers: vec![
+                "pm".into(),
+                "architect".into(),
+                "programmer".into(),
+                "tester".into(),
+                "reviewer".into(),
+                "devops".into(),
+                "security".into(),
+                "designer".into(),
+                "tech_writer".into(),
+            ],
             ..Default::default()
-        },
+        }
     );
     RoleConfig {
         default_model: "deepseek-chat".into(),
