@@ -5,7 +5,13 @@ import type { ChatEvent } from "../api/chat";
 
 export type ChatMessageRole = "user" | "agent" | "system";
 
-/** 协议层统一消息：后端原始 ChatEvent 解析后的结构化结果 */
+/**
+ * 协议层统一消息：后端原始 ChatEvent 解析后的结构化结果。
+ *
+ * roleId / round / stepId / messageId / weight / pinned 这些字段
+ * 让渲染器可以按角色分组展示、按轮高亮、根据 weight 折叠/展开
+ * 特定消息，而不需要回落到解析 content 字符串。
+ */
 export interface ChatProtocolMessage {
   id: string;
   role: ChatMessageRole;
@@ -13,6 +19,20 @@ export interface ChatProtocolMessage {
   agentIcon?: string;
   agentName?: string;
   timestamp: number;
+
+  // ── 多角色执行数据结构化字段 ────────────────────────
+  /** 角色系统 id（如 "pm"、"programmer"），用于按角色分组展示 */
+  roleId?: string;
+  /** 轮次号 */
+  round?: number;
+  /** 后端步骤 id */
+  stepId?: string;
+  /** 后端消息 id（`{session_id}:{turn_number}`），用于精确 delete/edit */
+  messageId?: string;
+  /** 消息权重（0.0=可丢弃，1.0=默认，5.0=固定） */
+  weight?: number;
+  /** 用户是否固定了此消息 */
+  pinned?: boolean;
 }
 
 export type ChatProtocolStatus = "idle" | "running" | "completed" | "error";
@@ -162,6 +182,8 @@ export function parseChatEvent(
       agentName: info.name,
       content: event.RoleTurn.content,
       timestamp: Date.now(),
+      // 结构化角色元数据 — 渲染器可据此按角色分组、按轮展示
+      roleId: event.RoleTurn.role_id,
     };
   }
 

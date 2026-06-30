@@ -105,6 +105,10 @@ export class ReactChatEventAdapter implements ChatRenderer {
         agentName: turn.agent,
         content: turn.response,
         timestamp: Date.now(),
+        // 带出 ChatTurn 的角色/轮次信息
+        roleId: turn.roleId,
+        round: turn.round,
+        stepId: turn.stepId,
       },
     ];
     this._status = "running";
@@ -131,13 +135,21 @@ export class ReactChatEventAdapter implements ChatRenderer {
         timestamp: ts,
       }];
     } else if (event.kind === "step" && event.turn) {
+      const t = event.turn;
       this._messages = [...this._messages, {
         id: `step-${ts}-${this._messages.length}`,
         role: "agent",
-        agentIcon: event.turn.icon || "💬",
-        agentName: event.turn.agent,
-        content: event.turn.response,
+        agentIcon: t.icon || "💬",
+        agentName: t.agent,
+        content: t.response,
         timestamp: ts,
+        // 带出 TurnPayload 的全部结构化字段
+        roleId: t.roleId,
+        round: t.round,
+        stepId: t.stepId,
+        messageId: t.messageId,
+        weight: t.weight,
+        pinned: t.pinned,
       }];
     } else if (event.kind === "summary" && event.content) {
       this._messages = [...this._messages, {
