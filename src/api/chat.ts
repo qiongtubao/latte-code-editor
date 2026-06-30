@@ -36,8 +36,7 @@ export interface WorkflowInfo {
   defaultRoles: string[];
   steps: string[];
   /** `"planned"` (sequential), `"swarm"` (planner-driven), or
-   *   `"manager_led"` (interactive: manager role reads topic +
-   *   pauses to ask the user via `chat:need_decision`). */
+   *   `"manager_led"` (controller chat starts from the manager role). */
   kind: "planned" | "swarm";
   /** Runtime dispatch tag. Same as `kind` unless the workflow id
    *   starts with `manager_` (in which case this is `"manager_led"`).
@@ -61,6 +60,33 @@ export interface ContinueDiscussionRequest {
   sessionId: number;
   message: string;
 }
+
+export interface ControllerRoleInfo {
+  id: string;
+  name: string;
+  icon: string;
+}
+
+export type ChatEvent =
+  | { RoleTurn: { role_id: string; content: string; is_complete: boolean } }
+  | { Status: { message: string } }
+  | { Prompt: { icon: string; role_id: string; model_id: string } }
+  | { Paused: { reason: string } }
+  | { Resumed: null }
+  | { RoundStarted: { round: number } }
+  | { RoundEnded: { round: number } }
+  | { RoleStarted: { role_id: string; detail: string } }
+  | { RoleFinished: { role_id: string; detail: string } }
+  | { DelegateStarted: { from_role: string; to_role: string; task: string } }
+  | { DelegateFinished: { from_role: string; to_role: string; status: string; summary: string } }
+  | { Done: null }
+  | { Error: { message: string } }
+  | { RoleList: { roles: ControllerRoleInfo[] } }
+  | { ContextCleared: null }
+  | { SessionInfo: { task_id: string; state: string; turn: number; roles: ControllerRoleInfo[] } }
+  | { ToolUse: { role_id: string; tool_name: string; args: string } }
+  | { ToolResult: { role_id: string; tool_name: string; result: string } }
+  | { ToolError: { role_id: string; tool_name: string; error: string } };
 
 /**
  * Request to update a role's priority-ordered model chain.
@@ -125,7 +151,13 @@ export async function setDefaultModel(modelId: string): Promise<void> {
 /**
  * Open config file in editor
  */
-export async function openConfig(configType: "models" | "roles"): Promise<string> {
+export type ChatConfigTarget =
+  | "models"
+  | "roles"
+  | `workflow:${string}`
+  | `role:${string}`;
+
+export async function openConfig(configType: ChatConfigTarget): Promise<string> {
   return invoke<string>("chat_open_config", { configType });
 }
 
@@ -231,190 +263,6 @@ export async function startSwarm(
   return invoke<number>("chat_start_swarm", { request });
 }
 
-// ─── Manager-led workflow ────────────────────────────────────────────
-//
-// Interactive flow where a manager role reads the topic, decides what
-// to do next, and pauses for user input via option buttons. Backend
-// streams `chat:turn` for manager / worker bubbles and
-// `chat:need_decision` for the option panel.
-
-/**
- * One option offered by the manager when it pauses to ask the
- * user. `workerRole` is `null` for "conclude" / "skip" options
- * that don't dispatch a worker.
- */
-export interface DecisionOption {
-  id: string;
-  label: string;
-  description: string;
-  workerRole: string | null;
-  /** Rough USD cost so the user can pick with eyes open. */
-  estimatedCostUsd: number;
-}
-
-/**
- * Event payload the backend emits when the manager needs the user
- * to pick. The frontend renders these as option-button panels
- * under the most recent manager bubble.
- */
-export interface DecisionRequest {
-  sessionId: number;
-  /** Short branch label so the user knows which heuristic fired
-   *  (e.g. "🎨 设计任务" / "🪲 Bug 排查" / "🧭 通用" / "🔁 反射"). */
-  branchLabel: string;
-  question: string;
-  reason: string;
-  options: DecisionOption[];
-  contextSummary: string;
-}
-
-/** User's choice posted back to `chat_user_decision`. */
-export interface UserDecision {
-  sessionId: number;
-  optionId: string;
-  freeText?: string | null;
-}
-
-/** One turn in the manager-led conversation (manager / worker / user). */
-export interface ManagerTurn {
-  turnNumber: number;
-  roleId: string;
-  roleName: string;
-  icon: string;
-  content: string;
-  action?: ManagerAction | null;
-  userDecision?: UserDecision | null;
-  weight: number;
-  pinned: boolean;
-  tsMs: number;
-}
-
-/** Discriminated union matching the backend `ManagerAction`. */
-export type ManagerAction =
-  | {
-      kind: "needDecision";
-      question: string;
-      reason: string;
-      options: DecisionOption[];
-    }
-  | { kind: "assignWorker"; workerRole: string; instruction: string }
-  | { kind: "finalize"; summary: string }
-  | { kind: "conclude" };
-
-/** Full session snapshot. Persisted to state.json on every transition. */
-export interface ManagerSessionState {
-  sessionId: number;
-  state:
-    | "idle"
-    | "planning"
-    | "awaitingDecision"
-    | "assigningWorker"
-    | "workerRunning"
-    | "reflecting"
-    | "finalizing"
-    | "done"
-    | "failed";
-  topic: string;
-  managerRoleId: string;
-  availableRoles: string[];
-  maxTotalSteps: number;
-  maxUserDecisions: number;
-  stepsTaken: number;
-  decisionsTaken: number;
-  turns: ManagerTurn[];
-  startedAtMs: number;
-  finishedAtMs: number | null;
-  summary: string | null;
-}
-
-/** Start a manager-led session. Returns the new session_id. */
-export async function startManagerSession(
-  topic: string,
-  workflowId: string | null,
-  workspace?: string | null
-): Promise<number> {
-  return invoke<number>("chat_start_manager_session", {
-    topic,
-    workflowId: workflowId ?? null,
-    workspace: workspace ?? null,
-  });
-}
-
-/** Post a user's choice (or free-text only) to the manager session. */
-export async function submitUserDecision(
-  decision: UserDecision
-): Promise<void> {
-  return invoke("chat_user_decision", { decision });
-}
-
-/** Push the session forward without picking an option. */
-export async function submitUserContinue(
-  sessionId: number,
-  message?: string | null
-): Promise<void> {
-  return invoke("chat_user_continue", { sessionId, message: message ?? null });
-}
-
-/** Snapshot a manager session. `null` if not found in this process. */
-export async function getManagerState(
-  sessionId: number
-): Promise<ManagerSessionState | null> {
-  return invoke<ManagerSessionState | null>("chat_get_manager_state", {
-    sessionId,
-  });
-}
-
-/** Force-stop a manager session with a reason recorded in state. */
-export async function abortManagerSession(
-  sessionId: number,
-  reason: string
-): Promise<void> {
-  return invoke("chat_abort_manager_session", { sessionId, reason });
-}
-
-/**
- * Streaming status payload from `chat:manager_status`. Emitted on
- * every manager state transition. The chat panel renders this as a
- * compact Chinese-labeled status card so the user can see what
- * model is being used, how many steps / decisions remain, how many
- * tokens the transcript has consumed, and whether the manager is
- * running in stub mode (keyword heuristic) or live LLM mode.
- *
- * All byte / token counts are estimates — fine for the UI, not for
- * billing.
- */
-export interface ManagerStatus {
-  sessionId: number;
-  state:
-    | "idle"
-    | "planning"
-    | "awaitingDecision"
-    | "assigningWorker"
-    | "workerRunning"
-    | "reflecting"
-    | "finalizing"
-    | "done"
-    | "failed";
-  /** Chinese phase label — "规划中", "等待你的决策", ... */
-  phaseLabel: string;
-  managerRoleId: string;
-  managerRoleName: string;
-  managerIcon: string;
-  /** First model in the manager's chain (primary). Empty in stub mode. */
-  currentModel: string;
-  modelChain: string[];
-  isStubMode: boolean;
-  availableWorkers: string[];
-  stepsTaken: number;
-  maxTotalSteps: number;
-  decisionsTaken: number;
-  maxUserDecisions: number;
-  transcriptBytes: number;
-  summaryBytes: number;
-  tokensEstimated: number;
-  elapsedMs: number;
-  lastStepAtMs: number;
-}
 /**
  * Cancel discussion
  */

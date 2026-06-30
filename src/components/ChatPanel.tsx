@@ -44,13 +44,8 @@ export function ChatPanel({ onClose }: Props) {
     openNewWorkflowEditor,
     closeWorkflowEditor,
     editingWorkflow,
-    pendingDecision,
-    submitManagerDecision,
-    managerContinue,
-    managerStatus,
   } = useChatStore();
   const [input, setInput] = useState("");
-  const [managerStatusCollapsed, setManagerStatusCollapsed] = useState(true);
    useEffect(() => {
     loadWorkflows();
     loadModels();
@@ -164,15 +159,6 @@ export function ChatPanel({ onClose }: Props) {
             </option>
           ))}
         </select>
-        {mode === "manager" && managerStatus && (
-          <ManagerStatusBar
-            status={managerStatus}
-            collapsed={managerStatusCollapsed}
-            onToggleCollapse={() =>
-              setManagerStatusCollapsed((c) => !c)
-            }
-          />
-        )}
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={toggleConfigPanel}
@@ -381,18 +367,7 @@ export function ChatPanel({ onClose }: Props) {
         </div>
       )}
 
-      {/* Manager-led: when the backend emits chat:need_decision,
-          the user must pick an option (or push forward without
-          picking). We replace the regular input with an
-          option-button panel until the user resolves the decision. */}
-      {mode === "manager" && pendingDecision ? (
-        <DecisionBubble
-          decision={pendingDecision}
-          onPick={submitManagerDecision}
-          onSkip={managerContinue}
-        />
-      ) : (
-        <div className="px-3 py-2 bg-[#252526] border-t border-gray-700">
+      <div className="px-3 py-2 bg-[#252526] border-t border-gray-700">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -431,8 +406,7 @@ export function ChatPanel({ onClose }: Props) {
               Enter to send · Shift+Enter newline
             </span>
           </div>
-        </div>
-      )}
+      </div>
 
       {/* Workflow editor modal — only mounted when an editing session is open. */}
       {editingWorkflow && <WorkflowEditor />}
@@ -501,225 +475,3 @@ function SwarmStatus({ plan, files, summary, onFileClick }: SwarmStatusProps) {
   );
 }
 
-interface DecisionBubbleProps {
-  decision: import("../api/chat").DecisionRequest;
-  onPick: (optionId: string, freeText?: string) => Promise<void> | void;
-  onSkip: (message?: string) => Promise<void> | void;
-}
-
-/**
- * Purple-bordered option panel rendered in place of the regular
- * text input when the manager pauses to ask the user.
- *
- * Each option shows label / description / estimated cost. Picking
- * one (or pressing the "我说了算" skip button at the bottom) calls
- * the corresponding store action which IPCs back to the backend.
- */
-function DecisionBubble({ decision, onPick, onSkip }: DecisionBubbleProps) {
-  const [freeText, setFreeText] = useState("");
-  return (
-    <div className="px-3 py-3 bg-purple-950/30 border-t-2 border-purple-700/60 space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[10px] uppercase tracking-wide text-purple-300 font-semibold">
-          👔 manager 正在等你决定
-        </div>
-        {decision.branchLabel && (
-          <div
-            className="text-[10px] px-1.5 py-0.5 bg-purple-900/60 border border-purple-700/50 text-purple-200 rounded font-mono"
-            title="manager 根据关键词判断的话题类型"
-          >
-            {decision.branchLabel}
-          </div>
-        )}
-      </div>
-      <div className="text-sm text-purple-100 font-medium leading-snug">
-        {decision.question}
-      </div>
-      {decision.reason && (
-        <div className="text-[11px] text-purple-200/70 italic leading-snug">
-          _{decision.reason}_
-        </div>
-      )}
-      {decision.contextSummary && (
-        <details className="text-[10px] text-purple-200/60">
-          <summary className="cursor-pointer hover:text-purple-200">
-            当前上下文
-          </summary>
-          <pre className="mt-1 px-2 py-1 bg-purple-900/30 rounded whitespace-pre-wrap font-mono text-[10px]">
-            {decision.contextSummary}
-          </pre>
-        </details>
-      )}
-      <div className="flex flex-col gap-1.5 pt-1">
-        {decision.options.map((opt) => (
-          <button
-            key={opt.id}
-            type="button"
-            onClick={() => onPick(opt.id, freeText.trim() || undefined)}
-            className="text-left px-3 py-2 bg-purple-900/40 hover:bg-purple-800/60 border border-purple-700/50 rounded transition-colors group"
-          >
-            <div className="flex items-start gap-2">
-              <span className="text-base shrink-0">
-                {opt.workerRole === "conclude" || opt.workerRole === null
-                  ? "✅"
-                  : opt.workerRole
-                    ? "▶️"
-                    : "❓"}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-purple-100 font-medium">
-                    {opt.label}
-                  </span>
-                  {opt.estimatedCostUsd > 0 && (
-                    <span className="text-[10px] text-orange-300 px-1.5 py-0.5 bg-orange-900/40 border border-orange-800/60 rounded shrink-0">
-                      ≈ ${opt.estimatedCostUsd.toFixed(3)}
-                    </span>
-                  )}
-                  {opt.workerRole && (
-                    <span className="text-[10px] text-purple-300/70 font-mono shrink-0">
-                      → {opt.workerRole}
-                    </span>
-                  )}
-                </div>
- {opt.description && (
-                  <div className="text-[11px] text-purple-200/70 mt-0.5 leading-snug">
-                    {opt.description}
-                  </div>
-                )}
-              </div>
-            </div>
-          </button>
-        ))}
-      </div>
-      <textarea
-        value={freeText}
-        onChange={(e) => setFreeText(e.target.value)}
-        placeholder="（可选）补充说明，会跟选项一起发给 manager"
-        rows={2}
-        className="w-full px-2 py-1.5 bg-[#2a1f3a] text-purple-100 text-xs rounded border border-purple-800 outline-none focus:border-purple-500 resize-none"
-      />
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          type="button"
-          onClick={() => onSkip(freeText.trim() || undefined)}
-          className="px-2 py-1 text-[11px] text-purple-300 hover:text-purple-100 hover:bg-purple-900/40 rounded"
-          title="不选选项，让 manager 继续"
-        >
-          我说了算（manager 自己定）→
-        </button>
-        <span className="text-[10px] text-purple-300/60 ml-auto">
-          {decision.options.length} 个选项
-        </span>
-      </div>
-    </div>
-  );
-}
-
-interface ManagerStatusBarProps {
-  status: import("../api/chat").ManagerStatus;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
-}
-
-/**
- * Compact Chinese-labeled status panel for manager-led sessions.
- * Shows the role + model, phase, steps / decisions budget, transcript
- * size, and a stub-mode warning when the manager isn't actually
- * calling an LLM. Rendered in the chat panel header (manager mode
- * only); collapsible so it doesn't crowd the dropdown row.
- */
-function ManagerStatusBar({
-  status,
-  collapsed,
-  onToggleCollapse,
-}: ManagerStatusBarProps) {
-  const elapsedSec = Math.round(status.elapsedMs / 1000);
-  const remainingSteps = status.maxTotalSteps - status.stepsTaken;
-  const remainingDecisions = status.maxUserDecisions - status.decisionsTaken;
-  const transcriptKB = (status.transcriptBytes / 1024).toFixed(1);
-
-  return (
-    <div className="ml-2 text-[10px]">
-      <button
-        type="button"
-        onClick={onToggleCollapse}
-        className="px-2 py-0.5 bg-purple-900/30 border border-purple-700/40 text-purple-200 rounded text-[10px] hover:bg-purple-900/50"
-        title="点击展开 / 折叠 manager 会话状态"
-      >
-        📊 {status.phaseLabel} {collapsed ? "▸" : "▾"}
-      </button>
-      {!collapsed && (
-        <div className="absolute z-10 mt-1 left-0 right-0 mx-2 p-3 bg-[#1e1e1e] border border-purple-700/40 rounded shadow-lg text-[11px] text-gray-200 space-y-1">
-          <div className="flex items-center gap-2 font-semibold">
-            <span>{status.managerIcon}</span>
-            <span>{status.managerRoleName}</span>
-            <span className="text-gray-500 font-normal">
-              ({status.managerRoleId})
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-            <Field label="模型" value={
-              status.currentModel
-                ? `${status.currentModel} (chain: ${status.modelChain.length})`
-                : "（无）"
-            } />
-            <Field
-              label="Stub?"
-              value={status.isStubMode ? "⚠️ 是（keyword 决策）" : "✅ 实时 LLM"}
-              tone={status.isStubMode ? "warn" : "ok"}
-            />
-            <Field
-              label="状态"
-              value={`${status.phaseLabel}`}
-            />
-            <Field label="运行" value={`${elapsedSec} 秒`} />
-            <Field
-              label="步数"
-              value={`${status.stepsTaken} / ${status.maxTotalSteps}（剩 ${remainingSteps}）`}
-            />
-            <Field
-              label="决策"
-              value={`${status.decisionsTaken} / ${status.maxUserDecisions}（剩 ${remainingDecisions}）`}
-            />
-            <Field
-              label="Transcript"
-              value={`${transcriptKB} KB · ~${status.tokensEstimated} tokens`}
-            />
-            <Field
-              label="Workers"
-              value={
-                status.availableWorkers.length > 0
-                  ? status.availableWorkers.join("、")
-                  : "（所有角色）"
-              }
-            />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "ok" | "warn";
-}) {
-  const valueColor =
-    tone === "warn"
-      ? "text-orange-300"
-      : tone === "ok"
-        ? "text-green-300"
-        : "text-gray-100";
-  return (
-    <div className="flex items-baseline gap-1">
-      <span className="text-gray-500 shrink-0">{label}:</span>
-      <span className={"truncate " + valueColor}>{value}</span>
-    </div>
-  );
-}

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ModelInfo, RoleConfigResponse, RoleInfo, SwarmEvent, SwarmStepSpec, WorkflowPayload } from "../api/chat";
+import type { ChatConfigTarget, ChatEvent, ModelInfo, RoleConfigResponse, RoleInfo, SwarmEvent, SwarmStepSpec, WorkflowPayload } from "../api/chat";
 import {
   listModels,
   getRoleConfig,
@@ -14,9 +14,6 @@ import {
   saveWorkflow as apiSaveWorkflow,
   deleteWorkflow as apiDeleteWorkflow,
   resetRolesToDefaults as apiResetRolesToDefaults,
-  startManagerSession as startManagerSessionApi,
-  submitUserDecision as submitUserDecisionApi,
-  submitUserContinue as submitUserContinueApi,
 } from "../api/chat";
 import { useEditorStore } from "./useEditorStore";
 import { openFile } from "../api/commands";
@@ -38,6 +35,37 @@ export interface ChatMessage {
   agentName?: string;
 }
 
+export interface ChatActivityEvent {
+  id: string;
+  kind:
+    | "status"
+    | "role_started"
+    | "role_finished"
+    | "delegate_started"
+    | "delegate_finished"
+    | "tool_use"
+    | "tool_result"
+    | "tool_error"
+    | "round"
+    | "error";
+  roleId?: string;
+  title: string;
+  detail?: string;
+  timestamp: number;
+}
+
+export interface ActiveRoleState {
+  roleId: string;
+  detail: string;
+  startedAt: number;
+}
+
+export interface RoleDisplayState {
+  roleId: string;
+  icon?: string;
+  modelId?: string;
+}
+
 export interface ChatTurn {
   agent: string;
   roleId: string;
@@ -52,6 +80,9 @@ interface ChatStore {
   /** Active chat mode (planned discussion vs planner-driven swarm). */
   mode: ChatMode;
   messages: ChatMessage[];
+  activityEvents: ChatActivityEvent[];
+  activeRoles: Record<string, ActiveRoleState>;
+  roleDisplay: Record<string, RoleDisplayState>;
   status: ChatStatus;
   /** Session id for the active planned discussion. Swarm uses `swarmSessionId`. */
   sessionId: number | null;
@@ -106,33 +137,12 @@ interface ChatStore {
   clearChat: () => void;
   addTurn: (turn: ChatTurn) => void;
   setComplete: () => void;
+  applyChatEvent: (event: ChatEvent) => void;
   /** Apply one `chat:swarm_event` from the backend. */
   applySwarmEvent: (event: SwarmEvent) => void;
   /** Send a swarm-mode prompt. No-op when `mode !== "swarm"` or
    *  a swarm is already running. */
   sendSwarm: (topic: string) => Promise<void>;
-  // ─── Manager-led workflow state ──────────────────────────────────
-  /** Most recent pending decision request. Non-null while the UI
-   *  should show option buttons under the last manager bubble. */
-  pendingDecision: import("../api/chat").DecisionRequest | null;
-  /** Latest streaming status from `chat:manager_status`. `null`
-   *  before the first emission or after `clearChat`. */
-  managerStatus: import("../api/chat").ManagerStatus | null;
-  /** Currently-active manager session id (assigned by
-   *  `chat_start_manager_session`). `null` until first launch. */
-  startManagerSession: (topic: string) => Promise<void>;
-  submitManagerDecision: (
-    optionId: string,
-    freeText?: string | null,
-  ) => Promise<void>;
-  /** User pushed the session forward without picking an option. */
-  managerContinue: (message?: string | null) => Promise<void>;
-  /** Apply one `chat:need_decision` event from the backend. */
-  applyNeedDecision: (req: import("../api/chat").DecisionRequest) => void;
-  applyManagerStatus: (
-    status: import("../api/chat").ManagerStatus,
-  ) => void;
-
   // Config management
   setRoleModel: (roleId: string, modelId: string) => Promise<void>;
   /**
@@ -142,7 +152,7 @@ interface ChatStore {
    */
   setRoleModelChain: (roleId: string, chain: string[]) => Promise<string[]>;
   setDefaultModel: (modelId: string) => Promise<void>;
-  openConfigFile: (type: "models" | "roles") => Promise<void>;
+  openConfigFile: (type: ChatConfigTarget) => Promise<void>;
   toggleConfigPanel: () => void;
   // ─── Workflow editor state ──────────────────────────────────────
   /** Editable copy of the workflow currently in the editor. `null`
@@ -196,9 +206,41 @@ function uid(): string {
   return `m${Date.now()}-${nextMessageId++}`;
 }
 
+function extractReadableProtocolJson(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const value = JSON.parse(trimmed) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    for (const key of ["content", "message", "text", "summary", "answer", "response"]) {
+      const candidate = record[key];
+      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function readableRoleContent(content: string): string {
+  const withoutToolCalls = content.replace(
+    /<tool_call\b[\s\S]*?<\/tool_call>/g,
+    "",
+  );
+  const lines = withoutToolCalls
+    .split(/\r?\n/)
+    .map((line) => extractReadableProtocolJson(line) ?? line.trim())
+    .filter((line) => line.length > 0);
+  return lines.join("\n").trim() || content.trim();
+}
+
 export const useChatStore = create<ChatStore>((set, get) => ({
   mode: "discuss",
   messages: [],
+  activityEvents: [],
+  activeRoles: {},
+  roleDisplay: {},
   status: "idle",
   sessionId: null,
   swarmSessionId: null,
@@ -218,11 +260,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   modelsPath: "",
   rolesPath: "",
   configPanelOpen: false,
-
-  // Manager-led workflow
-  pendingDecision: null,
-  managerStatus: null,
-  managerSessionId: null,
 
   // Workflow editor
   editingWorkflow: null,
@@ -319,14 +356,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sendMessage: async (content) => {
     const trimmed = content.trim();
     if (!trimmed) return;
-    // Swarm and Manager modes each have their own send path so the
-    // user gets the right event stream for the active workflow.
+    // Swarm keeps its own planner runtime. Planned and manager-led
+    // workflows both use the shared controller chat runtime.
     if (get().mode === "swarm") {
       await get().sendSwarm(trimmed);
-      return;
-    }
-    if (get().mode === "manager") {
-      await get().startManagerSession(trimmed);
       return;
     }
     const userMsg: ChatMessage = {
@@ -363,10 +396,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         set({ lastUserTopic: trimmed });
       }
     } catch (e) {
-      // Stay in `idle` so the chat list keeps showing the preflight
-      // error bubbles and the retry button — NOT `status: "error"`
-      // which would imply a live session is failing.
-      set({ status: "idle", errorMessage: String(e) });
+      set({ status: "error", errorMessage: String(e) });
     }
   },
 
@@ -412,6 +442,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   clearChat: () =>
     set({
       messages: [],
+      activityEvents: [],
+      activeRoles: {},
+      roleDisplay: {},
       status: "idle",
       sessionId: null,
       swarmSessionId: null,
@@ -420,9 +453,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       swarmFiles: [],
       swarmSummary: null,
       errorMessage: null,
-      pendingDecision: null,
-      managerStatus: null,
-      managerSessionId: null,
     }),
   addTurn: (turn) => {
     const agentMsg: ChatMessage = {
@@ -439,6 +469,146 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setComplete: () => set({ status: "completed" }),
 
   setError: (msg) => set({ status: "error", errorMessage: msg }),
+
+  applyChatEvent: (event) => {
+    const pushActivity = (
+      kind: ChatActivityEvent["kind"],
+      title: string,
+      detail?: string,
+      roleId?: string,
+    ) => {
+      const item: ChatActivityEvent = {
+        id: uid(),
+        kind,
+        roleId,
+        title,
+        detail,
+        timestamp: Date.now(),
+      };
+      set((s) => ({ activityEvents: [...s.activityEvents, item].slice(-200) }));
+    };
+
+    if ("RoleTurn" in event) {
+      const { role_id, content } = event.RoleTurn;
+      const roleInfo = get().availableRoles.find((role) => role.id === role_id);
+      const roleDisplay = get().roleDisplay[role_id];
+      const msg: ChatMessage = {
+        id: uid(),
+        role: "agent",
+        agentIcon: roleInfo?.icon ?? roleDisplay?.icon ?? "💬",
+        agentName: roleInfo?.name ?? role_id,
+        content: readableRoleContent(content),
+        timestamp: Date.now(),
+      };
+      set((s) => ({ messages: [...s.messages, msg] }));
+      return;
+    }
+    if ("Status" in event) {
+      pushActivity("status", "status", event.Status.message);
+      return;
+    }
+    if ("Prompt" in event) {
+      const { role_id, icon, model_id } = event.Prompt;
+      set((s) => ({
+        roleDisplay: {
+          ...s.roleDisplay,
+          [role_id]: { roleId: role_id, icon, modelId: model_id },
+        },
+      }));
+      pushActivity("status", `${event.Prompt.role_id} ready`, event.Prompt.model_id, event.Prompt.role_id);
+      return;
+    }
+    if ("RoundStarted" in event) {
+      pushActivity("round", `Round ${event.RoundStarted.round} started`);
+      return;
+    }
+    if ("RoundEnded" in event) {
+      pushActivity("round", `Round ${event.RoundEnded.round} ended`);
+      return;
+    }
+    if ("RoleStarted" in event) {
+      const { role_id, detail } = event.RoleStarted;
+      set((s) => ({
+        activeRoles: {
+          ...s.activeRoles,
+          [role_id]: { roleId: role_id, detail, startedAt: Date.now() },
+        },
+      }));
+      pushActivity("role_started", `${role_id} started`, detail, role_id);
+      return;
+    }
+    if ("RoleFinished" in event) {
+      const { role_id, detail } = event.RoleFinished;
+      set((s) => {
+        const next = { ...s.activeRoles };
+        delete next[role_id];
+        return { activeRoles: next };
+      });
+      pushActivity("role_finished", `${role_id} finished`, detail, role_id);
+      return;
+    }
+    if ("DelegateStarted" in event) {
+      const { from_role, to_role, task } = event.DelegateStarted;
+      set((s) => ({
+        activeRoles: {
+          ...s.activeRoles,
+          [to_role]: { roleId: to_role, detail: `delegated by ${from_role}`, startedAt: Date.now() },
+        },
+      }));
+      pushActivity("delegate_started", `${from_role} → ${to_role}`, task, to_role);
+      return;
+    }
+    if ("DelegateFinished" in event) {
+      const { from_role, to_role, status, summary } = event.DelegateFinished;
+      pushActivity("delegate_finished", `${from_role} ← ${to_role} ${status}`, summary, to_role);
+      return;
+    }
+    if ("ToolUse" in event) {
+      const { role_id, tool_name, args } = event.ToolUse;
+      pushActivity("tool_use", `${role_id} tool ${tool_name}`, args, role_id);
+      return;
+    }
+    if ("ToolResult" in event) {
+      const { role_id, tool_name, result } = event.ToolResult;
+      pushActivity("tool_result", `${role_id} ${tool_name} result`, result, role_id);
+      return;
+    }
+    if ("ToolError" in event) {
+      const { role_id, tool_name, error } = event.ToolError;
+      pushActivity("tool_error", `${role_id} ${tool_name} error`, error, role_id);
+      return;
+    }
+    if ("Paused" in event) {
+      pushActivity("status", "paused", event.Paused.reason);
+      return;
+    }
+    if ("Resumed" in event) {
+      pushActivity("status", "resumed");
+      return;
+    }
+    if ("ContextCleared" in event) {
+      set({ messages: [], activityEvents: [], activeRoles: {}, roleDisplay: {} });
+      return;
+    }
+    if ("SessionInfo" in event) {
+      const { task_id, state, roles } = event.SessionInfo;
+      pushActivity("status", `session ${state}`, `${task_id} · roles: ${roles.map((r) => r.id).join(", ")}`);
+      return;
+    }
+    if ("RoleList" in event) {
+      pushActivity("status", "available roles", event.RoleList.roles.map((r) => r.id).join(", "));
+      return;
+    }
+    if ("Done" in event) {
+      set({ status: "completed", activeRoles: {}, lastUserTopic: null });
+      pushActivity("status", "done");
+      return;
+    }
+    if ("Error" in event) {
+      set({ status: "error", errorMessage: event.Error.message, activeRoles: {} });
+      pushActivity("error", "error", event.Error.message);
+    }
+  },
 
   /**
    * Launch a swarm-mode prompt. Backend streams events via
@@ -650,11 +820,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // editor's `ManagerFields` panel can bind to them without
     // conditionals everywhere.
     const normalized: WorkflowPayload = {
-      managerRole: "",
-      initialWorkers: [],
-      maxTotalSteps: 8,
-      maxUserDecisions: 5,
       ...payload,
+      managerRole: payload.managerRole ?? "",
+      initialWorkers: payload.initialWorkers ?? [],
+      maxTotalSteps: payload.maxTotalSteps ?? 8,
+      maxUserDecisions: payload.maxUserDecisions ?? 5,
     };
     set({
       editingWorkflow: structuredClone(normalized),
@@ -892,96 +1062,4 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
-
-  // ─── Manager-led workflow actions ────────────────────────────────
-  /**
-   * Start a manager-led interactive session. Drops any stale
-   * decisions, records the user's topic as the first message, and
-   * fires the backend command. The backend then emits `chat:turn`
-   * for the manager's first decision + `chat:need_decision` for the
-   * option panel.
-   */
-  startManagerSession: async (topic) => {
-    const trimmed = topic.trim();
-    if (!trimmed) return;
-    if (get().status === "running") return;
-    const userMsg: ChatMessage = {
-      id: uid(),
-      role: "user",
-      content: trimmed,
-      timestamp: Date.now(),
-    };
-    set((s) => ({
-      messages: [...s.messages, userMsg],
-      status: "running",
-      pendingDecision: null,
-      managerStatus: null,
-    }));
-    try {
-      const wf = get().selectedWorkflow;
-      const sessionId = await startManagerSessionApi(
-        trimmed,
-        get().mode === "manager" ? wf : null,
-      );
-      set({ managerSessionId: sessionId });
-    } catch (e) {
-      set({ status: "idle", errorMessage: String(e) });
-    }
-  },
-
-  /**
-   * User picked an option. The backend advances the state machine
-   * from `AwaitingDecision` → worker dispatch or finalize, and the
-   * resulting events come back through the existing `addTurn` /
-   * `applyNeedDecision` channels.
-   */
-  submitManagerDecision: async (optionId, freeText) => {
-    const sid = get().managerSessionId;
-    if (sid === null) return;
-    // Optimistically clear pendingDecision so the user can't double-
-    // click; the backend will emit a fresh decision or run a worker.
-    set({ pendingDecision: null });
-    try {
-      await submitUserDecisionApi({
-        sessionId: sid,
-        optionId,
-        freeText: freeText ?? null,
-      });
-    } catch (e) {
-      set({ status: "error", errorMessage: String(e) });
-    }
-  },
-
-  /**
-   * Push the session forward without picking an option. Useful when
-   * the user wants to inject their own instruction.
-   */
-  managerContinue: async (message) => {
-    const sid = get().managerSessionId;
-    if (sid === null) return;
-    set({ pendingDecision: null });
-    try {
-      await submitUserContinueApi(sid, message ?? null);
-    } catch (e) {
-      set({ status: "error", errorMessage: String(e) });
-    }
-  },
-
-  /**
-   * Replace the pending decision request. Called when the backend
-   * emits `chat:need_decision`. Each new request supersedes the
-   * previous one — the UI only shows the latest decision's options.
-   */
-  applyNeedDecision: (req) => {
-    set({ pendingDecision: req });
-  },
-
-  /**
-   * Replace the cached manager status with the latest emission.
-   * The chat panel renders this directly — there's no merge logic,
-   * the backend always sends a complete snapshot.
-   */
-  applyManagerStatus: (status) => {
-    set({ managerStatus: status });
-  },
 }));

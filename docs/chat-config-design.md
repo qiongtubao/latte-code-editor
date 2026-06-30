@@ -704,7 +704,7 @@ let result = orchestrator.run_with_events(|turn| {
 | Tauri 事件 `chat:turn` payload | 类型：移除 `RoleAgent`/`ChainEntry` 等 |
 | `DiscussionPayload` / `TurnPayload` / `RoundPayload` | imports：删除 `parking_lot::Mutex`、`AiError`、`Arc`、`Instant` |
 | `WorkflowInfo` / `RoleInfo` | 增加上游 `Agent` / `AgentRunner` / `ModelResolver` 等 |
-| stub mode（无 API key 时） | `run_stub_discussion` 完全不动 |
+| 无 API key 时的提示 | 不再生成 stub 回复，交给 controller/runtime 返回真实错误 |
 ## 迁移策略
 
 1. **首次启动**：如果 `~/.latte/models.yaml` 不存在，自动创建默认配置

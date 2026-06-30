@@ -8,7 +8,7 @@
 //
 // 不覆盖：Tauri IPC 本身、backend 的写入、YAML 序列化（这些是 Rust 测试范围）。
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { RoleConfigResponse } from "../api/chat";
+import type { RoleConfigResponse, WorkflowPayload } from "../api/chat";
 import { useChatStore } from "./useChatStore";
 
 // 拦截 Tauri invoke；每个测试在 beforeEach 里 reset。
@@ -43,6 +43,27 @@ const baseConfig: RoleConfigResponse = {
     },
   ],
 };
+
+function workflowPayload(
+  payload: Omit<
+    WorkflowPayload,
+    "managerRole" | "initialWorkers" | "maxTotalSteps" | "maxUserDecisions"
+  > &
+    Partial<
+      Pick<
+        WorkflowPayload,
+        "managerRole" | "initialWorkers" | "maxTotalSteps" | "maxUserDecisions"
+      >
+    >,
+): WorkflowPayload {
+  return {
+    managerRole: "",
+    initialWorkers: [],
+    maxTotalSteps: 8,
+    maxUserDecisions: 5,
+    ...payload,
+  };
+}
 
 describe("useChatStore — 角色模型优先级 (chain)", () => {
   beforeEach(() => {
@@ -159,30 +180,30 @@ describe("useChatStore — 角色模型优先级 (chain)", () => {
   });
 });
 
-// ─── Swarm mode tests ──────────────────────────────────────────────
-//
-// Covers the planner/worker event pipeline and the swarm send path.
-// Doesn't exercise the Tauri IPC — `startSwarm` is intercepted via
-// the same `invokeMock` as the chain tests above.
-
-describe("useChatStore — swarm mode", () => {
+describe("useChatStore — controller ChatEvent display", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     useChatStore.setState({
-      mode: "swarm",
+      mode: "discuss",
       messages: [],
+      activityEvents: [],
+      activeRoles: {},
       status: "idle",
       sessionId: null,
-      swarmSessionId: null,
-      activeSwarmId: null,
-      swarmPlan: [],
-      swarmFiles: [],
-      swarmSummary: null,
       errorMessage: null,
       lastUserTopic: null,
-      selectedWorkflow: "quick_task",
+      selectedWorkflow: "discuss",
       availableWorkflows: [],
-      availableRoles: [],
+      availableRoles: [
+        {
+          id: "manager",
+          name: "工程经理",
+          icon: "👔",
+          category: "coordination",
+          defaultModelTier: "deepseek-chat",
+          modelChain: ["deepseek-chat"],
+        },
+      ],
       availableModels: [],
       defaultModel: "deepseek-chat",
       roleModels: {},
@@ -193,99 +214,92 @@ describe("useChatStore — swarm mode", () => {
     });
   });
 
-  it("applySwarmEvent(plan) 把 steps 写到 swarmPlan 并 emit 一条 planner 消息", () => {
-    useChatStore.getState().applySwarmEvent({
-      kind: "plan",
-      swarmId: "quick_task",
-      steps: [
-        { id: "design", role: "architect", instruction: "Sketch the API." },
-        { id: "build", role: "programmer", instruction: "Implement it." },
-      ],
-    });
-    const state = useChatStore.getState();
-    expect(state.swarmPlan).toHaveLength(2);
-    expect(state.swarmPlan[0].role).toBe("architect");
-    // The planner also appends a user-visible message so the chat
-    // list reflects what the swarm is about to do.
-    expect(state.messages).toHaveLength(1);
-    expect(state.messages[0].agentName).toBe("planner");
-    expect(state.messages[0].content).toContain("architect");
-  });
-
-  it("applySwarmEvent(step) 把 worker turn 追加到 messages", () => {
-    useChatStore.getState().applySwarmEvent({
-      kind: "step",
-      swarmId: "quick_task",
-      turn: {
-        agent: "architect",
-        roleId: "architect",
-        icon: "🏗️",
-        response: "Here's a sketch.",
-        round: 0,
-        stepId: "design",
-        turnNumber: 0,
+  it("renders controller RoleTurn events as agent messages", () => {
+    useChatStore.getState().applyChatEvent({
+      RoleTurn: {
+        role_id: "manager",
+        content: "Use the controller runtime.",
+        is_complete: true,
       },
     });
-    const state = useChatStore.getState();
-    expect(state.messages).toHaveLength(1);
-    expect(state.messages[0].agentName).toBe("architect");
-    expect(state.messages[0].content).toBe("Here's a sketch.");
+
+    const message = useChatStore.getState().messages[0];
+    expect(message.role).toBe("agent");
+    expect(message.agentName).toBe("工程经理");
+    expect(message.agentIcon).toBe("👔");
+    expect(message.content).toBe("Use the controller runtime.");
   });
 
-  it("applySwarmEvent(file) 把 path + kind 写入 swarmFiles", () => {
-    useChatStore.getState().applySwarmEvent({
-      kind: "file",
-      swarmId: "quick_task",
-      path: "/tmp/.swarm_quick_task/plan.md",
-      fileKind: "plan",
+  it("uses Prompt metadata for unknown role avatars", () => {
+    useChatStore.getState().applyChatEvent({
+      Prompt: {
+        icon: "💻",
+        role_id: "programmer",
+        model_id: "glm-5.2",
+      },
     });
+    useChatStore.getState().applyChatEvent({
+      RoleTurn: {
+        role_id: "programmer",
+        content: "我会检查项目结构。",
+        is_complete: true,
+      },
+    });
+
+    const message = useChatStore.getState().messages[0];
+    expect(message.agentName).toBe("programmer");
+    expect(message.agentIcon).toBe("💻");
+  });
+
+  it("renders readable conversation instead of tool protocol", () => {
+    useChatStore.getState().applyChatEvent({
+      RoleTurn: {
+        role_id: "manager",
+        content:
+          '我先查看项目。\n<tool_call>read {"path":"Cargo.toml"}</tool_call>\n{"type":"assistant_message","content":"已经看完了，接下来我会分析 chat 流程。"}',
+        is_complete: true,
+      },
+    });
+
+    const message = useChatStore.getState().messages[0];
+    expect(message.content).toBe(
+      "我先查看项目。\n已经看完了，接下来我会分析 chat 流程。",
+    );
+  });
+
+  it("maps Done and Error events to display status", () => {
+    useChatStore.getState().applyChatEvent({ Done: null });
+    expect(useChatStore.getState().status).toBe("completed");
+
+    useChatStore.getState().applyChatEvent({
+      Error: { message: "turn failed" },
+    });
+    expect(useChatStore.getState().status).toBe("error");
+    expect(useChatStore.getState().errorMessage).toBe("turn failed");
+  });
+
+  it("tracks tool and delegate activity events", () => {
+    useChatStore.getState().applyChatEvent({
+      DelegateStarted: {
+        from_role: "manager",
+        to_role: "programmer",
+        task: "Read the project structure",
+      },
+    });
+    useChatStore.getState().applyChatEvent({
+      ToolUse: {
+        role_id: "programmer",
+        tool_name: "read",
+        args: "{\"path\":\"Cargo.toml\"}",
+      },
+    });
+
     const state = useChatStore.getState();
-    expect(state.swarmFiles).toEqual([
-      { path: "/tmp/.swarm_quick_task/plan.md", kind: "plan" },
+    expect(state.activeRoles.programmer.detail).toBe("delegated by manager");
+    expect(state.activityEvents.map((e) => e.kind)).toEqual([
+      "delegate_started",
+      "tool_use",
     ]);
-  });
-
-  it("applySwarmEvent(summary) 把 content 写入 swarmSummary + status=completed", () => {
-    useChatStore.getState().applySwarmEvent({
-      kind: "summary",
-      swarmId: "quick_task",
-      content: "# Done\n\nfinal answer",
-    });
-    const state = useChatStore.getState();
-    expect(state.swarmSummary).toBe("# Done\n\nfinal answer");
-    expect(state.status).toBe("completed");
-    // Summary also surfaces as a synthesis message in the chat list.
-    expect(state.messages.some((m) => m.agentName === "synthesis")).toBe(true);
-  });
-
-  it("applySwarmEvent(error) 把 status 设为 error 并把 content 当作错误信息", () => {
-    useChatStore.getState().applySwarmEvent({
-      kind: "error",
-      swarmId: "quick_task",
-      content: "no API key",
-    });
-    const state = useChatStore.getState();
-    expect(state.status).toBe("error");
-    expect(state.errorMessage).toBe("no API key");
-  });
-
-  it("sendSwarm 走 startSwarm IPC 并保留 topic + 切到 running", async () => {
-    invokeMock.mockResolvedValueOnce(42); // session id
-    await useChatStore.getState().sendSwarm("design a login screen");
-    const state = useChatStore.getState();
-    expect(invokeMock).toHaveBeenCalledWith("chat_start_swarm", {
-      request: { topic: "design a login screen", name: "quick_task" },
-    });
-    expect(state.swarmSessionId).toBe(42);
-    expect(state.status).toBe("running");
-    expect(state.activeSwarmId).toBe("quick_task");
-    expect(state.messages[0].role).toBe("user");
-  });
-
-  it("sendSwarm 在 running 时是 no-op，不会再发请求", async () => {
-    useChatStore.setState({ status: "running" });
-    await useChatStore.getState().sendSwarm("another");
-    expect(invokeMock).not.toHaveBeenCalled();
   });
 });
 
@@ -348,7 +362,7 @@ describe("useChatStore — workflow editor", () => {
   });
 
   it("openWorkflowEditor clones the payload and clears dirty/error", () => {
-    useChatStore.getState().openWorkflowEditor({
+    useChatStore.getState().openWorkflowEditor(workflowPayload({
       id: "plan",
       name: "🗺️ 规划",
       kind: "planned",
@@ -358,7 +372,7 @@ describe("useChatStore — workflow editor", () => {
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
-    });
+    }));
     const s = useChatStore.getState();
     expect(s.editingWorkflow?.id).toBe("plan");
     expect(s.editingDirty).toBe(false);
@@ -368,7 +382,7 @@ describe("useChatStore — workflow editor", () => {
   });
 
   it("patchEditingWorkflow sets dirty when the value changes", () => {
-    useChatStore.getState().openWorkflowEditor({
+    useChatStore.getState().openWorkflowEditor(workflowPayload({
       id: "plan",
       name: "🗺️ 规划",
       kind: "planned",
@@ -378,7 +392,7 @@ describe("useChatStore — workflow editor", () => {
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
-    });
+    }));
     expect(useChatStore.getState().editingDirty).toBe(false);
 
     useChatStore.getState().patchEditingWorkflow({ name: "新名字" });
@@ -390,7 +404,7 @@ describe("useChatStore — workflow editor", () => {
   });
 
   it("addEditingStep / removeEditingStep / moveEditingStep maintain order", () => {
-    useChatStore.getState().openWorkflowEditor({
+    useChatStore.getState().openWorkflowEditor(workflowPayload({
       id: "plan",
       name: "x",
       kind: "planned",
@@ -400,7 +414,7 @@ describe("useChatStore — workflow editor", () => {
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
-    });
+    }));
 
     useChatStore.getState().addEditingStep();
     useChatStore.getState().addEditingStep();
@@ -424,7 +438,7 @@ describe("useChatStore — workflow editor", () => {
   });
 
   it("patchEditingStep updates roles for the targeted step only", () => {
-    useChatStore.getState().openWorkflowEditor({
+    useChatStore.getState().openWorkflowEditor(workflowPayload({
       id: "plan",
       name: "x",
       kind: "planned",
@@ -437,7 +451,7 @@ describe("useChatStore — workflow editor", () => {
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
-    });
+    }));
 
     useChatStore.getState().patchEditingStep(1, { roles: ["pm", "programmer"] });
     const steps = useChatStore.getState().editingWorkflow!.steps;
@@ -446,7 +460,7 @@ describe("useChatStore — workflow editor", () => {
   });
 
   it("saveEditingWorkflow calls chat_save_workflow and surfaces errors", async () => {
-    useChatStore.getState().openWorkflowEditor({
+    useChatStore.getState().openWorkflowEditor(workflowPayload({
       id: "myflow",
       name: "新流程",
       kind: "planned",
@@ -456,7 +470,7 @@ describe("useChatStore — workflow editor", () => {
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
-    });
+    }));
 
     invokeMock.mockRejectedValueOnce("工作流 id 不能为空");
     await useChatStore.getState().saveEditingWorkflow();
@@ -468,7 +482,7 @@ describe("useChatStore — workflow editor", () => {
   });
 
   it("saveEditingWorkflow success clears dirty + syncs canonical form", async () => {
-    useChatStore.getState().openWorkflowEditor({
+    useChatStore.getState().openWorkflowEditor(workflowPayload({
       id: "myflow",
       name: "新流程",
       kind: "planned",
@@ -478,7 +492,7 @@ describe("useChatStore — workflow editor", () => {
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
-    });
+    }));
     useChatStore.getState().patchEditingWorkflow({ name: "改了" });
     expect(useChatStore.getState().editingDirty).toBe(true);
 
@@ -502,7 +516,7 @@ describe("useChatStore — workflow editor", () => {
   });
 
   it("deleteEditingWorkflow refuses backend errors and keeps the editor open", async () => {
-    useChatStore.getState().openWorkflowEditor({
+    useChatStore.getState().openWorkflowEditor(workflowPayload({
       id: "myflow",
       name: "x",
       kind: "planned",
@@ -512,7 +526,7 @@ describe("useChatStore — workflow editor", () => {
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
-    });
+    }));
 
     invokeMock.mockRejectedValueOnce("工作流 `default` 是内置预设，不能删除");
     await useChatStore.getState().deleteEditingWorkflow();
@@ -521,7 +535,7 @@ describe("useChatStore — workflow editor", () => {
   });
 
   it("closeWorkflowEditor resets all editing fields", () => {
-    useChatStore.getState().openWorkflowEditor({
+    useChatStore.getState().openWorkflowEditor(workflowPayload({
       id: "plan",
       name: "x",
       kind: "planned",
@@ -531,7 +545,7 @@ describe("useChatStore — workflow editor", () => {
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
-    });
+    }));
     useChatStore.getState().patchEditingWorkflow({ name: "改了" });
 
     useChatStore.getState().closeWorkflowEditor();
@@ -627,7 +641,7 @@ describe("useChatStore — resetRolesToDefaults", () => {
   });
 
   it("captures backend errors and keeps the editor state intact", async () => {
-    useChatStore.getState().openWorkflowEditor({
+    useChatStore.getState().openWorkflowEditor(workflowPayload({
       id: "myflow",
       name: "我的流程",
       kind: "planned",
@@ -637,7 +651,7 @@ describe("useChatStore — resetRolesToDefaults", () => {
       plannerRole: "",
       workerRoles: [],
       maxSteps: 4,
-    });
+    }));
 
     invokeMock.mockRejectedValueOnce("写入 roles.yaml 失败：permission denied");
     await useChatStore.getState().resetRolesToDefaults();
@@ -738,7 +752,7 @@ describe("useChatStore — retry path", () => {
 
     const s = useChatStore.getState();
     expect(s.sessionId, "sessionId must stay null on failure").toBeNull();
-    expect(s.status).toBe("idle");
+    expect(s.status).toBe("error");
     expect(s.errorMessage).toContain("缺少 API key");
     expect(s.lastUserTopic).toBe("设计登录页");
   });
@@ -795,225 +809,3 @@ describe("useChatStore — retry path", () => {
   });
 });
 
-// ─── Manager-led workflow tests ──────────────────────────────────────
-//
-// Covers the in-memory pipeline that backs the DecisionBubble +
-// manager-mode toggle: starting a session, applying
-// chat:need_decision events, picking an option, and the
-// pendingDecision lifecycle.
-
-describe("useChatStore — manager-led", () => {
-  beforeEach(() => {
-    invokeMock.mockReset();
-    useChatStore.setState({
-      mode: "manager",
-      messages: [],
-      status: "idle",
-      sessionId: null,
-      swarmSessionId: null,
-      activeSwarmId: null,
-      swarmPlan: [],
-      swarmFiles: [],
-      swarmSummary: null,
-      errorMessage: null,
-      lastUserTopic: null,
-      pendingDecision: null,
-      managerSessionId: null,
-      selectedWorkflow: "discuss",
-      availableWorkflows: [],
-      availableRoles: [],
-      availableModels: [],
-      defaultModel: "deepseek-chat",
-      roleModels: {},
-      roleChains: {},
-      modelsPath: "",
-      rolesPath: "",
-      configPanelOpen: false,
-      editingWorkflow: null,
-      editingDirty: false,
-      editingOriginal: null,
-      editingSaving: false,
-      editingError: null,
-    });
-  });
-
-  it("startManagerSession 触发 chat_start_manager_session 并记录 managerSessionId", async () => {
-    invokeMock.mockResolvedValueOnce(42);
-    await useChatStore.getState().startManagerSession("设计登录页");
-    const s = useChatStore.getState();
-    expect(invokeMock).toHaveBeenCalledWith("chat_start_manager_session", {
-      topic: "设计登录页",
-      workflowId: "discuss",
-      workspace: null,
-    });
-    expect(s.status).toBe("running");
-    // User's topic is recorded as the first message.
-    expect(s.messages[0].role).toBe("user");
-    expect(s.messages[0].content).toBe("设计登录页");
-  });
-
-  it("startManagerSession 在 running 时是 no-op", async () => {
-    useChatStore.setState({ status: "running" });
-    await useChatStore.getState().startManagerSession("任何话题");
-    expect(invokeMock).not.toHaveBeenCalled();
-  });
-
-  it("applyNeedDecision 写入 pendingDecision", () => {
-    useChatStore.getState().applyNeedDecision({
-      sessionId: 1,
-      branchLabel: "通用",
-      question: "下一步让谁先动手？",
-      reason: "需要决定先做需求还是先做架构",
-      options: [
-        {
-          id: "pm",
-          label: "只让 PM",
-          description: "先写需求",
-          workerRole: "pm",
-          estimatedCostUsd: 0.005,
-        },
-        {
-          id: "arch",
-          label: "只让架构师",
-          description: "直接出架构",
-          workerRole: "architect",
-          estimatedCostUsd: 0.008,
-        },
-      ],
-      contextSummary: "",
-    });
-    const s = useChatStore.getState();
-    expect(s.pendingDecision?.question).toBe("下一步让谁先动手？");
-    expect(s.pendingDecision?.options).toHaveLength(2);
-    expect(s.pendingDecision?.branchLabel).toBe("通用");
-  });
-
-  it("applyManagerStatus 替换 managerStatus", () => {
-    useChatStore.getState().applyManagerStatus({
-      sessionId: 1,
-      state: "reflecting",
-      phaseLabel: "反思中",
-      managerRoleId: "manager",
-      managerRoleName: "工程经理",
-      managerIcon: "👔",
-      currentModel: "deepseek-chat",
-      modelChain: ["deepseek-chat", "deepseek-reasoner"],
-      isStubMode: false,
-      availableWorkers: ["pm", "architect", "programmer"],
-      stepsTaken: 3,
-      maxTotalSteps: 8,
-      decisionsTaken: 1,
-      maxUserDecisions: 5,
-      transcriptBytes: 4096,
-      summaryBytes: 0,
-      tokensEstimated: 1365,
-      elapsedMs: 12_345,
-      lastStepAtMs: 12_000,
-    });
-    const s = useChatStore.getState();
-    expect(s.managerStatus?.phaseLabel).toBe("反思中");
-    expect(s.managerStatus?.currentModel).toBe("deepseek-chat");
-    expect(s.managerStatus?.isStubMode).toBe(false);
-    expect(s.managerStatus?.stepsTaken).toBe(3);
-
-    // A subsequent emission replaces (not merges).
-    useChatStore.getState().applyManagerStatus({
-      sessionId: 1,
-      state: "awaitingDecision",
-      phaseLabel: "等待你的决策",
-      managerRoleId: "manager",
-      managerRoleName: "工程经理",
-      managerIcon: "👔",
-      currentModel: "deepseek-chat",
-      modelChain: ["deepseek-chat"],
-      isStubMode: true,
-      availableWorkers: ["pm"],
-      stepsTaken: 4,
-      maxTotalSteps: 8,
-      decisionsTaken: 2,
-      maxUserDecisions: 5,
-      transcriptBytes: 5120,
-      summaryBytes: 0,
-      tokensEstimated: 1706,
-      elapsedMs: 20_000,
-      lastStepAtMs: 19_500,
-    });
-    const after = useChatStore.getState();
-    expect(after.managerStatus?.phaseLabel).toBe("等待你的决策");
-    expect(after.managerStatus?.isStubMode).toBe(true);
-    expect(after.managerStatus?.stepsTaken).toBe(4);
-  });
-  it("submitManagerDecision 调用 chat_user_decision 并清掉 pendingDecision", async () => {
-    useChatStore.setState({ managerSessionId: 7 });
-    useChatStore.getState().applyNeedDecision({
-      sessionId: 7,
-      branchLabel: "通用",
-      question: "Q?",
-      reason: "r",
-      options: [
-        { id: "a", label: "A", description: "", workerRole: "pm", estimatedCostUsd: 0.001 },
-      ],
-      contextSummary: "",
-    });
-    invokeMock.mockResolvedValueOnce(undefined);
-    await useChatStore.getState().submitManagerDecision("a", "请加急");
-    expect(invokeMock).toHaveBeenCalledWith("chat_user_decision", {
-      decision: { sessionId: 7, optionId: "a", freeText: "请加急" },
-    });
-    expect(useChatStore.getState().pendingDecision).toBe(null);
-  });
-
-  it("submitManagerDecision 没有 session_id 时是 no-op", async () => {
-    await useChatStore.getState().submitManagerDecision("a");
-    expect(invokeMock).not.toHaveBeenCalled();
-  });
-
-  it("managerContinue 调用 chat_user_continue", async () => {
-    useChatStore.setState({ managerSessionId: 9 });
-    useChatStore.getState().applyNeedDecision({
-      sessionId: 9,
-      branchLabel: "通用",
-      question: "Q?",
-      reason: "r",
-      options: [],
-      contextSummary: "",
-    });
-    invokeMock.mockResolvedValueOnce(undefined);
-    await useChatStore.getState().managerContinue("额外补充");
-    expect(invokeMock).toHaveBeenCalledWith("chat_user_continue", {
-      sessionId: 9,
-      message: "额外补充",
-    });
-    expect(useChatStore.getState().pendingDecision).toBe(null);
-  });
-
-  it("clearChat 同时清掉 managerSessionId 和 pendingDecision", () => {
-    useChatStore.setState({
-      managerSessionId: 5,
-    pendingDecision: {
-      sessionId: 5,
-      branchLabel: "通用",
-      question: "Q",
-      reason: "r",
-      options: [],
-      contextSummary: "",
-    },
-    });
-    useChatStore.getState().clearChat();
-    const s = useChatStore.getState();
-    expect(s.managerSessionId).toBe(null);
-    expect(s.pendingDecision).toBe(null);
-    expect(s.messages).toEqual([]);
-  });
-
-  it("sendMessage 在 manager 模式下走 startManagerSession 路径", async () => {
-    useChatStore.setState({ mode: "manager", status: "idle" });
-    invokeMock.mockResolvedValueOnce(11);
-    await useChatStore.getState().sendMessage("任务 X");
-    expect(invokeMock).toHaveBeenCalledWith("chat_start_manager_session", {
-      topic: "任务 X",
-      workflowId: "discuss",
-      workspace: null,
-    });
-  });
-});
