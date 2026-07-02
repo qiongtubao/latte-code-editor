@@ -80,18 +80,87 @@ pub async fn run_discussion(
         return run_stub_discussion(app, req).await;
     }
 
-    let global_config = global_config::load_global_models();
-    let roles_config = global_config::load_roles_config();
+    let merged = crate::chat_panel::config_loader::load_merged();
 
-    if !global_config.has_api_key() {
-        let models_path = global_config::global_models_path();
+    if merged.models.models.is_empty() {
+        let models_path = crate::chat_panel::config_loader::global_models_path();
         return Err(format!(
-            "未配置 API 密钥。\n\n配置文件: {}\n\n请在配置文件中设置 API 密钥:\n1. 打开 ~/.latte/models.yaml\n2. 在模型定义中填入 api_key:\n\n   models:\n     - id: deepseek-chat\n       api_key: YOUR_API_KEY_HERE\n\n或强制使用 stub 模式:\nexport LATTE_CHAT_LIVE=0",
+            "未配置 API 密钥。\n\n配置: {}\n\n请在配置文件中设置 API 密钥:\n1. 打开 ~/.latte/models.yaml\n2. 在模型定义中填入 api_key:\n\n   models:\n     - id: deepseek-chat\n       api_key: YOUR_API_KEY_HERE\n\n或强制使用 stub 模式:\nexport LATTE_CHAT_LIVE=0",
             models_path.display()
         ));
     }
 
+    // Build a ModelResolver from the merged config
+    let agent_cfg = latte_agent_core::config::AgentConfig {
+        models: merged.models.clone(),
+        roles: merged.roles.clone(),
+    };
+    let _resolver = latte_agent_core::model_resolver::ModelResolver::from_config(&agent_cfg)
+        .map_err(|e| format!("model resolver init: {e}"))?;
+
+    // Check: does any model have an api_key?
+    let has_key = merged
+        .models
+        .models
+        .iter()
+        .any(|m| !m.api_key.trim().is_empty());
+    if !has_key {
+        let models_path = crate::chat_panel::config_loader::global_models_path();
+        return Err(format!(
+            "未配置 API 密钥。\n\n配置: {}\n\n请在配置文件中设置 API 密钥:\n1. 打开 ~/.latte/models.yaml\n2. 在模型定义中填入 api_key:\n\n   models:\n     - id: deepseek-chat\n       api_key: YOUR_API_KEY_HERE\n\n或强制使用 stub 模式:\nexport LATTE_CHAT_LIVE=0",
+            models_path.display()
+        ));
+    }
+
+    // Convert merged -> old types for downstream callers
+    // (TODO: fully migrate build_agent_runners & co. to use MergedConfig directly)
+    let global_config = GlobalModelConfig {
+        models: merged.models.models.iter().map(convert_upstream_to_project_model).collect(),
+        default_model: merged.default_model.clone(),
+    };
+    let roles_config = RoleConfig {
+        default_model: merged.default_model.clone(),
+        roles: merged.roles.iter().map(|(id, tmpl)| (id.clone(), convert_role_template_to_def(tmpl))).collect(),
+        workflows: super::global_config::read_all_workflow_files(),
+    };
+
     run_live_discussion(app, req, &global_config, &roles_config).await
+}
+
+/// Convert upstream `ModelDef` to the project's `ModelDef`.
+/// Inverse of `convert_model_def`.
+pub(crate) fn convert_upstream_to_project_model(m: &UpstreamModelDef) -> ProjectModelDef {
+    ProjectModelDef {
+        id: m.id.clone(),
+        name: m.name.clone(),
+        api: m.api.clone(),
+        provider: m.provider.clone(),
+        base_url: m.base_url.clone(),
+        api_key: m.api_key.clone(),
+        context_window: m.context_window,
+        max_tokens: m.max_tokens,
+        reasoning: m.supports_thinking,
+        cost_per_million_input: m.cost_per_million_input.unwrap_or(0.0),
+        cost_per_million_output: m.cost_per_million_output.unwrap_or(0.0),
+        tier: m.tier.clone(),
+    }
+}
+
+/// Convert upstream `RoleTemplate` to the project's `RoleDef`.
+pub(crate) fn convert_role_template_to_def(tmpl: &latte_agent_core::role::RoleTemplate) -> RoleDef {
+    let model_chain = tmpl.model_chain.clone();
+    RoleDef {
+        name: tmpl.name.clone(),
+        icon: tmpl.icon.clone(),
+        category: tmpl.category.clone(),
+        model_tier: tmpl.model_tier.clone(),
+        model: model_chain.first().cloned(),
+        model_chain,
+        temperature: tmpl.temperature.unwrap_or(0.5),
+        tools: tmpl.tools.clone(),
+        prompt_file: tmpl.prompt_file.clone().unwrap_or_default(),
+        prompt: String::new(),
+    }
 }
 /// Bridge the project's `RoleDef` / `ModelDef` types into the upstream
 /// `latte-agent-core` types used by `DiscussionOrchestrator`.
@@ -146,6 +215,9 @@ fn convert_model_def(m: &ProjectModelDef) -> UpstreamModelDef {
             None
         },
         tier: m.tier.clone(),
+        // No per-model override on the project side today; let
+        // `latte-agent-core` fall back to its global default (60s).
+        timeout_secs: None,
     }
 }
 
@@ -153,7 +225,7 @@ fn convert_model_def(m: &ProjectModelDef) -> UpstreamModelDef {
 ///
 /// `effective_chain` is the chain that `build_agent_config` will hand
 /// to the resolver (chain head = tier override, rest = fallbacks).
-fn build_upstream_role(role_id: &str, role_def: &RoleDef, effective_chain: &[String]) -> Role {
+pub(crate) fn build_upstream_role(role_id: &str, role_def: &RoleDef, effective_chain: &[String]) -> Role {
     // `model_tier` is a free-form String in the project's `RoleDef`
     // (matches `agents.toml` schema). The upstream runtime uses a
     // `ModelTier` enum, so parse + fall back to `Standard` on
@@ -234,7 +306,7 @@ fn load_role_prompt(
 
 /// Build the upstream `AgentConfig` from the project's model catalog +
 /// per-role tier overrides derived from each role's chain head.
-fn build_agent_config(
+pub(crate) fn build_agent_config(
     global_config: &GlobalModelConfig,
     roles_config: &RoleConfig,
     role_ids: &[String],
@@ -465,6 +537,7 @@ fn build_workflow(
                     .to_string(),
                 hooks: vec![],
                 output_key: None,
+                contract: None,
             })
             .collect(),
         _ => role_ids
@@ -477,6 +550,7 @@ fn build_workflow(
                     .to_string(),
                 hooks: vec![],
                 output_key: None,
+                contract: None,
             })
             .collect(),
     };

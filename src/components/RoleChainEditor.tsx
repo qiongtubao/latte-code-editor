@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import type { ModelInfo } from "../api/chat";
-import { openConfigFile } from "../api/commands";
+import { useChatStore } from "../hooks/useChatStore";
 
 interface Props {
+  roleId: string;
   icon: string;
   name: string;
   /** Server-side chain (source of truth). When this changes, local
@@ -98,7 +99,7 @@ export function RoleChainEditor({
         </span>
         <span className="ml-auto flex items-center gap-1">
           <button
-            onClick={() => openConfigFile(`role:${roleId}`)}
+            onClick={() => useChatStore.getState().openConfigFile("roles")}
             className="px-1 text-gray-400 hover:text-white"
             title={`打开 roles/${roleId}.yaml`}
             type="button"
@@ -150,26 +151,25 @@ export function RoleChainEditor({
             </button>
           </div>
         ))}
+        {remaining.length > 0 && (
+          <div className="mt-1 flex items-center gap-1">
+            <span className="text-[10px] text-gray-500">+</span>
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value) add(e.target.value);
+              }}
+              className="flex-1 min-w-0 px-1 py-0.5 bg-[#3a3a3a] text-gray-200 text-[10px] rounded border border-gray-600"
+            >
+              <option value="">Add fallback…</option>
+              {remaining.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.provider})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
-      {remaining.length > 0 && (
-        <div className="mt-1 flex items-center gap-1">
-          <span className="text-[10px] text-gray-500">+</span>
-          <select
-            value=""
-            onChange={(e) => {
-              if (e.target.value) add(e.target.value);
-            }}
-            className="flex-1 min-w-0 px-1 py-0.5 bg-[#3a3a3a] text-gray-200 text-[10px] rounded border border-gray-600"
-          >
-            <option value="">Add fallback…</option>
-            {remaining.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name} ({m.provider})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-    </div>
   );
 }

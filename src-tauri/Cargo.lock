@@ -2399,12 +2399,14 @@ dependencies = [
 name = "latte-agent-core"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "handlebars",
  "latte-ai",
  "latte-rs-agent-tools",
  "parking_lot",
  "serde",
  "serde_json",
+ "serde_yaml",
  "thiserror 2.0.18",
  "tokio",
  "toml 0.8.2",

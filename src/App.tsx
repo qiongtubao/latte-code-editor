@@ -19,6 +19,7 @@ import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
 import { useChatStore } from "./hooks/useChatStore";
+import type { ControllerEventPayload } from "./api/chat";
 import type { ChatTurn } from "./hooks/useChatStore";
 import type { DecisionRequest, ManagerStatus, SwarmEvent } from "./api/chat";
 import { useLspStore } from "./hooks/useLspStore";
@@ -52,6 +53,8 @@ function App() {
   const applySwarmEvent = useChatStore((s) => s.applySwarmEvent);
   const applyNeedDecision = useChatStore((s) => s.applyNeedDecision);
   const applyManagerStatus = useChatStore((s) => s.applyManagerStatus);
+  const applyControllerEvent = useChatStore((s) => s.applyControllerEvent);
+  const applyHilState = useChatStore((s) => s.applyHilState);
   const { openFileOrSwitch, filePath } = useEditorStore();
   const { graphData } = useGraphStore();
   const activeMeta = useWorkspaceStore((s) =>
@@ -124,10 +127,20 @@ function App() {
         setChatError(e.payload);
       }),
     );
+    unlistens.push(
+      listen<import("./api/chat").HilSessionState>("chat:hil_state", (e) => {
+        applyHilState(e.payload);
+      }),
+    );
+    unlistens.push(
+      listen<ControllerEventPayload>("chat:controller_event", (e) => {
+        applyControllerEvent(e.payload);
+      }),
+    );
     return () => {
       for (const p of unlistens) p.then((fn) => fn());
     };
-  }, [addTurn, applySwarmEvent, applyNeedDecision, applyManagerStatus, setChatComplete, setChatError]);
+  }, [addTurn, applySwarmEvent, applyNeedDecision, applyManagerStatus, applyHilState, setChatComplete, setChatError, applyControllerEvent]);
 
   const folderRoot = activeMeta?.project_root ?? null;
 

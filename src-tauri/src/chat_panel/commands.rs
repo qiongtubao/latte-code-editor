@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 
+use super::config_loader;
 use super::global_config::{load_global_models, load_roles_config, write_roles_config, global_models_path, roles_config_path, WorkflowDef, WorkflowKind, WorkflowStep};
 use super::session::{default_role_ids, run_discussion, WORKFLOW_PRESETS};
 use super::types::*;
@@ -28,11 +29,12 @@ pub fn kind_to_str(kind: super::global_config::WorkflowKind) -> String {
         super::global_config::WorkflowKind::Swarm => "swarm".to_string(),
     }
 }
+
 #[tauri::command]
 pub async fn chat_list_models() -> Result<Vec<ModelInfo>, String> {
-    let global_config = load_global_models();
-
-    let models: Vec<ModelInfo> = global_config
+    let merged = config_loader::load_merged();
+    let models: Vec<ModelInfo> = merged
+        .models
         .models
         .iter()
         .map(|m| ModelInfo {
@@ -42,45 +44,40 @@ pub async fn chat_list_models() -> Result<Vec<ModelInfo>, String> {
             max_tokens: m.max_tokens,
             context_window: m.context_window,
             supports_vision: false,
-            supports_thinking: m.reasoning,
+            supports_thinking: m.supports_thinking,
         })
         .collect();
-
     Ok(models)
 }
 
-/// Get current role configuration from ~/.latte-code-editor/roles.yaml
+/// Get merged role + model configuration through the three-layer loader.
+/// No editor-internal config — all data sourced from `latte_agent_core`.
 #[tauri::command]
 pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
-    let role_config = load_roles_config();
-    let global_config = load_global_models();
+    let merged = config_loader::load_merged();
 
-    let roles: Vec<RoleInfo> = role_config
+    let roles: Vec<RoleInfo> = merged
         .roles
         .iter()
-        .map(|(id, r)| {
-            let chain = r.chain();
-            // For UI back-compat: surface the primary model as
-            // `default_model_tier` so existing dropdowns still work.
-            let primary = chain
+        .map(|(id, tmpl)| {
+            let primary = tmpl
+                .model_chain
                 .first()
                 .cloned()
-                .unwrap_or_else(|| role_config.default_model.clone());
+                .unwrap_or_else(|| merged.default_model.clone());
             RoleInfo {
                 id: id.clone(),
-                name: r.name.clone(),
-                icon: r.icon.clone(),
-                category: r.category.clone(),
+                name: tmpl.name.clone(),
+                icon: tmpl.icon.clone(),
+                category: tmpl.category.clone(),
                 default_model_tier: primary,
-                model_chain: chain,
+                model_chain: tmpl.model_chain.clone(),
             }
         })
         .collect();
 
-    // Workflows live in their own files under `~/.latte-code-editor/workflows/`.
-    // We don't read them out of `roles.yaml` anymore — that's reserved
-    // for roles + default model. `read_all_workflow_files` returns a
-    // sorted map so the chat panel dropdown order is deterministic.
+    // Workflows: still loaded from project files (WorkflowDef format).
+    // Path will be updated in a later step.
     let workflows: Vec<WorkflowInfo> = super::global_config::read_all_workflow_files()
         .iter()
         .map(|(id, w)| WorkflowInfo {
@@ -107,12 +104,19 @@ pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
         })
         .collect();
 
+    let models_path = config_loader::global_models_path()
+        .to_string_lossy()
+        .to_string();
+    let agents_dir = config_loader::project_agents_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".latte/agents.d/".to_string());
+
     Ok(RoleConfigResponse {
-        default_model: role_config.default_model,
+        default_model: merged.default_model,
         roles,
         workflows,
-        models_path: global_models_path().to_string_lossy().to_string(),
-        roles_path: roles_config_path().to_string_lossy().to_string(),
+        models_path,
+        roles_path: agents_dir,
     })
 }
 /// Fetch the full editable payload for one workflow, by id. The
@@ -137,36 +141,25 @@ pub async fn chat_list_workflows_full() -> Result<Vec<WorkflowPayload>, String> 
 }
 
 
-/// Set model for a specific role
+/// Set model for a specific role (legacy single-model path).
+/// Delegates to `chat_set_role_model_chain` with a one-element chain.
 #[tauri::command]
 pub async fn chat_set_role_model(
     role_id: String,
     model_id: String,
 ) -> Result<(), String> {
-    let mut role_config = load_roles_config();
-
-    if let Some(role) = role_config.roles.get_mut(&role_id) {
-        // Persist as a single-element chain so the YAML form is unambiguous.
-        role.set_chain(vec![model_id]);
-    } else {
-        return Err(format!("Role '{}' not found", role_id));
-    }
-
-    let path = roles_config_path();
-    let content = serde_yaml::to_string(&role_config)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
-
-    std::fs::write(&path, content)
-        .map_err(|e| format!("Failed to write {:?}: {}", path, e))?;
-
+    let req = super::types::SetRoleModelChainRequest {
+        role_id,
+        chain: vec![model_id],
+    };
+    chat_set_role_model_chain(req).await?;
     Ok(())
 }
 
 /// Set the priority-ordered model chain for a specific role.
 ///
-/// `chain[0]` becomes the primary; the rest are fallbacks tried in
-/// order when earlier models fail. Empty chains are rejected.
-/// Validates that every model id is present in the global catalog.
+/// Writes to `<cwd>/.latte/agents.d/<role_id>.toml` via `config_loader`.
+/// Validates that every model id is present in the merged catalog.
 #[tauri::command]
 pub async fn chat_set_role_model_chain(
     request: SetRoleModelChainRequest,
@@ -174,8 +167,6 @@ pub async fn chat_set_role_model_chain(
     if request.chain.is_empty() {
         return Err("model chain must contain at least one model".to_string());
     }
-    // Deduplicate while preserving order — the runner dedups again, but
-    // a stable, minimal YAML form is friendlier to read by hand.
     let mut seen = std::collections::HashSet::new();
     let chain: Vec<String> = request
         .chain
@@ -183,10 +174,11 @@ pub async fn chat_set_role_model_chain(
         .filter(|m| seen.insert(m.clone()))
         .collect();
 
-    let global_config = load_global_models();
+    // Validate against merged catalog
+    let merged = config_loader::load_merged();
     let unknown: Vec<&String> = chain
         .iter()
-        .filter(|m| !global_config.models.iter().any(|def| &def.id == *m))
+        .filter(|m| !merged.models.models.iter().any(|def| &def.id == *m))
         .collect();
     if !unknown.is_empty() {
         return Err(format!(
@@ -199,35 +191,14 @@ pub async fn chat_set_role_model_chain(
         ));
     }
 
-    let mut role_config = load_roles_config();
-    let role = role_config
-        .roles
-        .get_mut(&request.role_id)
-        .ok_or_else(|| format!("Role '{}' not found", request.role_id))?;
-    role.set_chain(chain.clone());
-
-    let path = roles_config_path();
-    let content = serde_yaml::to_string(&role_config)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
-    std::fs::write(&path, content)
-        .map_err(|e| format!("Failed to write {:?}: {}", path, e))?;
-
+    config_loader::write_role_model_chain(&request.role_id, &chain)?;
     Ok(chain)
 }
-
-/// Set default model
+/// Set the global default model.
+/// Writes `tiers.standard` to `~/.latte/models.yaml` via `config_loader`.
 #[tauri::command]
 pub async fn chat_set_default_model(model_id: String) -> Result<(), String> {
-    let mut role_config = load_roles_config();
-    role_config.default_model = model_id;
-
-    let path = roles_config_path();
-    let content = serde_yaml::to_string(&role_config)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
-
-    std::fs::write(&path, content)
-        .map_err(|e| format!("Failed to write {:?}: {}", path, e))?;
-
+    config_loader::write_global_default_model(&model_id)?;
     Ok(())
 }
 
@@ -389,29 +360,6 @@ pub async fn chat_start_discussion(
     Ok(session_id)
 }
 
-/// Send a follow-up message
-#[tauri::command]
-pub async fn chat_continue(
-    app: AppHandle,
-    request: ContinueDiscussionRequest,
-) -> Result<(), String> {
-    let req = StartDiscussionRequest {
-        topic: request.message,
-        workflow: "discuss".into(),
-        custom_roles: None,
-        max_rounds: Some(1),
-    };
-    let result = run_discussion(&app, &req).await;
-    match result {
-        Ok(payload) => {
-            let _ = app.emit("chat:complete", &payload);
-        }
-        Err(e) => {
-            let _ = app.emit("chat:error", e);
-        }
-    }
-    Ok(())
-}
 
 /// Request from frontend to launch a swarm-mode discussion.
 ///
@@ -787,4 +735,250 @@ pub async fn chat_reset_roles_to_defaults() -> Result<RoleConfigResponse, String
         models_path: global_models_path().to_string_lossy().to_string(),
         roles_path: roles_config_path().to_string_lossy().to_string(),
     })
+}
+
+// ─── HIL (Human-In-Loop) Blackboard session ─────────────────────
+//
+// Tauri commands for the editable, pausable chat session described
+// in `latte-rs-agents` HIL v1. Each command is a thin wrapper that
+// delegates to `super::hil::*`; the wrapper only handles Tauri
+// parameter naming (`taskId` / `roleId` in camelCase from the
+// frontend) and converts Result<_, String> for IPC.
+
+/// Start a new HIL session — creates the worktree, writes
+/// `plan.md`, instantiates a `SessionManager`, returns the initial
+/// snapshot.
+#[tauri::command]
+pub async fn chat_hil_start(
+    app: AppHandle,
+    request: HilStartRequest,
+) -> Result<HilSessionState, String> {
+    super::hil::start_session(&app, request)
+}
+
+/// Append a message to a role's history. The "send" path.
+#[tauri::command]
+pub async fn chat_hil_send(
+    app: AppHandle,
+    request: HilSendRequest,
+) -> Result<HilSessionState, String> {
+    super::hil::send_message(&app, request)
+}
+
+/// Edit or delete a single message in a role's history. The
+/// "可修改聊天内容继续" affordance — the user can fix any message
+/// while the session is paused, then press 继续.
+#[tauri::command]
+pub async fn chat_hil_edit_message(
+    app: AppHandle,
+    request: HilEditRequest,
+) -> Result<HilSessionState, String> {
+    super::hil::edit_message(&app, request)
+}
+
+/// Inject a message into a role's history from outside the REPL.
+/// Equivalent to `latte-agent inject --task-id X --role Y --message M`.
+#[tauri::command]
+pub async fn chat_hil_inject(
+    app: AppHandle,
+    request: HilInjectRequest,
+) -> Result<HilSessionState, String> {
+    super::hil::inject_message(&app, request)
+}
+
+/// Resume + send in one call. Empty content just resumes.
+#[tauri::command]
+pub async fn chat_hil_continue(
+    app: AppHandle,
+    request: HilContinueRequest,
+) -> Result<HilSessionState, String> {
+    super::hil::continue_session(&app, request)
+}
+
+/// Pause / resume / abort in one command. `request.action` is
+/// `"pause" | "resume" | "abort"`.
+#[tauri::command]
+pub async fn chat_hil_transition(
+    app: AppHandle,
+    request: HilTransitionRequest,
+) -> Result<HilSessionState, String> {
+    super::hil::transition(&app, request)
+}
+
+/// Fetch a session's full state. `null` if no JSON exists.
+#[tauri::command]
+pub async fn chat_hil_get_state(
+    app: AppHandle,
+    task_id: String,
+    cwd: Option<String>,
+) -> Result<Option<HilSessionState>, String> {
+    super::hil::get_state(&app, &task_id, cwd.as_deref())
+}
+
+/// List all on-disk HIL sessions. Used to populate the "open
+/// existing" dropdown.
+#[tauri::command]
+pub async fn chat_hil_list_sessions(
+    cwd: Option<String>,
+) -> Result<Vec<super::hil::HilSessionSummary>, String> {
+    super::hil::list_sessions(cwd.as_deref())
+}
+
+// ─── ChatController commands ────────────────────────────────────
+//
+// Event-driven chat session controller. The frontend spawns a
+// controller, then sends input / pause / resume / abort via these
+// commands. Events flow back through `chat:controller_event`.
+
+/// Spawn a new ChatController session (persisted to SessionStore).
+/// Detects the chat type based on request fields:
+/// - `task_id` is set → "hil"
+/// - `roles.len() > 1` → "multi_role"
+/// - otherwise → "single"
+#[tauri::command]
+pub async fn chat_controller_spawn(
+    app: tauri::AppHandle,
+    request: super::types::ControllerSpawnRequest,
+) -> Result<(), String> {
+    use latte_agent_core::config::AgentConfig;
+    use latte_agent_core::controller::ControllerConfig;
+    use latte_agent_core::model_resolver::{ModelResolver, ModelTier};
+    use latte_agent_core::global_config::GlobalConfig;
+    use latte_ai::params::GenerateParams;
+    use std::sync::Arc;
+
+    // Resolve the working directory.
+    let cwd = request.cwd.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    // Use the same config_loader as chat_stream so models.yaml API keys
+    // are properly merged (including global tiers and credentials).
+    let merged = super::config_loader::load_merged();
+
+    // Build an AgentConfig from the merged data.
+    let mut config = AgentConfig {
+        models: merged.models,
+        roles: merged.roles,
+    };
+    let global = GlobalConfig::load_default().unwrap_or_default();
+    let global_ids: Vec<String> = global.models.iter().map(|m| m.id.clone()).collect();
+    for tmpl in config.roles.values_mut() {
+        for id in &global_ids {
+            if !tmpl.model_chain.contains(id) {
+                tmpl.model_chain.push(id.clone());
+            }
+        }
+    }
+
+    let resolver = ModelResolver::from_config(&config)
+        .map_err(|e| format!("resolver: {e}"))?;
+
+    let initial_tier = request
+        .initial_tier
+        .as_deref()
+        .and_then(|s| ModelTier::parse(s).ok());
+    let primary_model_id = request.primary_model_id.clone();
+
+    // Detect chat type.
+    let chat_type = if request.task_id.is_some() {
+        "hil"
+    } else if request.roles.len() > 1 {
+        "multi_role"
+    } else {
+        "single"
+    };
+
+    let controller_config = ControllerConfig {
+        task_id: request.task_id.clone(),
+        roles: if request.roles.is_empty() {
+            vec!["manager".to_string()]
+        } else {
+            request.roles.clone()
+        },
+        initial_prompt: request.initial_prompt.clone(),
+        max_rounds: request.max_rounds,
+        session_token_budget: request.session_token_budget,
+        agent_config: Arc::new(config),
+        model_resolver: Arc::new(resolver),
+        default_params: GenerateParams::default(),
+        primary_model_id,
+        initial_tier,
+        cwd,
+    };
+
+    // Use persistent session spawn.
+    super::session_controller::spawn_persistent(
+        &app,
+        &request.session_id,
+        chat_type,
+        controller_config.roles.clone(),
+        controller_config,
+    )
+    .await
+}
+
+// ─── Session management commands ─────────────────────────────────
+
+/// List all persisted chat sessions.
+#[tauri::command]
+pub async fn chat_session_list() -> Result<Vec<latte_agent_core::session_store::SessionSummary>, String> {
+    super::session_controller::list_sessions().await
+}
+
+/// Get a single session by id (includes full message list).
+#[tauri::command]
+pub async fn chat_session_get(
+    session_id: String,
+) -> Result<latte_agent_core::session_store::StoredSession, String> {
+    super::session_controller::get_session(&session_id).await
+}
+
+/// Delete a session by id.
+#[tauri::command]
+pub async fn chat_session_delete(
+    session_id: String,
+) -> Result<(), String> {
+    super::session_controller::delete_session(&session_id).await
+}
+
+/// Edit a message in a session's history.
+#[tauri::command]
+pub async fn chat_session_edit_message(
+    session_id: String,
+    index: usize,
+    new_content: String,
+) -> Result<(), String> {
+    super::session_controller::edit_message(&session_id, index, &new_content).await
+}
+
+/// Submit user text to an active controller session.
+#[tauri::command]
+pub async fn chat_controller_submit(
+    session_id: String,
+    text: String,
+) -> Result<(), String> {
+    super::controller_adapter::submit_to_controller(&session_id, &text).await
+}
+
+/// Pause an active controller session.
+#[tauri::command]
+pub async fn chat_controller_pause(
+    session_id: String,
+) -> Result<(), String> {
+    super::controller_adapter::pause_controller(&session_id).await
+}
+
+/// Resume a paused controller session.
+#[tauri::command]
+pub async fn chat_controller_resume(
+    session_id: String,
+) -> Result<(), String> {
+    super::controller_adapter::resume_controller(&session_id).await
+}
+
+/// Abort an active controller session.
+#[tauri::command]
+pub async fn chat_controller_abort(
+    session_id: String,
+) -> Result<(), String> {
+    super::controller_adapter::abort_controller(&session_id).await
 }

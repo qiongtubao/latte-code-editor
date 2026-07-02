@@ -1,12 +1,17 @@
 pub mod commands;
+pub mod config_loader;
+pub mod chat_stream;
 pub mod config;
+pub mod hil;
 pub mod manager;
 pub mod manager_decide;
 pub mod session;
+pub mod swarm;
 pub mod types;
+pub mod controller_adapter;
+pub mod session_controller;
 pub mod global_config;
 pub mod global_config_test;
-pub mod swarm;
 #[cfg(test)]
 mod swarm_test;
 #[cfg(test)]

@@ -102,7 +102,6 @@ pub fn run() {
             crate::chat_panel::commands::chat_list_workflows,
             crate::chat_panel::commands::chat_list_roles,
             crate::chat_panel::commands::chat_start_discussion,
-            crate::chat_panel::commands::chat_continue,
             crate::chat_panel::commands::chat_cancel,
             crate::chat_panel::commands::chat_list_models,
             crate::chat_panel::commands::chat_get_role_config,
@@ -121,6 +120,25 @@ pub fn run() {
             crate::chat_panel::commands::chat_get_manager_state,
             crate::chat_panel::commands::chat_list_manager_sessions,
             crate::chat_panel::commands::chat_abort_manager_session,
+            crate::chat_panel::commands::chat_hil_start,
+            crate::chat_panel::commands::chat_hil_send,
+            crate::chat_panel::commands::chat_hil_edit_message,
+            crate::chat_panel::commands::chat_hil_inject,
+            crate::chat_panel::commands::chat_hil_continue,
+            crate::chat_panel::commands::chat_hil_transition,
+            crate::chat_panel::commands::chat_hil_get_state,
+            crate::chat_panel::commands::chat_hil_list_sessions,
+            crate::chat_panel::commands::chat_controller_spawn,
+            crate::chat_panel::commands::chat_controller_submit,
+            crate::chat_panel::commands::chat_controller_pause,
+            crate::chat_panel::commands::chat_controller_resume,
+            crate::chat_panel::commands::chat_controller_abort,
+            crate::chat_panel::commands::chat_session_list,
+            crate::chat_panel::commands::chat_session_get,
+            crate::chat_panel::commands::chat_session_delete,
+            crate::chat_panel::commands::chat_session_edit_message,
+            // single-role chat replica (latte-agent chat CLI in HTML)
+            crate::chat_panel::chat_stream::chat_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

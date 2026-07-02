@@ -1,6 +1,25 @@
 import { create } from "zustand";
-import type { ModelInfo, RoleConfigResponse, RoleInfo, SwarmEvent, SwarmStepSpec, WorkflowPayload } from "../api/chat";
+import type {
+  HilMessage,
+  HilRoleHistory,
+  HilSessionState,
+  HilSessionSummary,
+  ModelInfo,
+  RoleConfigResponse,
+  RoleInfo,
+  SwarmEvent,
+  SwarmStepSpec,
+  WorkflowPayload,
+} from "../api/chat";
 import {
+  continueHilSession as apiContinueHilSession,
+  editHilMessage as apiEditHilMessage,
+  getHilState as apiGetHilState,
+  injectHilMessage as apiInjectHilMessage,
+  listHilSessions as apiListHilSessions,
+  sendHilMessage as apiSendHilMessage,
+  startHilSession as apiStartHilSession,
+  transitionHilSession as apiTransitionHilSession,
   listModels,
   getRoleConfig,
   setRoleModel as apiSetRoleModel,
@@ -8,7 +27,7 @@ import {
   setDefaultModel as apiSetDefaultModel,
   openConfig as apiOpenConfig,
   startDiscussion,
-  continueDiscussion,
+
   cancelDiscussion,
   startSwarm,
   saveWorkflow as apiSaveWorkflow,
@@ -17,17 +36,33 @@ import {
   startManagerSession as startManagerSessionApi,
   submitUserDecision as submitUserDecisionApi,
   submitUserContinue as submitUserContinueApi,
+  spawnController as apiSpawnController,
+  submitControllerInput as apiSubmitControllerInput,
+  abortController as apiAbortController,
+  pauseController as apiPauseController,
+  resumeController as apiResumeController,
+  listSessions as apiListSessions,
+  deleteSession as apiDeleteSession,
+  chatStream as apiChatStream,
 } from "../api/chat";
-import { useEditorStore } from "./useEditorStore";
 import { openFile } from "../api/commands";
-export type ChatStatus = "idle" | "running" | "completed" | "error";
+import { useEditorStore } from "./useEditorStore";
 
 /**
  * Top-level chat mode. `"discuss"` is the original sequential
  * discussion runner; `"swarm"` is the planner-driven flow where the
- * planner breaks the topic into ordered worker steps.
+ * planner breaks the topic into ordered worker steps; `"manager"`
+ * is the interactive option-button flow; `"hil"` is the
+ * pausable, editable, worktree-backed blackboard session backed by
+ * `latte-rs-agents/latte-agent-core::session::SessionManager`.
+ * `"controller"` is the event-driven single-role or multi-role mode
+ * backed by `latte_agent_core::controller::ChatController`.
+ * `"single"` is the stateless single-role chat (request-response),
+ * mirroring `latte-agent chat --role <id>`.
  */
-export type ChatMode = "discuss" | "swarm" | "manager";
+export type ChatMode = "discuss" | "swarm" | "manager" | "hil" | "controller" | "single";
+
+export type ChatStatus = "idle" | "running" | "completed" | "error";
 
 export interface ChatMessage {
   id: string;
@@ -108,9 +143,20 @@ interface ChatStore {
   setComplete: () => void;
   /** Apply one `chat:swarm_event` from the backend. */
   applySwarmEvent: (event: SwarmEvent) => void;
+  /** Apply one `chat:controller_event` from the backend. */
+  applyControllerEvent: (event: import("../api/chat").ControllerEventPayload) => void;
   /** Send a swarm-mode prompt. No-op when `mode !== "swarm"` or
    *  a swarm is already running. */
   sendSwarm: (topic: string) => Promise<void>;
+  /** Send a controller-mode prompt. */
+  sendController: (content: string) => Promise<void>;
+  /** Send a single-role chat message (stateless request-response). */
+  sendSingleChat: (content: string) => Promise<void>;
+  controllerSessionId: string | null;
+  /** Pause the active controller session. */
+  pauseController: () => Promise<void>;
+  /** Resume the active controller session. */
+  resumeController: () => Promise<void>;
   // ─── Manager-led workflow state ──────────────────────────────────
   /** Most recent pending decision request. Non-null while the UI
    *  should show option buttons under the last manager bubble. */
@@ -120,6 +166,7 @@ interface ChatStore {
   managerStatus: import("../api/chat").ManagerStatus | null;
   /** Currently-active manager session id (assigned by
    *  `chat_start_manager_session`). `null` until first launch. */
+  managerSessionId: number | null;
   startManagerSession: (topic: string) => Promise<void>;
   submitManagerDecision: (
     optionId: string,
@@ -132,6 +179,107 @@ interface ChatStore {
   applyManagerStatus: (
     status: import("../api/chat").ManagerStatus,
   ) => void;
+
+  // ─── HIL (Human-In-Loop) Blackboard state ─────────────────────
+  /** Active HIL session id (the `task_id` from the backend). `null`
+   *  when no HIL session is loaded. */
+  hilTaskId: string | null;
+  /** The full editable session snapshot. Mirrors the JSON on disk;
+   *  the editor mutates the per-role histories and posts edits back
+   *  through `editHilMessage`. */
+  hilSession: HilSessionState | null;
+  /** Cached list of on-disk HIL sessions for the "open existing"
+   *  dropdown. Populated on first `loadHilSessions` call. */
+  hilSessionList: HilSessionSummary[];
+  /** Optional cwd override for the HIL commands. When `null`, the
+   *  backend uses `std::env::current_dir()` (i.e. the editor
+   *  process cwd). The editor should pass the active workspace's
+   *  root so the HIL worktree lives next to the user's project. */
+  hilCwd: string | null;
+  /** When non-null, the user is currently editing this message in
+   *  the role transcript. The editor renders the inline editor
+   *  for that row. */
+  hilEditingMessage:
+    | { roleId: string; messageIndex: number; draft: string }
+    | null;
+  /** In-flight indicator for any HIL command. Used to disable the
+   *  input + show a spinner. */
+  hilBusy: boolean;
+  /** Last HIL error message (e.g. worktree creation failure). */
+  hilError: string | null;
+  // ─── Unified SessionStore (persistent sessions) ───────────────
+  /** Cached list of all persisted sessions. Populated on first load. */
+  sessionList: import("../api/chat").SessionSummary[];
+  /** Loading flag for session list. */
+  sessionListLoading: boolean;
+  /** Load session list from the backend. */
+  loadSessionList: () => Promise<void>;
+  /** Delete a session and refresh the list. */
+  deleteSession: (sessionId: string) => Promise<void>;
+
+  /** Load or create an HIL session. When `taskId` is new (and the
+   *  worktree doesn't exist yet), this creates the worktree +
+   *  plan.md + SessionRecord. When `taskId` already exists, it
+   *  loads the latest session JSON. */
+  startOrLoadHilSession: (
+    taskId: string,
+    initialPrompt: string,
+  ) => Promise<void>;
+  /** Refresh `hilSession` from the on-disk JSON. Useful after
+   *  hand-editing the session file in the editor. */
+  refreshHilSession: () => Promise<void>;
+  /** Pause the active HIL session. */
+  pauseHilSession: (reason?: string) => Promise<void>;
+  /** Resume the active HIL session. If `message` is non-empty,
+   *  it's appended to `roleId`'s history as a synthetic user
+   *  message tagged `[HUMAN @ <ts>]`. */
+  resumeHilSession: (
+    roleId: string,
+    message?: string,
+  ) => Promise<void>;
+  /** Inject a message targeted at a specific role (the
+   *  `latte-agent inject` equivalent). */
+  injectToHilRole: (roleId: string, message: string) => Promise<void>;
+  /** Send a user message to a role (the regular "send" path).
+   *  In HIL mode the user explicitly picks the role (defaulting
+   *  to `"manager"`); this is how the user "talks" in the
+   *  blackboard. */
+  sendHilUserMessage: (roleId: string, content: string) => Promise<void>;
+  /** Edit or delete one message in a role's history. The
+   *  "可修改聊天内容继续" affordance. */
+  editHilMessageAction: (
+    roleId: string,
+    messageIndex: number,
+    action: "edit" | "delete",
+    newContent?: string,
+  ) => Promise<void>;
+  /** Mark the session as Done (the "abort" transition). */
+  abortHilSession: () => Promise<void>;
+  /** Populate `hilSessionList` from the on-disk session index. */
+  loadHilSessions: () => Promise<void>;
+  /** Open the on-disk session JSON in the editor. Used by the
+   *  "在编辑器中打开" affordance for operators who want to
+   *  hand-edit the file. */
+  openHilSessionJson: () => Promise<void>;
+  /** Open `plan.md` in the editor. */
+  openHilPlanMd: () => Promise<void>;
+  /** Begin editing a message in the HIL transcript. */
+  beginHilEditMessage: (
+    roleId: string,
+    messageIndex: number,
+    initialContent: string,
+  ) => void;
+  /** Update the draft of the in-progress edit. */
+  updateHilEditDraft: (draft: string) => void;
+  /** Commit the current edit (calls `editHilMessageAction`). */
+  commitHilEditMessage: () => Promise<void>;
+  /** Cancel the current edit without saving. */
+  cancelHilEditMessage: () => void;
+  /** Apply one `chat:hil_state` event from the backend. */
+  applyHilState: (state: HilSessionState) => void;
+  /** Set the cwd override (call this when the user opens a
+   *  different workspace). */
+  setHilCwd: (cwd: string | null) => void;
 
   // Config management
   setRoleModel: (roleId: string, modelId: string) => Promise<void>;
@@ -160,7 +308,7 @@ interface ChatStore {
   editingError: string | null;
 
   /** Open the editor on an existing workflow. */
-  openWorkflowEditor: (payload: WorkflowPayload) => void;
+  openWorkflowEditor: (payload: Partial<WorkflowPayload>) => void;
   /** Open the editor on a blank new workflow. */
   openNewWorkflowEditor: () => void;
   /** Close the editor without saving. */
@@ -206,6 +354,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   swarmPlan: [],
   swarmFiles: [],
   swarmSummary: null,
+  controllerSessionId: null,
   errorMessage: null,
   lastUserTopic: null,
   selectedWorkflow: "discuss",
@@ -223,6 +372,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   pendingDecision: null,
   managerStatus: null,
   managerSessionId: null,
+
+  // HIL (Human-In-Loop) Blackboard
+  hilTaskId: null,
+  hilSession: null,
+  hilSessionList: [],
+  sessionList: [],
+  sessionListLoading: false,
+  hilCwd: null,
+  hilEditingMessage: null,
+  hilBusy: false,
+  hilError: null,
 
   // Workflow editor
   editingWorkflow: null,
@@ -242,7 +402,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         ? "manager"
         : wf?.mode === "swarm"
           ? "swarm"
-          : "discuss";
+          : wf?.mode === "controller"
+            ? "controller"
+            : "discuss";
     set({ selectedWorkflow: id, mode: nextMode, errorMessage: null });
   },
 
@@ -329,6 +491,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       await get().startManagerSession(trimmed);
       return;
     }
+    if (get().mode === "single") {
+      await get().sendSingleChat(trimmed);
+      return;
+    }
+    if (get().mode === "controller") {
+      await get().sendController(trimmed);
+      return;
+    }
     const userMsg: ChatMessage = {
       id: uid(),
       role: "user",
@@ -344,24 +514,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       lastUserTopic: trimmed,
     }));
     try {
-      const state = get();
-      if (state.sessionId === null) {
-        const sessionId = await startDiscussion({
-          topic: trimmed,
-          workflow: state.selectedWorkflow,
-          customRoles: null,
-          maxRounds: 1,
-        });
-        // Important: do NOT mark `sessionId` set if the start failed.
-        // When the start throws (e.g. all roles are missing API keys),
-        // we keep `sessionId === null` so the retry path uses
-        // `startDiscussion` again with the same workflow, not
-        // `continueDiscussion` (which would need a live session).
-        set({ sessionId, lastUserTopic: trimmed });
-      } else {
-        await continueDiscussion({ sessionId: state.sessionId, message: trimmed });
-        set({ lastUserTopic: trimmed });
-      }
+      const sessionId = await startDiscussion({
+        topic: trimmed,
+        workflow: get().selectedWorkflow,
+        customRoles: null,
+        maxRounds: 1,
+      });
+      set({ sessionId, lastUserTopic: trimmed });
     } catch (e) {
       // Stay in `idle` so the chat list keeps showing the preflight
       // error bubbles and the retry button — NOT `status: "error"`
@@ -396,9 +555,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }));
     await get().sendMessage(topic);
   },
-
   cancelDiscussion: async () => {
-    const { sessionId } = get();
+    const { sessionId, mode, controllerSessionId } = get();
+    if (mode === "controller" && controllerSessionId) {
+      try {
+        await apiAbortController(controllerSessionId);
+      } catch (e) {
+        console.error("controller abort failed:", e);
+      }
+      set({ status: "idle" });
+      return;
+    }
     if (sessionId !== null) {
       try {
         await cancelDiscussion(sessionId);
@@ -423,6 +590,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       pendingDecision: null,
       managerStatus: null,
       managerSessionId: null,
+      // HIL: keep `hilTaskId` + `hilSession` (the on-disk JSON
+      // is the source of truth; "clear" doesn't drop the user's
+      // session). The user can switch modes to start a fresh
+      // HIL session or call `startOrLoadHilSession` again.
+      controllerSessionId: null,
+      hilBusy: false,
+      hilError: null,
+      hilEditingMessage: null,
     }),
   addTurn: (turn) => {
     const agentMsg: ChatMessage = {
@@ -474,6 +649,114 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       const swarmSessionId = await startSwarm({ topic: trimmed, name: wf });
       set({ swarmSessionId });
+    } catch (e) {
+      set({ status: "error", errorMessage: String(e) });
+    }
+  },
+  sendController: async (content) => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    if (get().status === "running") return;
+    const userMsg: ChatMessage = {
+      id: uid(),
+      role: "user",
+      content: trimmed,
+      timestamp: Date.now(),
+    };
+    let sid = get().controllerSessionId;
+    if (!sid) {
+      // First message: spawn a new controller session.
+      sid = `ctrl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      set((s) => ({
+        messages: [...s.messages, userMsg],
+        status: "running",
+        errorMessage: null,
+        controllerSessionId: sid,
+      }));
+      try {
+        await apiSpawnController({
+          sessionId: sid,
+          taskId: null,
+          roles: ["manager"],
+          initialPrompt: trimmed,
+          maxRounds: 10,
+          sessionTokenBudget: 0,
+          primaryModelId: null,
+          initialTier: null,
+          cwd: null,
+        });
+      } catch (e) {
+        set({ status: "error", errorMessage: String(e) });
+      }
+    } else {
+      // Subsequent messages: submit to existing session.
+      set((s) => ({
+        messages: [...s.messages, userMsg],
+        errorMessage: null,
+      }));
+      try {
+        await apiSubmitControllerInput(sid, trimmed);
+      } catch (e) {
+        set({ status: "error", errorMessage: String(e) });
+      }
+    }
+  },
+  pauseController: async () => {
+    const sid = get().controllerSessionId;
+    if (!sid) return;
+    try {
+      await apiPauseController(sid);
+    } catch (e) {
+      console.error("pauseController failed:", e);
+    }
+  },
+  resumeController: async () => {
+    const sid = get().controllerSessionId;
+    if (!sid) return;
+    try {
+      await apiResumeController(sid);
+    } catch (e) {
+      console.error("resumeController failed:", e);
+    }
+  },
+  sendSingleChat: async (content) => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    if (get().status === "running") return;
+    // Build history from existing messages
+    const history = get().messages.map((m) => ({
+      role: m.role === "user" ? "user" : "assistant",
+      content: m.content,
+    }));
+    const userMsg: ChatMessage = {
+      id: uid(),
+      role: "user",
+      content: trimmed,
+      timestamp: Date.now(),
+    };
+    set((s) => ({
+      messages: [...s.messages, userMsg],
+      status: "running",
+      errorMessage: null,
+      lastUserTopic: trimmed,
+    }));
+    try {
+      const reply = await apiChatStream({
+        roleId: "manager",
+        content: trimmed,
+        history,
+      });
+      const agentMsg: ChatMessage = {
+        id: uid(),
+        role: "agent",
+        content: reply.content,
+        timestamp: Date.now(),
+      };
+      set((s) => ({
+        messages: [...s.messages, agentMsg],
+        status: "completed",
+        lastUserTopic: null,
+      }));
     } catch (e) {
       set({ status: "error", errorMessage: String(e) });
     }
@@ -565,6 +848,44 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
+  applyControllerEvent: (event) => {
+    const sid = get().controllerSessionId;
+    if (event.sessionId !== sid) return; // ignore events for other sessions
+    switch (event.kind) {
+      case "roleTurn": {
+        const content = (event as unknown as { content?: string; isComplete?: boolean }).content;
+        if (!content) return;
+        set((s) => ({
+          messages: [...s.messages, {
+            id: uid(),
+            role: "agent",
+            content,
+            timestamp: Date.now(),
+          }],
+        }));
+        return;
+      }
+      case "paused": {
+        set({ status: "completed" });
+        return;
+      }
+      case "resumed": {
+        set({ status: "running" });
+        return;
+      }
+      case "contextCleared":
+      case "done": {
+        set({ status: "completed", lastUserTopic: null });
+        return;
+      }
+      case "error": {
+        const message = (event as unknown as { message?: string }).message;
+        set({ status: "error", errorMessage: message ?? "controller error" });
+        return;
+      }
+    }
+  },
+
   setRoleModel: async (roleId, modelId) => {
     // setRoleModel is the legacy "set primary only" path. Persist as a
     // one-element chain so the YAML form stays consistent with the
@@ -648,14 +969,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Older payloads saved before `managerRole` / `initialWorkers`
     // were added won't have these fields. Fill with defaults so the
     // editor's `ManagerFields` panel can bind to them without
-    // conditionals everywhere.
-    const normalized: WorkflowPayload = {
-      managerRole: "",
-      initialWorkers: [],
-      maxTotalSteps: 8,
-      maxUserDecisions: 5,
-      ...payload,
-    };
+    // conditionals everywhere. `payload` is `Partial<WorkflowPayload>`
+    // so older test fixtures can omit the manager-led fields; the
+    // cast folds the spread into a full `WorkflowPayload` for the
+    // downstream `structuredClone`.
+    // Fill defaults first, then layer the (partial) payload on top.
+    // `Object.assign` avoids the "specified more than once" lint
+    // that a literal `{ ...defaults, ...payload }` triggers when
+    // the payload's type union includes keys we also default.
+    const normalized = Object.assign(
+      {
+        managerRole: "",
+        initialWorkers: [],
+        maxTotalSteps: 8,
+        maxUserDecisions: 5,
+      } as Partial<WorkflowPayload>,
+      payload,
+    ) as unknown as WorkflowPayload;
     set({
       editingWorkflow: structuredClone(normalized),
       editingOriginal: structuredClone(normalized),
@@ -984,4 +1314,236 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   applyManagerStatus: (status) => {
     set({ managerStatus: status });
   },
+  // ─── HIL action implementations ─────────────────────────────────
+  applyHilState: (state) => {
+    // Backend emits `chat:hil_state` after every mutation. Mirror
+    // the snapshot into the store so the chat panel re-renders.
+    set({ hilSession: state });
+  },
+
+  setHilCwd: (cwd) => set({ hilCwd: cwd }),
+
+  startOrLoadHilSession: async (taskId, initialPrompt) => {
+    set({ hilBusy: true, hilError: null, hilTaskId: taskId });
+    try {
+      // First try to load an existing session; if the worktree
+      // exists this short-circuits the create call.
+      const cwd = get().hilCwd;
+      const existing = await apiGetHilState(taskId, cwd);
+      if (existing) {
+        set({ hilSession: existing, hilBusy: false });
+        return;
+      }
+      // Otherwise create one. The backend will create the worktree
+      // and return the initial snapshot.
+      const created = await apiStartHilSession({
+        taskId,
+        initialPrompt,
+        roles: [],
+        cwd,
+      });
+      set({ hilSession: created, hilBusy: false });
+    } catch (e) {
+      set({ hilBusy: false, hilError: String(e) });
+    }
+  },
+
+  refreshHilSession: async () => {
+    const taskId = get().hilTaskId;
+    if (!taskId) return;
+    set({ hilBusy: true });
+    try {
+      const state = await apiGetHilState(taskId, get().hilCwd);
+      set({ hilSession: state, hilBusy: false });
+    } catch (e) {
+      set({ hilBusy: false, hilError: String(e) });
+    }
+  },
+
+  pauseHilSession: async (reason) => {
+    const taskId = get().hilTaskId;
+    if (!taskId) return;
+    set({ hilBusy: true });
+    try {
+      const state = await apiTransitionHilSession({
+        taskId,
+        action: "pause",
+        reason: reason ?? "editor: 用户手动暂停",
+        cwd: get().hilCwd,
+      });
+      set({ hilSession: state, hilBusy: false });
+    } catch (e) {
+      set({ hilBusy: false, hilError: String(e) });
+    }
+  },
+
+  resumeHilSession: async (roleId, message) => {
+    const taskId = get().hilTaskId;
+    if (!taskId) return;
+    set({ hilBusy: true });
+    try {
+      const state = await apiTransitionHilSession({
+        taskId,
+        action: "resume",
+        roleId,
+        message: message ?? null,
+        cwd: get().hilCwd,
+      });
+      set({ hilSession: state, hilBusy: false, hilEditingMessage: null });
+    } catch (e) {
+      set({ hilBusy: false, hilError: String(e) });
+    }
+  },
+
+  injectToHilRole: async (roleId, message) => {
+    const taskId = get().hilTaskId;
+    if (!taskId) return;
+    set({ hilBusy: true });
+    try {
+      const state = await apiInjectHilMessage({
+        taskId,
+        roleId,
+        message,
+        cwd: get().hilCwd,
+      });
+      set({ hilSession: state, hilBusy: false });
+    } catch (e) {
+      set({ hilBusy: false, hilError: String(e) });
+    }
+  },
+
+  sendHilUserMessage: async (roleId, content) => {
+    const taskId = get().hilTaskId;
+    if (!taskId) return;
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    set({ hilBusy: true });
+    try {
+      const state = await apiSendHilMessage({
+        taskId,
+        roleId,
+        content: trimmed,
+        isUser: true,
+        cwd: get().hilCwd,
+      });
+      set({ hilSession: state, hilBusy: false });
+    } catch (e) {
+      set({ hilBusy: false, hilError: String(e) });
+    }
+  },
+
+  editHilMessageAction: async (roleId, messageIndex, action, newContent) => {
+    const taskId = get().hilTaskId;
+    if (!taskId) return;
+    set({ hilBusy: true });
+    try {
+      const state = await apiEditHilMessage({
+        taskId,
+        roleId,
+        messageIndex,
+        action,
+        newContent: newContent ?? null,
+        cwd: get().hilCwd,
+      });
+      set({ hilSession: state, hilBusy: false, hilEditingMessage: null });
+    } catch (e) {
+      set({ hilBusy: false, hilError: String(e) });
+    }
+  },
+
+  abortHilSession: async () => {
+    const taskId = get().hilTaskId;
+    if (!taskId) return;
+    set({ hilBusy: true });
+    try {
+      const state = await apiTransitionHilSession({
+        taskId,
+        action: "abort",
+        cwd: get().hilCwd,
+      });
+      set({ hilSession: state, hilBusy: false });
+    } catch (e) {
+      set({ hilBusy: false, hilError: String(e) });
+    }
+  },
+
+  loadHilSessions: async () => {
+    try {
+      const list = await apiListHilSessions(get().hilCwd);
+      set({ hilSessionList: list });
+    } catch (e) {
+      set({ hilError: String(e) });
+    }
+  },
+
+  loadSessionList: async () => {
+    set({ sessionListLoading: true });
+    try {
+      const list = await apiListSessions();
+      set({ sessionList: list.map(s => ({ ...s, sessionId: s.sessionId })) });
+    } catch (e) {
+      console.error("loadSessionList failed:", e);
+    } finally {
+      set({ sessionListLoading: false });
+    }
+  },
+
+  deleteSession: async (sessionId) => {
+    try {
+      await apiDeleteSession(sessionId);
+      // Refresh the list
+      const list = await apiListSessions();
+      set({ sessionList: list.map(s => ({ ...s, sessionId: s.sessionId })) });
+    } catch (e) {
+      console.error("deleteSession failed:", e);
+    }
+  },
+  openHilSessionJson: async () => {
+    const session = get().hilSession;
+    if (!session) return;
+    try {
+      const file = await openFile(session.sessionJsonPath);
+      useEditorStore.getState().openFileOrSwitch(file);
+    } catch (e) {
+      set({ hilError: String(e) });
+    }
+  },
+
+  openHilPlanMd: async () => {
+    const session = get().hilSession;
+    if (!session) return;
+    // The plan lives at `<worktree>/plan.md` per WorktreeSpec.
+    const planPath = `${session.worktreeRoot.replace(/[\\/]+$/, "")}/plan.md`;
+    try {
+      const file = await openFile(planPath);
+      useEditorStore.getState().openFileOrSwitch(file);
+    } catch (e) {
+      set({ hilError: String(e) });
+    }
+  },
+
+  beginHilEditMessage: (roleId, messageIndex, initialContent) => {
+    set({
+      hilEditingMessage: { roleId, messageIndex, draft: initialContent },
+    });
+  },
+
+  updateHilEditDraft: (draft) => {
+    const cur = get().hilEditingMessage;
+    if (!cur) return;
+    set({ hilEditingMessage: { ...cur, draft } });
+  },
+
+  commitHilEditMessage: async () => {
+    const cur = get().hilEditingMessage;
+    if (!cur) return;
+    await get().editHilMessageAction(
+      cur.roleId,
+      cur.messageIndex,
+      "edit",
+      cur.draft,
+    );
+  },
+
+  cancelHilEditMessage: () => set({ hilEditingMessage: null }),
 }));

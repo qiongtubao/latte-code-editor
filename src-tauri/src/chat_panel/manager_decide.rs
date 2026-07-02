@@ -36,7 +36,7 @@ use super::types::{ManagerAction, ManagerSessionState, StartDiscussionRequest};
 /// schema; we only inject runtime state here.
 ///
 /// Format (≈ 400 Chinese chars typical):
-/// ```
+/// ```text
 /// 话题：{topic}
 ///
 /// 可用 worker 候选池：{candidates}

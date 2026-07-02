@@ -420,3 +420,321 @@ pub struct ManagerStatus {
     /// Timestamp of the most recent turn. 0 if no turns yet.
     pub last_step_at_ms: u64,
 }
+
+
+// ─── HIL (Human-In-Loop) Blackboard session ─────────────────────
+//
+// Tauri-side projection of `latte_agent_core::session::SessionRecord`.
+// The editor frontend edits messages in this shape and posts them back
+// through `chat_hil_edit_message`. The backend re-uses the agent-core
+// `SessionManager` for atomic persistence (write-tmp + rename) so the
+// on-disk JSON is always the source of truth.
+
+/// One message in a role's history. Mirrors
+/// `latte_ai::models::Message` but with camelCase serde so the JSON
+/// is human-editable (the spec calls this out for "外科手术式
+/// 回滚"). `index` is the position in the role's history; the editor
+/// uses it as the row id for in-place edits.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HilMessage {
+    pub index: usize,
+    pub role: String,
+    pub content: String,
+    pub timestamp: Option<String>,
+}
+
+/// One role's full history. The frontend renders this as an
+/// editable transcript (each row can be edited in place or deleted).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HilRoleHistory {
+    pub role_id: String,
+    pub messages: Vec<HilMessage>,
+}
+
+/// Full HIL session snapshot — what `chat_hil_get_state` returns and
+/// what the editor renders. Mirrors the JSON the `SessionManager`
+/// writes under `.latte/sessions/<id>.json` so an operator can
+/// hand-edit the file while the session is paused.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HilSessionState {
+    pub session_id: String,
+    pub task_id: String,
+    /// "created" | "running" | "paused" | "resumed" | "done" | "failed"
+    pub state: String,
+    pub plan_md: String,
+    pub active_checkpoint_id: u32,
+    pub current_turn: u32,
+    pub roles: Vec<HilRoleHistory>,
+    pub paused_at: Option<String>,
+    pub pause_reason: Option<String>,
+    pub started_at: String,
+    pub updated_at: String,
+    pub session_json_path: String,
+    pub worktree_root: String,
+}
+
+/// Request to start a new HIL session. `cwd` defaults to the active
+/// workspace; if the cwd is not a git repo the backend returns a
+/// friendly error. `roles` defaults to `["manager"]` when empty.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HilStartRequest {
+    pub task_id: String,
+    pub initial_prompt: String,
+    #[serde(default)]
+    pub roles: Vec<String>,
+    pub cwd: Option<String>,
+}
+
+/// Request to append a new message to a role's history (the regular
+/// "send" path). The backend stamps it with `now` and persists.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HilSendRequest {
+    pub task_id: String,
+    pub role_id: String,
+    pub content: String,
+    /// `true` → message attributed to the human user (default).
+    /// `false` → attributed to assistant, for pre-populating a role
+    /// with example turns.
+    #[serde(default = "hil_default_true")]
+    pub is_user: bool,
+    pub cwd: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HilEditRequest {
+    pub task_id: String,
+    pub role_id: String,
+    pub message_index: usize,
+    pub action: String,
+    pub new_content: Option<String>,
+    pub cwd: Option<String>,
+}
+
+/// Request to inject a message targeted at one role from outside the
+/// REPL. The CLI equivalent is
+/// `latte-agent inject --role <id> --message <m>`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HilInjectRequest {
+    pub task_id: String,
+    pub role_id: String,
+    pub message: String,
+    pub cwd: Option<String>,
+}
+
+/// Pause / resume / abort share the same payload — only `action`
+/// differs. The frontend posts one of these and the backend routes on
+/// `action`. Optional fields are only consumed by the matching
+/// handler.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HilTransitionRequest {
+    pub task_id: String,
+    pub action: String,
+    pub reason: Option<String>,
+    pub role_id: Option<String>,
+    pub message: Option<String>,
+    pub cwd: Option<String>,
+}
+
+/// Resume + send in one call. The editor uses this when the user
+/// presses "继续" with a typed message; it's equivalent to
+/// `latte-agent resume --task-id X --message "..."`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HilContinueRequest {
+    pub task_id: String,
+    pub role_id: String,
+    pub content: String,
+    pub cwd: Option<String>,
+}
+
+fn hil_default_true() -> bool {
+    true
+}
+// ─── ChatController Tauri adapter types ────────────────────────────
+//
+// Serializable versions of `latte_agent_core::controller::*` types
+// that the Tauri IPC layer can deserialize from the frontend, plus
+// the event payload emitted via `chat:controller_event`.
+
+/// Request to spawn a new ChatController session.
+/// The Tauri command will construct the full `ControllerConfig` from
+/// these serializable fields plus backend-built AgentConfig/ModelResolver.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControllerSpawnRequest {
+    /// Session id for this controller. Must be unique.
+    pub session_id: String,
+    /// `Some(id)` → multi-role HIL mode on existing worktree.
+    /// `None` → single-role mode (no SessionManager).
+    pub task_id: Option<String>,
+    /// Role IDs. `len() == 1` → single-role, `> 1` → multi-role HIL.
+    pub roles: Vec<String>,
+    /// Initial prompt (used only when creating a fresh HIL session).
+    pub initial_prompt: Option<String>,
+    /// Maximum rounds (multi-role mode). Default 10.
+    #[serde(default = "ctrl_default_max_rounds")]
+    pub max_rounds: u32,
+    /// Session token budget for Supervisor. 0 = disabled.
+    #[serde(default)]
+    pub session_token_budget: u32,
+    /// Pinned model id (overrides tier-based resolution).
+    pub primary_model_id: Option<String>,
+    /// Initial model tier override.
+    pub initial_tier: Option<String>,
+    /// Current working directory (for worktree resolution).
+    pub cwd: Option<std::path::PathBuf>,
+}
+
+fn ctrl_default_max_rounds() -> u32 {
+    10
+}
+
+/// Kind tag for the `ControllerEventPayload` discriminator.
+/// Maps one-to-one with `ChatEvent` variants.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ControllerEventKind {
+    RoleTurn,
+    Status,
+    Prompt,
+    Paused,
+    Resumed,
+    RoundStarted,
+    RoundEnded,
+    Done,
+    Error,
+    RoleList,
+    ContextCleared,
+    SessionInfo,
+    ToolUse,
+    ToolResult,
+}
+
+impl From<&latte_agent_core::controller::ChatEvent> for ControllerEventKind {
+    fn from(event: &latte_agent_core::controller::ChatEvent) -> Self {
+        use latte_agent_core::controller::ChatEvent;
+        match event {
+            ChatEvent::RoleTurn { .. } => Self::RoleTurn,
+            ChatEvent::Status { .. } => Self::Status,
+            ChatEvent::Prompt { .. } => Self::Prompt,
+            ChatEvent::Paused { .. } => Self::Paused,
+            ChatEvent::Resumed => Self::Resumed,
+            ChatEvent::RoundStarted { .. } => Self::RoundStarted,
+            ChatEvent::RoundEnded { .. } => Self::RoundEnded,
+            ChatEvent::Done => Self::Done,
+            ChatEvent::Error { .. } => Self::Error,
+            ChatEvent::RoleList { .. } => Self::RoleList,
+            ChatEvent::ContextCleared => Self::ContextCleared,
+            ChatEvent::SessionInfo { .. } => Self::SessionInfo,
+            ChatEvent::ToolUse { .. } => Self::ToolUse,
+            ChatEvent::ToolResult { .. } => Self::ToolResult,
+        }
+    }
+}
+
+/// Payload emitted via `chat:controller_event` for each ChatEvent.
+/// Wraps the original event alongside a `kind` tag so the frontend can
+/// route without parsing the full payload.
+///
+/// NOTE: Instead of `#[serde(flatten)]` over the enum (which produces a
+/// nested `{Error: {message}}` shape), we implement a custom serializer
+/// that extracts the variant's fields into the parent object.
+#[derive(Clone, Debug)]
+pub struct ControllerEventPayload {
+    /// Session id this event belongs to.
+    pub session_id: String,
+    /// Discriminator tag for lightweight frontend routing.
+    pub kind: ControllerEventKind,
+    /// The inner event data (fields depend on kind).
+    pub event: latte_agent_core::controller::ChatEvent,
+}
+
+impl serde::Serialize for ControllerEventPayload {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(None)?;
+        // session_id (camelCase)
+        map.serialize_entry("sessionId", &self.session_id)?;
+        // kind (camelCase via ControllerEventKind's Serialize)
+        let kind_str = match self.kind {
+            ControllerEventKind::RoleTurn => "roleTurn",
+            ControllerEventKind::Status => "status",
+            ControllerEventKind::Prompt => "prompt",
+            ControllerEventKind::Paused => "paused",
+            ControllerEventKind::Resumed => "resumed",
+            ControllerEventKind::RoundStarted => "roundStarted",
+            ControllerEventKind::RoundEnded => "roundEnded",
+            ControllerEventKind::Done => "done",
+            ControllerEventKind::Error => "error",
+            ControllerEventKind::RoleList => "roleList",
+            ControllerEventKind::ContextCleared => "contextCleared",
+            ControllerEventKind::SessionInfo => "sessionInfo",
+            ControllerEventKind::ToolUse => "toolUse",
+            ControllerEventKind::ToolResult => "toolResult",
+        };
+        map.serialize_entry("kind", kind_str)?;
+        // Flatten the variant fields
+        use latte_agent_core::controller::ChatEvent;
+        match &self.event {
+            ChatEvent::RoleTurn { role_id, content, is_complete } => {
+                map.serialize_entry("roleId", role_id)?;
+                map.serialize_entry("content", content)?;
+                map.serialize_entry("isComplete", is_complete)?;
+            }
+            ChatEvent::Status { message } => {
+                map.serialize_entry("message", message)?;
+            }
+            ChatEvent::Prompt { icon, role_id, model_id } => {
+                map.serialize_entry("icon", icon)?;
+                map.serialize_entry("roleId", role_id)?;
+                map.serialize_entry("modelId", model_id)?;
+            }
+            ChatEvent::Paused { reason } => {
+                map.serialize_entry("reason", reason)?;
+            }
+            ChatEvent::Resumed => {}
+            ChatEvent::RoundStarted { round } => {
+                map.serialize_entry("round", round)?;
+            }
+            ChatEvent::RoundEnded { round } => {
+                map.serialize_entry("round", round)?;
+            }
+            ChatEvent::Done => {}
+            ChatEvent::Error { message } => {
+                map.serialize_entry("message", message)?;
+            }
+            ChatEvent::RoleList { roles } => {
+                map.serialize_entry("roles", roles)?;
+            }
+            ChatEvent::ContextCleared => {}
+            ChatEvent::SessionInfo { task_id, state, turn, roles } => {
+                map.serialize_entry("taskId", task_id)?;
+                map.serialize_entry("state", state)?;
+                map.serialize_entry("turn", turn)?;
+                map.serialize_entry("roles", roles)?;
+            }
+            ChatEvent::ToolUse { role_id, tool_name, args } => {
+                map.serialize_entry("roleId", role_id)?;
+                map.serialize_entry("toolName", tool_name)?;
+                map.serialize_entry("args", args)?;
+            }
+            ChatEvent::ToolResult { tool_name, result, role_id } => {
+                map.serialize_entry("roleId", role_id)?;
+                map.serialize_entry("toolName", tool_name)?;
+                map.serialize_entry("result", result)?;
+            }
+        }
+        map.end()
+    }
+}

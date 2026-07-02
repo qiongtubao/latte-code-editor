@@ -152,14 +152,7 @@ export async function startDiscussion(
   return invoke<number>("chat_start_discussion", { request });
 }
 
-/**
- * Continue discussion with follow-up
- */
-export async function continueDiscussion(
-  request: ContinueDiscussionRequest
-): Promise<void> {
-  return invoke("chat_continue", { request });
-}
+
 
 /**
  * Request to launch a planner-driven swarm. `name` matches a
@@ -511,4 +504,332 @@ export async function listWorkflowsFull(): Promise<WorkflowPayload[]> {
  */
 export async function resetRolesToDefaults(): Promise<RoleConfigResponse> {
   return invoke<RoleConfigResponse>("chat_reset_roles_to_defaults");
+}
+
+// ─── HIL (Human-In-Loop) Blackboard session ─────────────────────
+//
+// Tauri bindings for the editable, pausable chat session backed by
+// `latte-rs-agents/latte-agent-core::session::SessionManager`. The
+// backend stores every change atomically to
+// `<worktree>/.latte/sessions/<id>.json`; the editor reads that
+// file (via `chat_hil_get_state`) and edits messages in place.
+// The "可修改聊天内容继续" requirement maps to
+// `editHilMessage` + `continueHilSession`.
+
+/** One message in a role's history. Mirrors
+ *  `latte_agent_core::session::RoleHistory.messages` projected to
+ *  the editor. `index` is the position in the role's history
+ *  (0-based) — the editor uses it as the row id for in-place
+ *  edits. */
+export interface HilMessage {
+  index: number;
+  role: "user" | "assistant" | "system" | string;
+  content: string;
+  timestamp?: string | null;
+}
+
+/** One role's full history. The editor renders this as an
+ *  editable transcript. */
+export interface HilRoleHistory {
+  roleId: string;
+  messages: HilMessage[];
+}
+
+/** Full HIL session snapshot — what `chat_hil_get_state` returns
+ *  and what the editor renders. Mirrors the JSON written by
+ *  `SessionManager` to `.latte/sessions/<id>.json`. */
+export interface HilSessionState {
+  sessionId: string;
+  taskId: string;
+  /** "created" | "running" | "paused" | "resumed" | "done" | "failed". */
+  state: string;
+  planMd: string;
+  activeCheckpointId: number;
+  currentTurn: number;
+  roles: HilRoleHistory[];
+  pausedAt?: string | null;
+  pauseReason?: string | null;
+  startedAt: string;
+  updatedAt: string;
+  /** Absolute path to the on-disk JSON; the editor renders it as
+   *  a "在编辑器中打开" affordance. */
+  sessionJsonPath: string;
+  worktreeRoot: string;
+}
+
+/** Compact summary used by the "open existing" dropdown. */
+export interface HilSessionSummary {
+  taskId: string;
+  sessionId: string;
+  state: string;
+  updatedAt: string;
+  pausedAt?: string | null;
+  worktreeRoot: string;
+}
+
+/** Start a new HIL session. Creates the worktree, writes
+ *  `plan.md`, instantiates a `SessionManager`, and returns the
+ *  initial snapshot. */
+export async function startHilSession(request: {
+  taskId: string;
+  initialPrompt: string;
+  roles?: string[];
+  cwd?: string | null;
+}): Promise<HilSessionState> {
+  return invoke<HilSessionState>("chat_hil_start", { request });
+}
+
+/** Append a message to a role's history. */
+export async function sendHilMessage(request: {
+  taskId: string;
+  roleId: string;
+  content: string;
+  isUser?: boolean;
+  cwd?: string | null;
+}): Promise<HilSessionState> {
+  return invoke<HilSessionState>("chat_hil_send", { request });
+}
+
+/** Edit or delete one message in a role's history. The
+ *  "可修改聊天内容继续" affordance — while the session is
+ *  paused, the user can fix any message, then press 继续. */
+export async function editHilMessage(request: {
+  taskId: string;
+  roleId: string;
+  messageIndex: number;
+  /** "edit" | "delete". */
+  action: "edit" | "delete";
+  newContent?: string | null;
+  cwd?: string | null;
+}): Promise<HilSessionState> {
+  return invoke<HilSessionState>("chat_hil_edit_message", { request });
+}
+
+/** Inject a message targeted at one role from outside the REPL. */
+export async function injectHilMessage(request: {
+  taskId: string;
+  roleId: string;
+  message: string;
+  cwd?: string | null;
+}): Promise<HilSessionState> {
+  return invoke<HilSessionState>("chat_hil_inject", { request });
+}
+
+/** Resume + send in one call. Empty content just resumes. */
+export async function continueHilSession(request: {
+  taskId: string;
+  roleId: string;
+  content: string;
+  cwd?: string | null;
+}): Promise<HilSessionState> {
+  return invoke<HilSessionState>("chat_hil_continue", { request });
+}
+
+/** Pause / resume / abort. `action` is
+ *  `"pause" | "resume" | "abort"`. For `pause` `reason` is
+ *  optional; for `resume` `roleId` + `message` are optional
+ *  (inline injection). */
+export async function transitionHilSession(request: {
+  taskId: string;
+ action: "pause" | "resume" | "abort";
+  reason?: string | null;
+  roleId?: string | null;
+  message?: string | null;
+  cwd?: string | null;
+  sessionId?: string | null;
+}): Promise<HilSessionState> {
+  return invoke<HilSessionState>("chat_hil_transition", { request });
+}
+
+/** Fetch a session's full state. Returns `null` if no JSON
+ *  exists for the task_id. */
+export async function getHilState(
+  taskId: string,
+  cwd?: string | null,
+): Promise<HilSessionState | null> {
+  return invoke<HilSessionState | null>("chat_hil_get_state", {
+    taskId,
+    cwd: cwd ?? null,
+  });
+}
+
+/** List all on-disk HIL sessions. */
+export async function listHilSessions(
+  cwd?: string | null,
+): Promise<HilSessionSummary[]> {
+  return invoke<HilSessionSummary[]>("chat_hil_list_sessions", {
+    cwd: cwd ?? null,
+  });
+}
+
+// ─── Single-role chat stream (latte-agent chat CLI in HTML) ─────────
+
+/** One chat message in the history sent from the frontend. */
+export interface ChatHistoryEntry {
+  role: string;
+  content: string;
+}
+
+/** Payload for the `chat_stream` command. */
+export interface StreamRequest {
+  roleId: string;
+  content: string;
+  /** Previous conversation turns. */
+  history: ChatHistoryEntry[];
+}
+
+/** Response from a single-role chat turn. */
+export interface StreamReply {
+  role_id: string;
+  content: string;
+}
+
+/** Send one chat turn and return the model's full response. */
+export async function chatStream(
+  request: StreamRequest
+): Promise<StreamReply> {
+  return invoke<StreamReply>("chat_stream", { request });
+}
+
+// ─── ChatController (single-role / multi-role event-driven) ────────
+//
+// Lightweight API that wraps the Tauri `chat_controller_*` commands.
+// Events stream via `chat:controller_event` — subscribe with `listen`.
+// Each session is identified by a client-chosen `sessionId` string.
+// Unlike manager/swarm modes, this does NOT use numeric session IDs
+// from the backend — the caller picks a unique string.
+
+/** Request to spawn a ChatController session. */
+export interface ControllerSpawnRequest {
+  sessionId: string;
+  taskId?: string | null;
+  roles: string[];
+  initialPrompt?: string | null;
+  maxRounds?: number;
+  sessionTokenBudget?: number;
+  primaryModelId?: string | null;
+  initialTier?: string | null;
+  cwd?: string | null;
+}
+
+/** Kind tag discriminator for ControllerEventPayload. */
+export type ControllerEventKind =
+  | "roleTurn"
+  | "status"
+  | "prompt"
+  | "paused"
+  | "resumed"
+  | "roundStarted"
+  | "roundEnded"
+  | "done"
+  | "error"
+  | "roleList"
+  | "contextCleared"
+  | "sessionInfo"
+  | "toolUse"
+  | "toolResult";
+
+/** A single event from the ChatController driver. */
+export interface ControllerEventPayload {
+  sessionId: string;
+  kind: ControllerEventKind;
+  // The raw ChatEvent JSON — fields depend on `kind`.
+  // Frontend should switch on `kind` to access typed fields.
+  [key: string]: unknown;
+}
+
+/** Spawn a new ChatController session. */
+export async function spawnController(
+  request: ControllerSpawnRequest
+): Promise<void> {
+  return invoke("chat_controller_spawn", { request });
+}
+
+/** Submit text input to an active controller session. */
+export async function submitControllerInput(
+  sessionId: string,
+  text: string
+): Promise<void> {
+  return invoke("chat_controller_submit", { sessionId, text });
+}
+
+/** Pause an active controller session. */
+export async function pauseController(sessionId: string): Promise<void> {
+  return invoke("chat_controller_pause", { sessionId });
+}
+
+/** Resume a paused controller session. */
+export async function resumeController(sessionId: string): Promise<void> {
+  return invoke("chat_controller_resume", { sessionId });
+}
+
+/** Abort an active controller session. */
+export async function abortController(sessionId: string): Promise<void> {
+  return invoke("chat_controller_abort", { sessionId });
+}
+
+// ─── Unified SessionStore (persistent sessions) ─────────────────────
+//
+// Manages all chat sessions in `~/.latte/chat-sessions/*.json`.
+// Provides listing, viewing, editing, and deleting.
+// Sessions are auto-persisted when using `spawnController`.
+
+export interface StoredMessage {
+  type: "user" | "assistant" | "tool_call" | "tool_result" | "system_event" | "round_start" | "round_end" | "paused" | "resumed";
+  content?: string;
+  role_id?: string;
+  tool_name?: string;
+  args?: string;
+  result?: string;
+  event_type?: string;
+  message?: string;
+  round?: number;
+  reason?: string;
+  timestamp: string;
+  tokens?: number;
+}
+
+export interface SessionSummary {
+  sessionId: string;
+  state: string;
+  chatType: string;
+  roleIds: string[];
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+  sizeBytes: number;
+}
+
+export interface StoredSession {
+  sessionId: string;
+  state: string;
+  chatType: string;
+  roleIds: string[];
+  messages: StoredMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** List all persisted chat sessions (summary only, no messages). */
+export async function listSessions(): Promise<SessionSummary[]> {
+  return invoke<SessionSummary[]>("chat_session_list");
+}
+
+/** Get a single session by id (includes full message list). */
+export async function getSession(sessionId: string): Promise<StoredSession> {
+  return invoke<StoredSession>("chat_session_get", { sessionId });
+}
+
+/** Delete a session by id. */
+export async function deleteSession(sessionId: string): Promise<void> {
+  return invoke("chat_session_delete", { sessionId });
+}
+
+/** Edit a message in a session's history. Only user/assistant messages can be edited. */
+export async function editSessionMessage(
+  sessionId: string,
+  index: number,
+  newContent: string,
+): Promise<void> {
+  return invoke("chat_session_edit_message", { sessionId, index, newContent });
 }
