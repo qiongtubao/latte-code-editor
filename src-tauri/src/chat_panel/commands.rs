@@ -386,12 +386,22 @@ pub async fn chat_start_discussion(
     registry: State<'_, Arc<WorkspaceRegistry>>,
     request: StartDiscussionRequest,
 ) -> Result<usize, String> {
-    let project_root = if let Some(workspace_id) = registry.active_for_window(window.label()).await {
-        registry.project_root(&workspace_id).await
+    let workspace_id = match request.workspace_id.clone() {
+        Some(id) => Some(id),
+        None => registry.active_for_window(window.label()).await,
+    };
+    tracing::info!(
+        event = "chat_start_discussion.workspace_resolve",
+        request_workspace_id = ?request.workspace_id,
+        resolved_workspace_id = ?workspace_id,
+        window_label = %window.label()
+    );
+    let project_root = if let Some(workspace_id) = workspace_id.as_ref() {
+        registry.project_root(workspace_id).await
     } else {
         None
     };
-    super::controller_runtime::start(app, request, project_root).await
+    super::controller_runtime::start(app, request, project_root, workspace_id).await
 }
 
 /// Send a follow-up message
@@ -406,6 +416,11 @@ pub async fn chat_continue(
 #[tauri::command]
 pub async fn chat_cancel(session_id: usize) -> Result<(), String> {
     super::controller_runtime::cancel(session_id).await
+}
+
+#[tauri::command]
+pub async fn chat_cancel_workspace(workspace_id: String) -> Result<(), String> {
+    super::controller_runtime::cancel_workspace(&workspace_id).await
 }
 
 /// Validate a workflow id.

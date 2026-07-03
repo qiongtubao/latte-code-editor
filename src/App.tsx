@@ -19,7 +19,8 @@ import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
 import { useChatStore } from "./hooks/useChatStore";
-import type { ChatEvent } from "./api/chat";
+import type { ChatEvent, WorkspaceChatEvent } from "./api/chat";
+import { unwrapWorkspaceEvent } from "./api/chat";
 import { useLspStore } from "./hooks/useLspStore";
 import { LspManagerPanel } from "./components/LspManagerPanel";
 import { DebugBar } from "./components/DebugBar";
@@ -88,8 +89,21 @@ function App() {
   // Listen for controller chat events from the chat panel.
   useEffect(() => {
     const unlistens: Array<Promise<() => void>> = [
-      listen<ChatEvent>("chat:event", (e) => {
-        applyChatEvent(e.payload);
+      listen<unknown>("chat:event", (e) => {
+        const { workspaceId, event } = unwrapWorkspaceEvent<ChatEvent>(
+          e.payload as unknown as ChatEvent | WorkspaceChatEvent<ChatEvent>,
+        );
+        const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+        // Debug: confirm event routing works.
+        // Keep lightweight so it won't spam too aggressively in normal runs.
+        console.debug("latte:chat:event", {
+          workspaceId,
+          activeWorkspaceId,
+          matchesActive: workspaceId != null && workspaceId === activeWorkspaceId,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          kind: Object.keys(event as any)[0] ?? null,
+        });
+        applyChatEvent(event, workspaceId);
       }),
     ];
     return () => {

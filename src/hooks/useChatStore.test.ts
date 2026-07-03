@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { RoleConfigResponse, WorkflowPayload } from "../api/chat";
 import { useChatStore } from "./useChatStore";
+import { defaultUiState, useWorkspaceStore } from "./useWorkspaceStore";
 
 // 拦截 Tauri invoke；每个测试在 beforeEach 里 reset。
 const invokeMock = vi.fn();
@@ -44,6 +45,205 @@ const baseConfig: RoleConfigResponse = {
   ],
 };
 
+function workspaceMeta(name: string, root: string) {
+  return {
+    name,
+    project_root: root,
+    open_tabs: [],
+    active_tab: null,
+    ui_state: defaultUiState(),
+    last_used_at: 1,
+  };
+}
+
+describe("useChatStore — workspace isolation", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useWorkspaceStore.setState({ workspaces: {}, activeWorkspaceId: null, hydrated: false });
+    useWorkspaceStore.setState({
+      workspaces: {
+        "ws-a": workspaceMeta("a", "/a"),
+        "ws-b": workspaceMeta("b", "/b"),
+      },
+      activeWorkspaceId: "ws-a",
+      hydrated: true,
+    });
+    useChatStore.setState({
+      byWorkspace: {},
+      ...{
+        mode: "discuss",
+        messages: [],
+        activityEvents: [],
+        activeRoles: {},
+        roleDisplay: {},
+        status: "idle",
+        sessionId: null,
+        swarmSessionId: null,
+        activeSwarmId: null,
+        swarmPlan: [],
+        swarmFiles: [],
+        swarmSummary: null,
+        errorMessage: null,
+        lastUserTopic: null,
+        selectedWorkflow: "discuss",
+      },
+    });
+  });
+
+  it("routes chat events to the owning workspace", () => {
+    useChatStore.getState().applyChatEvent({
+      RoleTurn: {
+        role_id: "manager",
+        content: "hello from a",
+        is_complete: true,
+      },
+    }, "ws-a");
+    useChatStore.getState().applyChatEvent({
+      RoleTurn: {
+        role_id: "manager",
+        content: "hello from b",
+        is_complete: true,
+      },
+    }, "ws-b");
+
+    expect(useChatStore.getState().messages.map((m) => m.content)).toEqual([
+      "hello from a",
+    ]);
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-b" });
+    expect(useChatStore.getState().messages.map((m) => m.content)).toEqual([
+      "hello from b",
+    ]);
+  });
+
+  it("hydrates persisted chat and resets stale running status", () => {
+    useWorkspaceStore.setState({
+      workspaces: {
+        "ws-a": {
+          ...workspaceMeta("a", "/a"),
+          chat_state: {
+            mode: "manager",
+            messages: [{
+              id: "m1",
+              role: "user",
+              content: "persisted",
+              timestamp: 1,
+            }],
+            activityEvents: [],
+            status: "running",
+            selectedWorkflow: "manager_default",
+            activeSwarmId: null,
+            swarmPlan: [],
+            swarmFiles: [],
+            swarmSummary: null,
+            errorMessage: null,
+            lastUserTopic: "persisted",
+          },
+        },
+      },
+      activeWorkspaceId: "ws-a",
+      hydrated: true,
+    });
+
+    expect(useChatStore.getState().messages.map((m) => m.content)).toEqual([
+      "persisted",
+    ]);
+    expect(useChatStore.getState().mode).toBe("manager");
+    expect(useChatStore.getState().selectedWorkflow).toBe("manager_default");
+    expect(useChatStore.getState().status).toBe("idle");
+    expect(useChatStore.getState().sessionId).toBe(null);
+  });
+
+  it("evicts only the requested workspace chat state", () => {
+    useChatStore.getState().applyChatEvent({
+      RoleTurn: {
+        role_id: "manager",
+        content: "a",
+        is_complete: true,
+      },
+    }, "ws-a");
+    useChatStore.getState().applyChatEvent({
+      RoleTurn: {
+        role_id: "manager",
+        content: "b",
+        is_complete: true,
+      },
+    }, "ws-b");
+
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-b" });
+    useChatStore.getState().evictWorkspace("ws-a");
+
+    expect(useChatStore.getState().byWorkspace["ws-a"]).toBeUndefined();
+    expect(useChatStore.getState().messages.map((m) => m.content)).toEqual(["b"]);
+  });
+});
+
+describe("useChatStore — restartDiscussion", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useWorkspaceStore.setState({
+      workspaces: { "ws-a": workspaceMeta("a", "/a") },
+      activeWorkspaceId: "ws-a",
+      hydrated: true,
+    });
+    useChatStore.setState({
+      byWorkspace: {
+        "ws-a": {
+          mode: "manager",
+          messages: [
+            {
+              id: "m-prev",
+              role: "user",
+              content: "prev",
+              timestamp: 1,
+            },
+          ],
+          activityEvents: [],
+          activeRoles: {},
+          roleDisplay: {},
+          status: "running",
+          sessionId: 123,
+          swarmSessionId: null,
+          activeSwarmId: null,
+          swarmPlan: [],
+          swarmFiles: [],
+          swarmSummary: null,
+          errorMessage: null,
+          lastUserTopic: "prev",
+          selectedWorkflow: "manager_default",
+        } as any,
+      },
+      ...{
+        mode: "manager",
+        messages: [
+          { id: "m-prev", role: "user", content: "prev", timestamp: 1 },
+        ],
+        activityEvents: [],
+        activeRoles: {},
+        roleDisplay: {},
+        status: "running",
+        sessionId: 123,
+        swarmSessionId: null,
+        activeSwarmId: null,
+        swarmPlan: [],
+        swarmFiles: [],
+        swarmSummary: null,
+        errorMessage: null,
+        lastUserTopic: "prev",
+        selectedWorkflow: "manager_default",
+      },
+    });
+  });
+
+  it("keeps messages but resets runtime session fields", () => {
+    useChatStore.getState().restartDiscussion();
+    const s = useChatStore.getState();
+    expect(s.messages.map((m) => m.content)).toEqual(["prev"]);
+    expect(s.status).toBe("idle");
+    expect(s.sessionId).toBe(null);
+    expect(s.lastUserTopic).toBe(null);
+  });
+});
+
 function workflowPayload(
   payload: Omit<
     WorkflowPayload,
@@ -68,8 +268,10 @@ function workflowPayload(
 describe("useChatStore — 角色模型优先级 (chain)", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    useWorkspaceStore.setState({ workspaces: {}, activeWorkspaceId: null, hydrated: false });
     // Reset the store to a known empty state before each test.
     useChatStore.setState({
+      byWorkspace: {},
       messages: [],
       status: "idle",
       sessionId: null,
@@ -183,7 +385,9 @@ describe("useChatStore — 角色模型优先级 (chain)", () => {
 describe("useChatStore — controller ChatEvent display", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    useWorkspaceStore.setState({ workspaces: {}, activeWorkspaceId: null, hydrated: false });
     useChatStore.setState({
+      byWorkspace: {},
       mode: "discuss",
       messages: [],
       activityEvents: [],
@@ -301,6 +505,20 @@ describe("useChatStore — controller ChatEvent display", () => {
       "tool_use",
     ]);
   });
+
+  it("strips <toolcall>...</toolcall> protocol blocks", () => {
+    useChatStore.getState().applyChatEvent({
+      RoleTurn: {
+        role_id: "manager",
+        content:
+          '我先查看项目。\n<toolcall>search {"pattern":"zadd","maxresults":30}</toolcall>\n{"type":"assistant_message","content":"看完了"}',
+        is_complete: true,
+      },
+    });
+
+    const message = useChatStore.getState().messages[0];
+    expect(message.content).toBe("我先查看项目。\n看完了");
+  });
 });
 
 // ─── Workflow editor tests ────────────────────────────────────────
@@ -312,7 +530,9 @@ describe("useChatStore — controller ChatEvent display", () => {
 describe("useChatStore — workflow editor", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    useWorkspaceStore.setState({ workspaces: {}, activeWorkspaceId: null, hydrated: false });
     useChatStore.setState({
+      byWorkspace: {},
       mode: "discuss",
       messages: [],
       status: "idle",
@@ -566,7 +786,9 @@ describe("useChatStore — workflow editor", () => {
 describe("useChatStore — resetRolesToDefaults", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    useWorkspaceStore.setState({ workspaces: {}, activeWorkspaceId: null, hydrated: false });
     useChatStore.setState({
+      byWorkspace: {},
       mode: "discuss",
       messages: [],
       status: "idle",
@@ -698,7 +920,9 @@ describe("useChatStore — resetRolesToDefaults", () => {
 describe("useChatStore — retry path", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    useWorkspaceStore.setState({ workspaces: {}, activeWorkspaceId: null, hydrated: false });
     useChatStore.setState({
+      byWorkspace: {},
       mode: "discuss",
       messages: [],
       status: "idle",

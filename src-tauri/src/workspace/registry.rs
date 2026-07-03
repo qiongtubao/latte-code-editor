@@ -14,6 +14,71 @@ use crate::editor::buffer::BufferManager;
 /// workspace 唯一标识（字符串）。来源：项目根路径的 hash，保证确定性 + 唯一性。
 pub type WorkspaceId = String;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedChatMessage {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub timestamp: u64,
+    #[serde(default)]
+    pub agent_icon: Option<String>,
+    #[serde(default)]
+    pub agent_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedChatActivityEvent {
+    pub id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub role_id: Option<String>,
+    pub title: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedSwarmStepSpec {
+    pub id: String,
+    pub role: String,
+    pub instruction: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedSwarmFile {
+    pub path: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedWorkspaceChat {
+    pub mode: String,
+    #[serde(default)]
+    pub messages: Vec<PersistedChatMessage>,
+    #[serde(default)]
+    pub activity_events: Vec<PersistedChatActivityEvent>,
+    pub status: String,
+    pub selected_workflow: String,
+    #[serde(default)]
+    pub active_swarm_id: Option<String>,
+    #[serde(default)]
+    pub swarm_plan: Vec<PersistedSwarmStepSpec>,
+    #[serde(default)]
+    pub swarm_files: Vec<PersistedSwarmFile>,
+    #[serde(default)]
+    pub swarm_summary: Option<String>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub last_user_topic: Option<String>,
+}
+
 /// workspace 的可序列化元数据。包含恢复会话所需的全部信息。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkspaceMeta {
@@ -27,6 +92,8 @@ pub struct WorkspaceMeta {
     pub ui_state: UiState,
     #[serde(default)]
     pub last_used_at: u64,
+    #[serde(default)]
+    pub chat_state: Option<PersistedWorkspaceChat>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -363,7 +430,47 @@ mod tests {
             active_tab: None,
             ui_state: UiState::default(),
             last_used_at: 0,
+            chat_state: None,
         }
+    }
+
+    #[test]
+    fn workspace_meta_roundtrips_chat_state() {
+        let meta = WorkspaceMeta {
+            name: "alpha".to_string(),
+            project_root: PathBuf::from("/tmp/alpha"),
+            open_tabs: vec![],
+            active_tab: None,
+            ui_state: UiState::default(),
+            last_used_at: 0,
+            chat_state: Some(PersistedWorkspaceChat {
+                mode: "manager".to_string(),
+                messages: vec![PersistedChatMessage {
+                    id: "m1".to_string(),
+                    role: "user".to_string(),
+                    content: "hello".to_string(),
+                    timestamp: 123,
+                    agent_icon: None,
+                    agent_name: None,
+                }],
+                activity_events: vec![],
+                status: "idle".to_string(),
+                selected_workflow: "manager_default".to_string(),
+                active_swarm_id: None,
+                swarm_plan: vec![],
+                swarm_files: vec![],
+                swarm_summary: None,
+                error_message: None,
+                last_user_topic: Some("hello".to_string()),
+            }),
+        };
+
+        let json = serde_json::to_string(&meta).unwrap();
+        let decoded: WorkspaceMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            decoded.chat_state.unwrap().selected_workflow,
+            "manager_default"
+        );
     }
 
     #[tokio::test]

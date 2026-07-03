@@ -54,6 +54,7 @@ export interface StartDiscussionRequest {
   workflow: string;
   customRoles: string[] | null;
   maxRounds: number | null;
+  workspaceId?: string | null;
 }
 
 export interface ContinueDiscussionRequest {
@@ -87,6 +88,26 @@ export type ChatEvent =
   | { ToolUse: { role_id: string; tool_name: string; args: string } }
   | { ToolResult: { role_id: string; tool_name: string; result: string } }
   | { ToolError: { role_id: string; tool_name: string; error: string } };
+
+export interface WorkspaceChatEvent<T> {
+  workspaceId: string;
+  event: T;
+}
+
+export function unwrapWorkspaceEvent<T>(
+  payload: T | WorkspaceChatEvent<T>,
+): { workspaceId: string | null; event: T } {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "workspaceId" in payload &&
+    "event" in payload
+  ) {
+    const wrapped = payload as WorkspaceChatEvent<T>;
+    return { workspaceId: wrapped.workspaceId, event: wrapped.event };
+  }
+  return { workspaceId: null, event: payload as T };
+}
 
 /**
  * Request to update a role's priority-ordered model chain.
@@ -268,6 +289,10 @@ export async function startSwarm(
  */
 export async function cancelDiscussion(sessionId: number): Promise<void> {
   return invoke("chat_cancel", { sessionId });
+}
+
+export async function cancelWorkspaceDiscussion(workspaceId: string): Promise<void> {
+  return invoke("chat_cancel_workspace", { workspaceId });
 }
 
 // ─── Workflow editor ─────────────────────────────────────────────

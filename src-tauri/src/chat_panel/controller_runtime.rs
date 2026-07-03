@@ -11,22 +11,38 @@ use latte_ai::params::GenerateParams;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
-use super::types::{ContinueDiscussionRequest, StartDiscussionRequest};
+use super::types::{ContinueDiscussionRequest, StartDiscussionRequest, WorkspaceChatEvent};
 
 static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
-static SESSIONS: LazyLock<Mutex<HashMap<usize, Arc<ChatController>>>> =
+struct SessionEntry {
+    controller: Arc<ChatController>,
+    workspace_id: Option<String>,
+}
+
+static SESSIONS: LazyLock<Mutex<HashMap<usize, SessionEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub async fn start(
     app: AppHandle,
     request: StartDiscussionRequest,
     project_root: Option<PathBuf>,
+    workspace_id: Option<String>,
 ) -> Result<usize, String> {
     let cwd = project_root
+        .clone()
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
     let project_agents = cwd.join(".latte").join("agents.d");
     let project_models = cwd.join(".latte").join("models.d");
+    tracing::info!(
+        event = "chat_controller_runtime.start",
+        workspace_id = ?workspace_id,
+        project_root = ?project_root,
+        cwd = ?cwd,
+        project_agents = ?project_agents,
+        project_models = ?project_models,
+        task_id = ?request.topic
+    );
     let (agent_config, resolver) = load_cli_like_agent_config(
         Some(project_agents.as_path()),
         Some(project_models.as_path()),
@@ -56,13 +72,28 @@ pub async fn start(
         .await;
 
     let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
-    SESSIONS.lock().await.insert(session_id, controller.clone());
+    SESSIONS.lock().await.insert(
+        session_id,
+        SessionEntry {
+            controller: controller.clone(),
+            workspace_id: workspace_id.clone(),
+        },
+    );
 
     let app_for_events = app.clone();
+    let workspace_id_for_events = workspace_id.clone();
     tokio::spawn(async move {
         while let Ok(event) = events.recv().await {
             let done = matches!(event, latte_agent_core::controller::ChatEvent::Done);
-            let _ = app_for_events.emit("chat:event", &event);
+            if let Some(workspace_id) = workspace_id_for_events.as_ref() {
+                let payload = WorkspaceChatEvent {
+                    workspace_id: workspace_id.clone(),
+                    event,
+                };
+                let _ = app_for_events.emit("chat:event", &payload);
+            } else {
+                let _ = app_for_events.emit("chat:event", &event);
+            }
             if done {
                 SESSIONS.lock().await.remove(&session_id);
                 break;
@@ -78,7 +109,11 @@ pub async fn start(
 }
 
 pub async fn continue_chat(request: ContinueDiscussionRequest) -> Result<(), String> {
-    let Some(controller) = SESSIONS.lock().await.get(&request.session_id).cloned() else {
+    let Some(controller) = SESSIONS
+        .lock()
+        .await
+        .get(&request.session_id)
+        .map(|entry| entry.controller.clone()) else {
         return Err(format!("chat session {} not found", request.session_id));
     };
     controller.submit_input(&request.message).await;
@@ -86,10 +121,27 @@ pub async fn continue_chat(request: ContinueDiscussionRequest) -> Result<(), Str
 }
 
 pub async fn cancel(session_id: usize) -> Result<(), String> {
-    let Some(controller) = SESSIONS.lock().await.remove(&session_id) else {
+    let Some(entry) = SESSIONS.lock().await.remove(&session_id) else {
         return Ok(());
     };
-    controller.abort().await;
+    entry.controller.abort().await;
+    Ok(())
+}
+
+pub async fn cancel_workspace(workspace_id: &str) -> Result<(), String> {
+    let sessions = {
+        let guard = SESSIONS.lock().await;
+        guard
+            .iter()
+            .filter_map(|(id, entry)| {
+                (entry.workspace_id.as_deref() == Some(workspace_id)).then_some(*id)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    for id in sessions {
+        cancel(id).await?;
+    }
     Ok(())
 }
 
@@ -222,6 +274,7 @@ mod tests {
             workflow: "discuss".to_string(),
             custom_roles: None,
             max_rounds: None,
+            workspace_id: None,
         };
 
         assert_eq!(initial_role(&agent_config, &req), "manager");

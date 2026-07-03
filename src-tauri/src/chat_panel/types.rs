@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceChatEvent<T: Serialize> {
+    pub workspace_id: String,
+    pub event: T,
+}
+
 /// A single agent turn, sent as a streaming event.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +61,8 @@ pub struct StartDiscussionRequest {
     pub workflow: String,
     pub custom_roles: Option<Vec<String>>,
     pub max_rounds: Option<usize>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 /// Request to continue with a follow-up question.
