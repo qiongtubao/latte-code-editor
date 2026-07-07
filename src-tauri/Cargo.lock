@@ -2399,7 +2399,6 @@ dependencies = [
 name = "latte-agent-core"
 version = "0.1.0"
 dependencies = [
- "dirs",
  "handlebars",
  "latte-ai",
  "latte-rs-agent-tools",
@@ -2486,9 +2485,12 @@ name = "latte-rs-agent-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "futures",
  "glob",
+ "globset",
+ "ignore",
  "log",
  "path-clean",
  "regex",
