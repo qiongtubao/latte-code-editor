@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { markdownToHtml } from "../utils/markdown";
 import { useChatStore } from "../hooks/useChatStore";
-import type { ChatMessage } from "../hooks/useChatStore";
+import type { ChatActivityEvent, ChatMessage } from "../hooks/useChatStore";
 
 interface Props {
   messages: ChatMessage[];
@@ -82,11 +82,69 @@ function isErrorMessage(m: ChatMessage): boolean {
   );
 }
 
+function activityTone(kind: ChatActivityEvent["kind"]): string {
+  if (kind === "tool_error" || kind === "error") {
+    return "border-red-700/70 bg-red-950/20 text-red-200";
+  }
+  if (kind.startsWith("tool")) {
+    return "border-amber-700/60 bg-amber-950/10 text-amber-100";
+  }
+  if (kind.startsWith("delegate")) {
+    return "border-purple-700/60 bg-purple-950/10 text-purple-100";
+  }
+  return "border-gray-700 bg-[#1f1f1f] text-gray-300";
+}
+
+function ActivityItem({ event }: { event: ChatActivityEvent }) {
+  const isExpandable = Boolean(event.detail);
+  const isTool = event.kind.startsWith("tool");
+  const summary = (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="font-semibold truncate">{event.title}</span>
+      {event.roleId && (
+        <span className="shrink-0 rounded bg-black/20 px-1.5 py-0.5 font-mono text-[10px] opacity-80">
+          {event.roleId}
+        </span>
+      )}
+      {isTool && (
+        <span className="shrink-0 rounded bg-amber-900/30 px-1.5 py-0.5 text-[10px] text-amber-200">
+          tool
+        </span>
+      )}
+    </span>
+  );
+
+  if (!isExpandable) {
+    return (
+      <div className={"rounded border px-2 py-1 text-[11px] " + activityTone(event.kind)}>
+        {summary}
+      </div>
+    );
+  }
+
+  return (
+    <details className={"group rounded border px-2 py-1 text-[11px] " + activityTone(event.kind)}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
+        {summary}
+        <span className="shrink-0 text-[10px] opacity-60 group-open:hidden">展开</span>
+        <span className="hidden shrink-0 text-[10px] opacity-60 group-open:inline">收起</span>
+      </summary>
+      <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 font-mono text-[10px] leading-4 text-gray-300">
+        {event.detail}
+      </pre>
+    </details>
+  );
+}
+
 export function MessageList({ messages, status, onFileClick }: Props) {
   const errorMessage = useChatStore((s) => s.errorMessage);
+  const activityEvents = useChatStore((s) => s.activityEvents);
+  const activeRoles = useChatStore((s) => s.activeRoles);
   const lastUserTopic = useChatStore((s) => s.lastUserTopic);
   const retryLastDiscussion = useChatStore((s) => s.retryLastDiscussion);
   const list = useMemo(() => messages, [messages]);
+  const visibleActivity = useMemo(() => activityEvents.slice(-20), [activityEvents]);
+  const activeRoleList = Object.values(activeRoles);
 
   // When the most recent message is an error turn, expose a single
   // retry CTA at the bottom of the list. The error bubbles themselves
@@ -104,23 +162,22 @@ export function MessageList({ messages, status, onFileClick }: Props) {
       {list.map((m) => {
         if (m.role === "user") {
           return (
-            <div key={m.id} className="flex justify-end gap-2 items-start">
-              <div className="max-w-[85%] px-3 py-2 bg-[#094771] text-blue-100 rounded text-sm whitespace-pre-wrap">
+            <div key={m.id} className="flex justify-start gap-2 items-start">
+              <Avatar emoji="👤" tone="user" />
+              <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#094771] px-3 py-2 text-sm text-blue-100 shadow-sm whitespace-pre-wrap">
                 {m.content}
               </div>
-              <Avatar emoji="👤" tone="user" />
             </div>
           );
         }
         const error = isErrorMessage(m);
         const tone = error ? "error" : "agent";
         return (
-          <div key={m.id} className="flex gap-2 items-start">
-            <Avatar emoji={m.agentIcon ?? "💬"} tone={tone} />
-            <div className="flex-1 min-w-0 space-y-1">
+          <div key={m.id} className="flex justify-end gap-3 items-start">
+            <div className="flex max-w-[88%] min-w-0 flex-col items-end">
               <div
                 className={
-                  "flex items-center gap-2 text-xs " +
+                  "mb-1 flex items-center justify-end gap-2 text-xs " +
                   (error ? "text-red-300" : "text-gray-400")
                 }
               >
@@ -135,10 +192,10 @@ export function MessageList({ messages, status, onFileClick }: Props) {
               </div>
               <div
                 className={
-                  "rounded p-3 text-sm whitespace-pre-wrap " +
+                  "rounded-2xl rounded-tr-sm border p-3 text-left text-sm leading-6 shadow-sm whitespace-pre-wrap " +
                   (error
                     ? "bg-red-950/40 border border-red-800/60 text-red-100"
-                    : "bg-[#2a2a2a] text-gray-200")
+                    : "border-[#3a3a3a] bg-[#242424] text-gray-100")
                 }
               >
                 {error ? (
@@ -150,10 +207,39 @@ export function MessageList({ messages, status, onFileClick }: Props) {
                 )}
               </div>
             </div>
+            <Avatar emoji={m.agentIcon ?? "💬"} tone={tone} />
           </div>
         );
       })}
-      {status === "running" && (
+      {(activeRoleList.length > 0 || visibleActivity.length > 0) && (
+        <div className="ml-11 mr-2 rounded-xl border border-[#333] bg-[#181818] px-3 py-2 space-y-2">
+          {activeRoleList.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {activeRoleList.map((role) => (
+                <span
+                  key={role.roleId}
+                  className="inline-flex items-center gap-1 rounded bg-[#0b3a55] px-2 py-0.5 text-[11px] text-blue-100"
+                >
+                  <span className="inline-block w-1.5 h-1.5 bg-blue-300 rounded-full animate-pulse" />
+                  {role.roleId}
+                  <span className="text-blue-200/80">{role.detail}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {visibleActivity.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">
+                activity
+              </div>
+              {visibleActivity.map((event) => (
+                <ActivityItem key={event.id} event={event} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {status === "running" && activeRoleList.length === 0 && (
         <div className="flex items-center gap-2 text-xs text-gray-400 italic pl-10">
           <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
           Agents are responding...

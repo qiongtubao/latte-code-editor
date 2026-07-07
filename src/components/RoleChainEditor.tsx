@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import type { ModelInfo } from "../api/chat";
-import { openConfigFile } from "../api/commands";
+import { openConfig, type ModelInfo } from "../api/chat";
+import { openFile } from "../api/commands";
+import { useEditorStore } from "../hooks/useEditorStore";
 
 interface Props {
+  roleId: string;
   icon: string;
   name: string;
   /** Server-side chain (source of truth). When this changes, local
@@ -33,6 +35,16 @@ export function RoleChainEditor({
 }: Props) {
   const [chain, setChain] = useState<string[]>(serverChain);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+
+  const openRoleConfig = async () => {
+    try {
+      const path = await openConfig(`role:${roleId}`);
+      const file = await openFile(path);
+      useEditorStore.getState().openFileOrSwitch(file);
+    } catch (e) {
+      console.error(`[chain] open role config failed for '${roleId}':`, e);
+    }
+  };
 
   // If the server-side chain changes (e.g. after a save returns a
   // deduped form, or another panel updated it), drop local edits and
@@ -98,7 +110,7 @@ export function RoleChainEditor({
         </span>
         <span className="ml-auto flex items-center gap-1">
           <button
-            onClick={() => openConfigFile(`role:${roleId}`)}
+            onClick={() => void openRoleConfig()}
             className="px-1 text-gray-400 hover:text-white"
             title={`打开 roles/${roleId}.yaml`}
             type="button"
@@ -108,6 +120,7 @@ export function RoleChainEditor({
           {status === "saving" ? "💾 …" : status === "error" ? "⚠️" : null}
         </span>
       </div>
+      <div className="space-y-1">
         {chain.map((modelId, idx) => (
           <div key={`${idx}-${modelId}`} className="flex items-center gap-1">
             <span className="w-4 text-right text-gray-500 text-[10px]">

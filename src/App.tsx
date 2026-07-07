@@ -19,8 +19,8 @@ import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
 import { useChatStore } from "./hooks/useChatStore";
-import type { ChatTurn } from "./hooks/useChatStore";
-import type { DecisionRequest, ManagerStatus, SwarmEvent } from "./api/chat";
+import type { ChatEvent, WorkspaceChatEvent } from "./api/chat";
+import { unwrapWorkspaceEvent } from "./api/chat";
 import { useLspStore } from "./hooks/useLspStore";
 import { LspManagerPanel } from "./components/LspManagerPanel";
 import { DebugBar } from "./components/DebugBar";
@@ -46,12 +46,7 @@ function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const lastRRef = useRef(0);
   const lastSRef = useRef(0);
-  const addTurn = useChatStore((s) => s.addTurn);
-  const setChatComplete = useChatStore((s) => s.setComplete);
-  const setChatError = useChatStore((s) => s.setError);
-  const applySwarmEvent = useChatStore((s) => s.applySwarmEvent);
-  const applyNeedDecision = useChatStore((s) => s.applyNeedDecision);
-  const applyManagerStatus = useChatStore((s) => s.applyManagerStatus);
+  const applyChatEvent = useChatStore((s) => s.applyChatEvent);
   const { openFileOrSwitch, filePath } = useEditorStore();
   const { graphData } = useGraphStore();
   const activeMeta = useWorkspaceStore((s) =>
@@ -91,43 +86,30 @@ function App() {
     return () => window.removeEventListener("latte-toast", handler);
   }, []);
 
-  // Listen for chat events from the multi-agent chat panel
+  // Listen for controller chat events from the chat panel.
   useEffect(() => {
-    const unlistens: Array<Promise<() => void>> = [];
-    unlistens.push(
-      listen<ChatTurn>("chat:turn", (e) => {
-        addTurn(e.payload);
+    const unlistens: Array<Promise<() => void>> = [
+      listen<unknown>("chat:event", (e) => {
+        const { workspaceId, event } = unwrapWorkspaceEvent<ChatEvent>(
+          e.payload as unknown as ChatEvent | WorkspaceChatEvent<ChatEvent>,
+        );
+        const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+        // Debug: confirm event routing works.
+        // Keep lightweight so it won't spam too aggressively in normal runs.
+        console.debug("latte:chat:event", {
+          workspaceId,
+          activeWorkspaceId,
+          matchesActive: workspaceId != null && workspaceId === activeWorkspaceId,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          kind: Object.keys(event as any)[0] ?? null,
+        });
+        applyChatEvent(event, workspaceId);
       }),
-    );
-    unlistens.push(
-      listen<SwarmEvent>("chat:swarm_event", (e) => {
-        applySwarmEvent(e.payload);
-      }),
-    );
-    unlistens.push(
-      listen<DecisionRequest>("chat:need_decision", (e) => {
-        applyNeedDecision(e.payload);
-      }),
-    );
-    unlistens.push(
-      listen<ManagerStatus>("chat:manager_status", (e) => {
-        applyManagerStatus(e.payload);
-      }),
-    );
-    unlistens.push(
-      listen<unknown>("chat:complete", () => {
-        setChatComplete();
-      }),
-    );
-    unlistens.push(
-      listen<string>("chat:error", (e) => {
-        setChatError(e.payload);
-      }),
-    );
+    ];
     return () => {
       for (const p of unlistens) p.then((fn) => fn());
     };
-  }, [addTurn, applySwarmEvent, applyNeedDecision, applyManagerStatus, setChatComplete, setChatError]);
+  }, [applyChatEvent]);
 
   const folderRoot = activeMeta?.project_root ?? null;
 

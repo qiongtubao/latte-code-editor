@@ -2399,26 +2399,14 @@ dependencies = [
 name = "latte-agent-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "handlebars",
  "latte-ai",
  "latte-rs-agent-tools",
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "toml 0.8.2",
-]
-
-[[package]]
-name = "latte-agent-orchestrator"
-version = "0.1.0"
-dependencies = [
- "futures",
- "latte-agent-core",
- "latte-ai",
- "serde",
- "serde_json",
+ "serde_yaml",
  "thiserror 2.0.18",
  "tokio",
  "toml 0.8.2",
@@ -2453,7 +2441,6 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "latte-agent-core",
- "latte-agent-orchestrator",
  "latte-ai",
  "latte-rs-graph",
  "lsp-types 0.97.0",
@@ -2484,9 +2471,12 @@ name = "latte-rs-agent-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "futures",
  "glob",
+ "globset",
+ "ignore",
  "log",
  "path-clean",
  "regex",
