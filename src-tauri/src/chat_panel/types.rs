@@ -615,6 +615,11 @@ pub enum ControllerEventKind {
     SessionInfo,
     ToolUse,
     ToolResult,
+    ToolError,
+    RoleStarted,
+    RoleFinished,
+    DelegateStarted,
+    DelegateFinished,
 }
 
 impl From<&latte_agent_core::controller::ChatEvent> for ControllerEventKind {
@@ -630,19 +635,19 @@ impl From<&latte_agent_core::controller::ChatEvent> for ControllerEventKind {
             ChatEvent::RoundEnded { .. } => Self::RoundEnded,
             ChatEvent::Done => Self::Done,
             ChatEvent::Error { .. } => Self::Error,
+            ChatEvent::ToolUse { .. } => Self::ToolUse,
+            ChatEvent::ToolResult { .. } => Self::ToolResult,
+            ChatEvent::ToolError { .. } => Self::ToolError,
             ChatEvent::RoleList { .. } => Self::RoleList,
             ChatEvent::ContextCleared => Self::ContextCleared,
             ChatEvent::SessionInfo { .. } => Self::SessionInfo,
-            ChatEvent::ToolUse { .. } => Self::ToolUse,
-            ChatEvent::ToolResult { .. } => Self::ToolResult,
+            ChatEvent::RoleStarted { .. } => Self::RoleStarted,
+            ChatEvent::RoleFinished { .. } => Self::RoleFinished,
+            ChatEvent::DelegateStarted { .. } => Self::DelegateStarted,
+            ChatEvent::DelegateFinished { .. } => Self::DelegateFinished,
         }
     }
 }
-
-/// Payload emitted via `chat:controller_event` for each ChatEvent.
-/// Wraps the original event alongside a `kind` tag so the frontend can
-/// route without parsing the full payload.
-///
 /// NOTE: Instead of `#[serde(flatten)]` over the enum (which produces a
 /// nested `{Error: {message}}` shape), we implement a custom serializer
 /// that extracts the variant's fields into the parent object.
@@ -681,6 +686,11 @@ impl serde::Serialize for ControllerEventPayload {
             ControllerEventKind::SessionInfo => "sessionInfo",
             ControllerEventKind::ToolUse => "toolUse",
             ControllerEventKind::ToolResult => "toolResult",
+            ControllerEventKind::ToolError => "toolError",
+            ControllerEventKind::RoleStarted => "roleStarted",
+            ControllerEventKind::RoleFinished => "roleFinished",
+            ControllerEventKind::DelegateStarted => "delegateStarted",
+            ControllerEventKind::DelegateFinished => "delegateFinished",
         };
         map.serialize_entry("kind", kind_str)?;
         // Flatten the variant fields
@@ -728,12 +738,40 @@ impl serde::Serialize for ControllerEventPayload {
                 map.serialize_entry("toolName", tool_name)?;
                 map.serialize_entry("args", args)?;
             }
-            ChatEvent::ToolResult { tool_name, result, role_id } => {
+            ChatEvent::ToolResult { role_id, tool_name, result } => {
                 map.serialize_entry("roleId", role_id)?;
                 map.serialize_entry("toolName", tool_name)?;
                 map.serialize_entry("result", result)?;
+            }
+            ChatEvent::ToolError { role_id, tool_name, error } => {
+                map.serialize_entry("roleId", role_id)?;
+                map.serialize_entry("toolName", tool_name)?;
+                map.serialize_entry("error", error)?;
+            }
+            ChatEvent::RoleStarted { role_id, detail } => {
+                map.serialize_entry("roleId", role_id)?;
+                map.serialize_entry("detail", detail)?;
+            }
+            ChatEvent::RoleFinished { role_id, detail } => {
+                map.serialize_entry("roleId", role_id)?;
+                map.serialize_entry("detail", detail)?;
+            }
+            ChatEvent::DelegateStarted { from_role, to_role, task, sub_id } => {
+                map.serialize_entry("fromRole", from_role)?;
+                map.serialize_entry("toRole", to_role)?;
+                map.serialize_entry("task", task)?;
+                map.serialize_entry("subId", sub_id)?;
+            }
+            ChatEvent::DelegateFinished { from_role, to_role, status, summary, sub_id } => {
+                map.serialize_entry("fromRole", from_role)?;
+                map.serialize_entry("toRole", to_role)?;
+                map.serialize_entry("status", status)?;
+                map.serialize_entry("summary", summary)?;
+                map.serialize_entry("subId", sub_id)?;
             }
         }
         map.end()
     }
 }
+
+

@@ -132,7 +132,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   hydrate: async () => {
     try {
-      const list = await invoke<WorkspaceInfo[]>("list_workspaces");
+      let list = await invoke<WorkspaceInfo[]>("list_workspaces");
+      // init_workspaces (backend async spawn) might not have finished yet;
+      // retry once if we got an empty list on first call.
+      if (list.length === 0) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 500);
+        await promise;
+        list = await invoke<WorkspaceInfo[]>("list_workspaces");
+      }
       const workspaces: Record<string, WorkspaceMeta> = {};
       for (const w of list) workspaces[w.id] = w.meta;
       const active =

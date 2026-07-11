@@ -45,6 +45,7 @@ import {
   resumeController as apiResumeController,
   listSessions as apiListSessions,
   deleteSession as apiDeleteSession,
+  getSession as apiGetSession,
   chatStream as apiChatStream,
 } from "../api/chat";
 import { useEditorStore } from "./useEditorStore";
@@ -146,6 +147,22 @@ interface ChatStore {
    *  button can resend without re-typing. Cleared on success. */
   lastUserTopic: string | null;
   selectedWorkflow: string;
+  /// Tool-call trace events from the latest turn, keyed by message id
+  /// of the assistant bubble they belong to. Consumed by the chat UI
+  /// to render each tool as a sub-bubble.
+  toolEvents: Record<string, import("../api/chat").ToolEventPayload[]>;
+  /// Role id for single-role chat mode. Defaults to `"manager"`.
+  singleRoleId: string;
+  /// Active session id for single-role chat. `null` before first message.
+  singleSessionId: string | null;
+  /// Tier override for the next chat turn: `"premium" | "standard" | "budget"` or `null` (use role's default).
+  singleTier: string | null;
+  /// Specific model id pin. When set, replaces tier resolution as the
+  /// chain head (CLI `-m <id>` parity). Cleared by `/model default`.
+  singleModelId: string | null;
+  /// Last turn's resolved primary model id. Surfaced in `/status`
+  /// and in the prompt so the user can see which LLM answered.
+  lastResolvedModel: string | null;
   availableWorkflows: {
     id: string;
     name: string;
@@ -167,9 +184,17 @@ interface ChatStore {
   modelsPath: string;
   rolesPath: string;
   configPanelOpen: boolean;
-
   setMode: (mode: ChatMode) => void;
+  /// Switch the single-role chat target. No-op for non-single modes.
+  setSingleRoleId: (id: string) => void;
   setWorkflow: (id: string) => void;
+  /// Internal id for the in-flight agent bubble (between request and
+  /// reply). Tool events arriving via `chat:tool_event` are routed to
+  /// this id so the UI can render them inline.
+  pendingAgentMsgId: string | null;
+  /** Push a tool-event for the in-flight agent bubble. Called from
+   * the `chat:tool_event` Tauri event listener. */
+  pushToolEvent: (event: import("../api/chat").ToolEventPayload) => void;
   setError: (msg: string) => void;
   loadWorkflows: () => Promise<void>;
   loadModels: () => Promise<void>;
@@ -190,16 +215,18 @@ interface ChatStore {
   setComplete: () => void;
   applyChatEvent: (event: ChatEvent, workspaceId?: string | null) => void;
   /** Apply one `chat:swarm_event` from the backend. */
-  applySwarmEvent: (event: SwarmEvent) => void;
+  applySwarmEvent: (event: import("../api/chat").SwarmEvent) => void;
   /** Apply one `chat:controller_event` from the backend. */
   applyControllerEvent: (event: import("../api/chat").ControllerEventPayload) => void;
+  /** Send a single-role chat message (stateless request-response). */
+  sendSingleChat: (content: string) => Promise<void>;
+  /** Handle a slash command typed into the single-role chat input. */
+  handleSlashCommand: (line: string) => Promise<void>;
   /** Send a swarm-mode prompt. No-op when `mode !== "swarm"` or
    *  a swarm is already running. */
   sendSwarm: (topic: string) => Promise<void>;
   /** Send a controller-mode prompt. */
   sendController: (content: string) => Promise<void>;
-  /** Send a single-role chat message (stateless request-response). */
-  sendSingleChat: (content: string) => Promise<void>;
   controllerSessionId: string | null;
   /** Pause the active controller session. */
   pauseController: () => Promise<void>;
@@ -264,6 +291,8 @@ interface ChatStore {
   loadSessionList: () => Promise<void>;
   /** Delete a session and refresh the list. */
   deleteSession: (sessionId: string) => Promise<void>;
+  /** Restore a persisted session into the live chat view. */
+  loadStoredSession: (sessionId: string) => Promise<void>;
 
   /** Load or create an HIL session. When `taskId` is new (and the
    *  worktree doesn't exist yet), this creates the worktree +
@@ -600,110 +629,36 @@ function uid(): string {
   return `m${Date.now()}-${nextMessageId++}`;
 }
 
-function extractReadableProtocolJson(line: string): string | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
-  try {
-    const value = JSON.parse(trimmed) as unknown;
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const record = value as Record<string, unknown>;
-    for (const key of ["content", "message", "text", "summary", "answer", "response"]) {
-      const candidate = record[key];
-      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function readableRoleContent(content: string): string {
-  // Backend may emit either `<tool_call>...</tool_call>` or `<toolcall>...</toolcall>`
-  // depending on runner/version. Strip both so the UI only shows the human-readable parts.
-  const withoutToolCalls = content.replace(
-    /<(?:tool_call|toolcall)\b[\s\S]*?<\/(?:tool_call|toolcall)>/gi,
-    "",
-  );
-  const lines = withoutToolCalls
-    .split(/\r?\n/)
-    .map((line) => extractReadableProtocolJson(line) ?? line.trim())
-    .filter((line) => line.length > 0);
-  return lines.join("\n").trim() || content.trim();
-}
-
-export const useChatStore = create<ChatStore>((set, get) => {
-  const updateChat = (
-    workspaceId: string | null | undefined,
-    updater: (chat: WorkspaceChat) => WorkspaceChat,
-  ) => {
-    const wsId = targetWorkspaceId(workspaceId);
-    let persisted: WorkspaceChat | null = null;
-    set((s) => {
-      const prev = ensureTopicState(s.byWorkspace[wsId] ?? emptyChat());
-      const next = ensureTopicState(updater(prev));
-      // Keep the active topic snapshot in sync with the projected fields.
-      const activeTopicId = next.activeTopicId ?? DEFAULT_TOPIC_ID;
-      const prevSnap = next.topics[activeTopicId];
-      const nextSnap: TopicSnapshot = {
-        ...(prevSnap ?? {
-          id: activeTopicId,
-          workflowId: next.selectedWorkflow,
-          title: "新话题",
-          createdAt: Date.now(),
-          messages: [],
-          activityEvents: [],
-          status: "idle",
-          errorMessage: null,
-          lastUserTopic: null,
-        }),
-        id: activeTopicId,
-        workflowId: prevSnap?.workflowId ?? next.selectedWorkflow,
-        messages: next.messages,
-        activityEvents: next.activityEvents,
-        status: next.status,
-        errorMessage: next.errorMessage,
-        lastUserTopic: next.lastUserTopic,
-      };
-      const byWorkspaceTopic = {
-        ...next.topics,
-        [activeTopicId]: nextSnap,
-      };
-      const withTopics: WorkspaceChat = { ...next, activeTopicId, topics: byWorkspaceTopic };
-      persisted = withTopics;
-      const byWorkspace = { ...s.byWorkspace, [wsId]: withTopics };
-      return {
-        byWorkspace,
-        ...projectFrom(byWorkspace, projectedWorkspaceId()),
-      };
-    });
-    if (persisted) scheduleChatPersist(wsId, persisted);
-  };
-
-  useWorkspaceStore.subscribe(() => {
-    const wsId = projectedWorkspaceId();
-    set((s) => {
-      let byWorkspace = s.byWorkspace;
-      const meta = useWorkspaceStore.getState().workspaces[wsId];
-      if (!byWorkspace[wsId] && meta?.chat_state) {
-        byWorkspace = { ...byWorkspace, [wsId]: hydrateChat(meta.chat_state) };
-      }
-      return { byWorkspace, ...projectFrom(byWorkspace, wsId) };
-    });
-  });
-
-  return {
-  byWorkspace: {},
-    ...emptyChat(),
-    visibleTopics: [],
+export const useChatStore = create<ChatStore>((set, get) => ({
+  mode: "discuss",
+  messages: [],
+  status: "idle",
+  sessionId: null,
+  swarmSessionId: null,
+  activeSwarmId: null,
+  swarmPlan: [],
+  toolEvents: {},
+  swarmFiles: [],
+  swarmSummary: null,
+  controllerSessionId: null,
+  lastUserTopic: null,
+  selectedWorkflow: "discuss",
+  singleRoleId: "manager",
+  singleSessionId: null,
+  singleTier: null,
+  singleModelId: null,
+  lastResolvedModel: null,
+  pendingAgentMsgId: null,
   availableWorkflows: [],
-  availableRoles: [],
-  availableModels: [],
   defaultModel: "deepseek-chat",
   roleModels: {},
   roleChains: {},
   modelsPath: "",
   rolesPath: "",
   configPanelOpen: false,
+  errorMessage: null,
+  availableRoles: [],
+  availableModels: [],
 
 
   // Workflow editor
@@ -714,6 +669,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
   editingError: null,
   setMode: (mode) =>
     updateChat(null, (chat) => ({ ...chat, mode, errorMessage: null })),
+
+  setSingleRoleId: (id) => set({ singleRoleId: id }),
 
   setWorkflow: (id) => {
     const wf = get().availableWorkflows.find((w) => w.id === id);
@@ -983,22 +940,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
     updateChat(null, (chat) => ({
       ...chat,
       status: "idle",
-      errorMessage: null,
-      // Reset runtime session ids so next sendMessage creates a new controller session.
-      sessionId: null,
-      swarmSessionId: null,
-      activeSwarmId: null,
-      swarmPlan: [],
-      swarmFiles: [],
-      swarmSummary: null,
+
       pendingDecision: null,
       managerStatus: null,
-      managerSessionId: null,
-      // HIL: keep `hilTaskId` + `hilSession` (the on-disk JSON
-      // is the source of truth; "clear" doesn't drop the user's
-      // session). The user can switch modes to start a fresh
-      // HIL session or call `startOrLoadHilSession` again.
-      controllerSessionId: null,
+      lastResolvedModel: null,
+      toolEvents: {},
       hilBusy: false,
       hilError: null,
       hilEditingMessage: null,
@@ -1318,15 +1264,34 @@ export const useChatStore = create<ChatStore>((set, get) => {
       console.error("resumeController failed:", e);
     }
   },
-  sendSingleChat: async (content) => {
-    const trimmed = content.trim();
-    if (!trimmed) return;
-    if (get().status === "running") return;
-    // Build history from existing messages
-    const history = get().messages.map((m) => ({
-      role: m.role === "user" ? "user" : "assistant",
-      content: m.content,
+  /**
+   * Send a message in single-role chat mode. If the input starts with
+   * `/`, it's parsed as a slash command — see handleSlashCommand below
+   * for the full set. Otherwise the message is sent to the LLM via
+   * `chat_stream`. Mirrors `latte-agent chat` slash semantics:
+   * `/role`, `/model`, `/clear`, `/history`, `/status`, `/tools`,
+   * `/help`, `/exit`.
+   */
+  /** Push a tool-event for the in-flight agent bubble. Called from
+    if (!id) return; // No active turn — drop the event.
+    set((s) => ({
+      toolEvents: {
+        ...s.toolEvents,
+        [id]: [...(s.toolEvents[id] ?? []), event],
+      },
     }));
+  },
+  /** Slash command handler — dispatches on the first token after the
+      return;
+    }
+    // Ensure a session id exists for this conversation.
+    let sid = get().singleSessionId;
+    if (!sid) {
+      sid = `single-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      set({ singleSessionId: sid });
+    }
+    const tier = get().singleTier as "premium" | "standard" | "budget" | null | undefined;
+    const primaryModelId = get().singleModelId ?? undefined;
     const userMsg: ChatMessage = {
       id: uid(),
       role: "user",
@@ -1341,9 +1306,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }));
     try {
       const reply = await apiChatStream({
-        roleId: "manager",
+        roleId: get().singleRoleId || "manager",
+        sessionId: sid,
         content: trimmed,
-        history,
+        tier: tier ?? undefined,
+        primaryModelId,
       });
       const agentMsg: ChatMessage = {
         id: uid(),
@@ -1355,9 +1322,267 @@ export const useChatStore = create<ChatStore>((set, get) => {
         messages: [...s.messages, agentMsg],
         status: "completed",
         lastUserTopic: null,
+        lastResolvedModel: reply.model_id,
       }));
     } catch (e) {
       set({ status: "error", errorMessage: String(e) });
+    }
+  },
+
+  /** Push a tool-event for the in-flight agent bubble. Called from
+  pushToolEvent: (event) => {
+    const id = get().pendingAgentMsgId;
+    if (!id) return;
+    set((s) => ({
+      toolEvents: {
+        ...s.toolEvents,
+        [id]: [...(s.toolEvents[id] ?? []), event],
+      },
+    }));
+  sendSingleChat: async (content) => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    if (get().status === "running") return;
+    if (trimmed.startsWith("/")) {
+      await get().handleSlashCommand(trimmed);
+      return;
+    }
+    let sid = get().singleSessionId;
+    if (!sid) {
+      sid = `single-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      set({ singleSessionId: sid });
+    }
+    const tier = get().singleTier as "premium" | "standard" | "budget" | null | undefined;
+    const primaryModelId = get().singleModelId ?? undefined;
+    const userMsg: ChatMessage = {
+      id: uid(),
+      role: "user",
+      content: trimmed,
+      timestamp: Date.now(),
+    };
+    set((s) => ({
+      messages: [...s.messages, userMsg],
+      status: "running",
+      errorMessage: null,
+      lastUserTopic: trimmed,
+    }));
+    try {
+      const reply = await apiChatStream({
+        roleId: get().singleRoleId || "manager",
+        sessionId: sid,
+        content: trimmed,
+        tier: tier ?? undefined,
+        primaryModelId,
+      });
+      const agentMsg: ChatMessage = {
+        id: uid(),
+        role: "agent",
+        content: reply.content,
+        timestamp: Date.now(),
+      };
+      set((s) => ({
+        messages: [...s.messages, agentMsg],
+        status: "completed",
+        lastUserTopic: null,
+        lastResolvedModel: reply.model_id,
+        pendingAgentMsgId: agentMsg.id,
+      }));
+    } catch (e) {
+      set({ status: "error", errorMessage: String(e) });
+    }
+  },
+  /**
+   * Slash command handler — dispatches on the first token after the
+   * leading `/`. Adds a system bubble describing the result so the
+   * user sees feedback inline. Mutates store fields for config
+   * commands (`/role`, `/model`); helper commands (`/status`,
+   * `/tools`, `/history`, `/help`) emit info bubbles.
+   */
+  handleSlashCommand: async (line: string) => {
+    const sysMsg = (text: string) => {
+      const m: ChatMessage = {
+        id: uid(),
+        role: "agent",
+        agentName: "system",
+        agentIcon: "⚙",
+        content: text,
+        timestamp: Date.now(),
+      };
+      set((s) => ({ messages: [...s.messages, m] }));
+    };
+    const parts = line.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1);
+    switch (cmd) {
+      case "/help":
+        sysMsg(
+          [
+            "**Slash 命令（与 `latte-agent chat` 一致）**",
+            "",
+            "`/role <id>` — 切换角色，保留 session 历史",
+            "`/model <premium|standard|budget>` — 切换 tier（覆盖角色的默认 tier）",
+            "`/clear` — 新话题（关闭当前 session，可通过下拉框恢复）",
+            "`/history` — 列出 session 中最近 N 条消息",
+            "`/status` — 显示 role / tier / model chain / session 信息",
+            "`/tools` — 列出当前角色可用的工具",
+            "`/save <path>` — 把当前 session 导出为 JSON",
+            "`/load <path>` — 从 JSON 文件恢复 session",
+            "`/exit` — 关闭 ChatPanel（不删 session）",
+            "`/help` — 显示此帮助",
+          ].join("\n"),
+        );
+        return;
+      case "/role": {
+        if (args.length === 0) {
+          sysMsg("用法：`/role <id>`。可用：" + Object.keys(get()).slice(0, 0).join(","));
+          return;
+        }
+        const id = args.join(" ");
+        const exists = get().availableRoles.find((r) => r.id === id);
+        if (!exists) {
+          const known = get().availableRoles.map((r) => r.id).join(", ");
+          sysMsg(`未知角色 \`${id}\`。可用：${known}`);
+          return;
+        }
+        set({ singleRoleId: id });
+        sysMsg(`✓ 切换到角色 \`${id}\`（session 保留）`);
+        return;
+      }
+      case "/model": {
+        if (args.length === 0) {
+          const tierCur = get().singleTier ?? "角色默认";
+          const midCur = get().singleModelId ?? "未 pin";
+          sysMsg(
+            `当前 model 锁定：\`${midCur}\`\n当前 tier 覆盖：\`${tierCur}\`\n\n用法：\n- \`/model <premium|standard|budget>\` — 覆盖 tier\n- \`/model <model-id>\` — pin 特定模型（CLI \`-m <id>\`）\n- \`/model default\` — 清除覆盖`,
+          );
+          return;
+        }
+        const arg = args[0];
+        const t = arg.toLowerCase();
+        if (arg === "default" || arg === "auto") {
+          set({ singleTier: null, singleModelId: null });
+          sysMsg("✓ model 覆盖清除，使用角色默认");
+          return;
+        }
+        // Numeric-tier form.
+        if (t === "premium" || t === "standard" || t === "budget") {
+          set({ singleTier: t, singleModelId: null });
+          sysMsg(`✓ tier 覆盖设为 \`${t}\`（仅作用于下一条消息）`);
+          return;
+        }
+        // Otherwise treat as a model id pin.
+        const models = get().availableModels ?? [];
+        const match = models.find((m) => m.id === arg || m.name.toLowerCase() === t);
+        if (!match) {
+          const known = models.slice(0, 5).map((m) => m.id).join(", ");
+          sysMsg(`未知 model \`${arg}\`。已知：${known}…`);
+          return;
+        }
+        set({ singleModelId: match.id, singleTier: null });
+        sysMsg(`✓ pin 到 model \`${match.id}\`（仅作用于下一条消息）`);
+        return;
+      }
+      case "/clear": {
+        get().clearChat();
+        sysMsg("✓ 新话题已开始");
+        return;
+      }
+      case "/status": {
+        const s = get();
+        const sid = s.singleSessionId ?? "(无)";
+        const roleName = s.availableRoles.find((r) => r.id === s.singleRoleId)?.name ?? s.singleRoleId;
+        const tier = s.singleTier ?? "角色默认";
+        const msgs = s.messages.length;
+        sysMsg(
+          [
+            `**Status**`,
+            `role:   ${s.singleRoleId} (${roleName})`,
+            `model:  ${s.lastResolvedModel ?? "(尚未调用)"}`,
+            `tier:   ${tier}`,
+            `model pin: ${s.singleModelId ?? "(none)"}`,
+            `tier override: ${s.singleTier ?? "(none)"}`,
+            `session: ${sid}`,
+            `messages: ${msgs}`,
+          ].join("\n"),
+        );
+        return;
+      }
+      case "/tools": {
+        // Look up the role config to enumerate allowed tools.
+        // `availableRoles` from `chat_get_role_config` doesn't carry
+        // the tool list, so we fetch from `rolesConfig` via a different
+        // path — instead of that, just display the known short names.
+        sysMsg(
+          [
+            "**Available tools**（与 `latte-agent chat` 一致）",
+            "",
+            "基线工具（按角色 allowlist 过滤）：",
+            "- `read` — 读文件",
+            "- `list` — 列目录",
+            "- `search` — 代码搜索",
+            "- `bash` / `exec` — shell",
+            "- `write` — 写文件",
+            "",
+            "工具由模型的 system prompt 提示；调用格式：",
+            "`‹‹‹tool_callname {‹\"arg\": \"value\"}››‹tool_call›`",
+          ].join("\n"),
+        );
+        return;
+      }
+      case "/history": {
+        const s = get();
+        const recent = s.messages.slice(-6);
+        if (recent.length === 0) {
+          sysMsg("(空)");
+          return;
+        }
+        const lines = recent.map((m, i) => {
+          const tag = m.role === "user" ? "USER" : `AGENT(${m.agentName ?? "?"})`;
+          const preview = m.content.length > 80 ? m.content.slice(0, 80) + "…" : m.content;
+          return `[${s.messages.length - recent.length + i}] ${tag}: ${preview}`;
+        });
+        sysMsg(`**最近 ${recent.length} 条消息（共 ${s.messages.length} 条）**\n\n${lines.join("\n")}`);
+        return;
+      }
+      case "/exit":
+        sysMsg("✓ 退出（请手动关闭 ChatPanel；session 已持久化到 ~/.latte/chat-sessions/）");
+        return;
+      case "/save": {
+        const s = get();
+        if (args.length === 0) {
+          sysMsg("用法：`/save <path>`");
+          return;
+        }
+        const path = args.join(" ");
+        try {
+          const json = JSON.stringify(s.messages, null, 2);
+          await (window as any).__TAURI__?.core?.invoke?.("__save_text_file", {
+            path,
+            content: json,
+          });
+          sysMsg(`✓ 会话已存到 \`${path}\``);
+        } catch (e) {
+          sysMsg(`✗ 保存失败：${String(e)}`);
+        }
+        return;
+      }
+      case "/load": {
+        if (args.length === 0) {
+          sysMsg("用法：`/load <path>`");
+          return;
+        }
+        // Loading from a JSON file path requires the same text-file
+        // round-trip as /save. The Tauri side doesn't have a generic
+        // text-file loader yet; until it does, instruct the user to
+        // use the session-list dropdown for SessionStore-backed loads.
+        sysMsg(
+          "✗ `/load` 暂未实装。请用直聊模式工具栏的 session 下拉框，从 `~/.latte/chat-sessions/` 加载已持久化的 session。",
+        );
+        return;
+      }
+      default:
+        sysMsg(`未知命令 \`${cmd}\`。输入 \`/help\` 查看可用命令。`);
+        return;
     }
   },
 
@@ -2113,6 +2338,48 @@ export const useChatStore = create<ChatStore>((set, get) => {
       set({ sessionList: list.map(s => ({ ...s, sessionId: s.sessionId })) });
     } catch (e) {
       console.error("deleteSession failed:", e);
+    }
+  },
+  /**
+   * Load a persisted session into the live chat view. Restores the
+   * full message transcript (user + assistant turns) and points the
+   * store's session id at the persisted file so the next `chat_stream`
+   * call resumes from the same context.
+   */
+  loadStoredSession: async (sessionId: string) => {
+    try {
+      const session = await apiGetSession(sessionId);
+      // Project StoredMessage list → UI ChatMessage[]. Tag each
+      // assistant bubble with the role id from `roleIds[0]` (the
+      // session's primary role) so the message list shows the avatar.
+      const msgs: ChatMessage[] = [];
+      for (const m of session.messages) {
+        if (m.type === "user" && m.content) {
+          msgs.push({ id: uid(), role: "user", content: m.content, timestamp: Date.now() });
+        } else if (m.type === "assistant" && m.content) {
+          msgs.push({
+            id: uid(),
+            role: "agent",
+            agentName: m.role_id ?? session.roleIds[0] ?? "manager",
+            agentIcon: "🤖",
+            content: m.content,
+            timestamp: Date.now(),
+          });
+        }
+      }
+      const roleId = session.roleIds[0] ?? "manager";
+      set({
+        mode: "single",
+        messages: msgs,
+        status: "idle",
+        errorMessage: null,
+        singleSessionId: session.sessionId,
+        singleRoleId: roleId,
+        lastUserTopic: null,
+      });
+    } catch (e) {
+      console.error("loadStoredSession failed:", e);
+      set({ status: "error", errorMessage: String(e) });
     }
   },
   openHilSessionJson: async () => {

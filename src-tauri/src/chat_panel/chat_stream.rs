@@ -1,159 +1,264 @@
 //! Single-role chat REPL — mirrors `latte-agent chat --role <id>`.
 //!
-//! The caller (frontend) sends one user message + conversation history
-//! and receives the model's full response string. No stub, no orchestrator,
-//! no manager protocol — just the role's system prompt + LLM chain.
+//! When a `session_id` is provided, history is persisted to
+//! `~/.latte/chat-sessions/<session_id>.json` via `SessionStore`.
+//! The frontend only needs to send the new message; the backend loads
+//! prior turns from the store. Without a session_id the legacy
+//! stateless path (frontend sends full history) is preserved.
 //!
-//! Architecture:
-//!   1. `chat_stream` command loads the project's `roles.yaml` +
-//!      `models.yaml`, builds an `AgentRunner` for the target role,
-//!      feeds history + the new message to `AgentRunner::run_turn`,
-//!      and returns the response text.
-//!   2. The frontend maintains the message list (user + assistant turns)
-//!      and posts the full history on each send — the backend is stateless.
-//!   3. Streaming is intentionally omitted for v1; the CLI is also
-//!      non-streaming (spinner → full result). Future work can add
-//!      Tauri-event-based chunking if latency becomes a problem.
+//! Tool calls made by the model during a turn are forwarded to the
+//! frontend as `chat:tool_event` Tauri events so users see which
+//! tools fired and what they returned.
 
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use serde::{Deserialize, Serialize};
 use latte_agent_core::agent::{Agent, AgentRunner};
 use latte_agent_core::model_resolver::{ModelResolver, ModelTier};
+use latte_agent_core::session_store::{SessionStore, StoredMessage};
+use latte_agent_core::trace::{ToolStatus, TraceEvent, TraceSink};
 use latte_ai::models::{Message, Role};
+use latte_rs_agent_tools::prelude::*;
 
 use super::session::{build_agent_config, build_upstream_role};
 
-/// One chat message in the history sent from the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatHistoryEntry {
-    pub role: String,   // "user" | "assistant"
+    pub role: String,
     pub content: String,
 }
 
-/// Payload for the `chat_stream` command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamRequest {
-    /// Role id from `roles.yaml` (e.g. `"manager"`, `"programmer"`, `"architect"`).
     #[serde(rename = "roleId")]
     pub role_id: String,
-    /// The latest user message content.
     pub content: String,
-    /// Previous conversation turns. Each entry is `{role, content}`.
+    #[serde(rename = "sessionId", default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub history: Vec<ChatHistoryEntry>,
+    #[serde(default)]
+    pub tier: Option<String>,
+    #[serde(default)]
+    pub primary_model_id: Option<String>,
 }
 
-/// Streamed reply payload — the model's response in full.
-/// Sent as `chat:stream_done` event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamReply {
     pub role_id: String,
+    pub session_id: Option<String>,
+    pub model_id: String,
+    pub tier: String,
     pub content: String,
 }
 
-/// Run one turn of a single-role chat. Returns the model's full response.
-/// The frontend manages conversation history and sends it with each turn.
-///
-/// This mirrors `latte-agent chat --role <role>` — no orchestrator, no
-/// stub mode, no manager protocol. If the API key is missing or the
-/// model is unreachable, returns an error string the frontend can display.
-#[tauri::command]
-pub async fn chat_stream(
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolEventPayload {
+    pub name: String,
+    pub args_json: String,
+    pub latency_ms: u64,
+    pub status: String,
+    pub result_preview: String,
+    pub session_id: Option<String>,
+    pub role_id: String,
+}
+
+struct TauriToolSink {
     app: AppHandle,
-    request: StreamRequest,
-) -> Result<StreamReply, String> {
-    let role_id = request.role_id.trim().to_string();
-    if role_id.is_empty() {
-        return Err("role_id cannot be empty".to_string());
+    session_id: Option<String>,
+    role_id: String,
+}
+
+impl TraceSink for TauriToolSink {
+    fn emit(&self, event: TraceEvent) {
+        if let TraceEvent::ToolExec {
+            name,
+            args_json,
+            latency_ms,
+            status,
+            ..
+        } = event
+        {
+            let (label, value) = match status {
+                ToolStatus::Ok(s) => ("ok", s),
+                ToolStatus::Err(s) => ("err", s),
+            };
+            let preview = if value.chars().count() > 240 {
+                let cut = value
+                    .char_indices()
+                    .nth(240)
+                    .map(|(i, _)| i)
+                    .unwrap_or(value.len());
+                format!("{}…", &value[..cut])
+            } else {
+                value
+            };
+            let payload = ToolEventPayload {
+                name: name.clone(),
+                args_json: args_json.clone(),
+                latency_ms,
+                status: label.to_string(),
+                result_preview: preview,
+                session_id: self.session_id.clone(),
+                role_id: self.role_id.clone(),
+            };
+            let _ = self.app.emit("chat:tool_event", &payload);
+        }
     }
+}
 
-    // 1. Load config via config_loader (merged).
-    let merged = super::config_loader::load_merged();
-    let roles_config = super::global_config::RoleConfig {
-        default_model: merged.default_model.clone(),
-        roles: merged.roles.iter().map(|(id, tmpl)| (id.clone(), super::session::convert_role_template_to_def(tmpl))).collect(),
-        workflows: super::global_config::read_all_workflow_files(),
-    };
-    let global_config = super::global_config::GlobalModelConfig {
-        models: merged.models.models.iter().map(super::session::convert_upstream_to_project_model).collect(),
-        default_model: merged.default_model.clone(),
-    };
+fn store() -> Arc<SessionStore> {
+    use std::sync::OnceLock;
+    static STORE: OnceLock<Arc<SessionStore>> = OnceLock::new();
+    STORE.get_or_init(|| Arc::new(SessionStore::new_sync(None))).clone()
+}
 
-    // 2. Validate the role exists.
+pub(crate) fn build_tool_manager(allowed: &[String]) -> Result<Arc<dyn latte_rs_agent_tools::types::ToolManager>, String> {
+    let mgr = create_tool_manager();
+    let rt = tokio::runtime::Handle::current();
+    for p in builtin_tool_packages() {
+        rt.block_on(mgr.register_package(p)).map_err(|e| format!("register_package: {e}"))?;
+    }
+    let mut keep: std::collections::HashSet<String> = allowed.iter().flat_map(|s| vec![s.to_lowercase(), s.clone()]).collect();
+    if keep.contains("bash") || keep.contains("bash") { keep.insert("exec".to_string()); }
+    for tool_id in mgr.get_tool_names() {
+        let short = tool_id.rsplit_once('.').map(|(_, s)| s.to_string()).unwrap_or_else(|| tool_id.clone());
+        if !(keep.contains(&short) || keep.contains(&tool_id)) { mgr.unregister(&tool_id); }
+    }
+    Ok(mgr)
+}
+
+pub(crate) fn tool_usage_prompt(allowed: &[String]) -> String {
+    let real_names: Vec<String> = allowed.iter().map(|s| match s.as_str() {
+        "bash" => "exec".to_string(),
+        other => other.to_string(),
+    }).collect();
+    let tool_list = real_names.join(", ");
+    format!(
+        r#"
+
+## Tool calling protocol
+
+Use this exact raw format on its own line — no markdown, no code fences:
+
+When you need a tool, emit:
+
+Plain text — the markers are literal, copy them character-for-character.
+
+End with a plain text response when done.
+"#
+    )
+}
+
+fn iso_now() -> String {
+    let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let s = d.as_secs() as i64;
+    let days = s / 86400;
+    let t = s % 86400;
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        1970 + (days as f64 / 365.25) as u64,
+        1 + ((days as f64 / 30.44) as u64 % 12),
+        1 + (days as u64 % 28),
+        t / 3600, (t % 3600) / 60, t % 60)
+}
+
+fn stored_to_msg(sm: &StoredMessage) -> Option<Message> {
+    match sm {
+        StoredMessage::User { content, .. } => Some(Message { role: Role::User, content: content.clone() }),
+        StoredMessage::Assistant { content, .. } => Some(Message { role: Role::Assistant, content: content.clone() }),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+pub async fn chat_stream(app: AppHandle, request: StreamRequest) -> Result<StreamReply, String> {
+    let role_id = request.role_id.trim().to_string();
+    if role_id.is_empty() { return Err("role_id cannot be empty".to_string()); }
+
+    let roles_config = super::global_config::load_roles_config();
+    let global_config = super::global_config::load_global_models();
     let role_def = roles_config.roles.get(&role_id).ok_or_else(|| {
-        let known: Vec<String> = roles_config.roles.keys().cloned().collect();
-        format!(
-            "role '{}' not found in roles.yaml. Available: {}",
-            role_id,
-            known.join(", ")
-        )
+        format!("role '{role_id}' not found. Available: {}", roles_config.roles.keys().cloned().collect::<Vec<_>>().join(", "))
     })?;
+    let allowed_tools = role_def.tools.clone();
 
-    // 3. Build the AgentConfig + ModelResolver (reuses session.rs helpers).
-    let agent_config = build_agent_config(
-        &global_config,
-        &roles_config,
-        &[role_id.clone()],
-    );
+    let agent_config = build_agent_config(&global_config, &roles_config, &[role_id.clone()]);
     let resolver = ModelResolver::from_config(&agent_config)
         .map_err(|e| format!("model resolver: {e}"))?;
 
-    // 4. Resolve the model chain. Single-role = only "standard" tier,
-    //    chain tail = role_def.chain()[1..].
     let chain = role_def.chain();
-    let chain_tail: Vec<String> = chain.iter().skip(1).cloned().collect();
-    let resolved_models = resolver
-        .resolve_chain(&role_id, ModelTier::Standard, &chain_tail)
+    let tier = request.tier.as_deref()
+        .and_then(|t| ModelTier::parse(t).ok())
+        .unwrap_or_else(|| ModelTier::parse(&role_def.model_tier).unwrap_or(ModelTier::Standard));
+    // CLI `-m <id>` parity: prepend user-pinned model so it's the chain head.
+    let mut chain_tail: Vec<String> = Vec::with_capacity(1 + chain.len());
+    if let Some(ref mid) = request.primary_model_id {
+        if !mid.is_empty() && chain.first().map(|s| s.as_str()) != Some(mid.as_str()) {
+            chain_tail.push(mid.clone());
+        }
+    }
+    chain_tail.extend(chain.iter().skip(1).cloned());
+    let resolved_models = resolver.resolve_chain(&role_id, tier, &chain_tail)
         .map_err(|e| format!("model chain for '{role_id}': {e}"))?;
-    if resolved_models.is_empty() {
-        return Err(format!(
-            "no usable model for role '{role_id}'. Check ~/.latte/models.yaml \
-             and that the role's chain or default_model_tier resolves to a valid model."
-        ));
-    }
+    if resolved_models.is_empty() { return Err(format!("no usable model for role '{role_id}'.")); }
+    let model_id = resolved_models.first().map(|m| m.id.clone()).unwrap_or_default();
+    let tier_label = tier.label().to_string();
 
-    // 5. Build the upstream Role (with system prompt) and AgentRunner.
-    let role = build_upstream_role(&role_id, role_def, &chain);
-    let agent = Agent::new_with_chain(
-        role_id.clone(),
-        role,
-        resolved_models,
-        latte_ai::params::GenerateParams::default(),
-    )
-    .map_err(|e| format!("build agent '{role_id}': {e}"))?;
-    let mut runner = AgentRunner::new(agent);
-
-    // 6. Convert history + new message into upstream Message list.
-    let mut messages: Vec<Message> = Vec::with_capacity(request.history.len() + 1);
-    for entry in &request.history {
-        let msg_role = match entry.role.as_str() {
-            "user" => Role::User,
-            "assistant" => Role::Assistant,
-            _ => Role::User, // fallback
-        };
-        messages.push(Message {
-            role: msg_role,
-            content: entry.content.clone(),
-        });
-    }
-    // Append the new user message.
-    messages.push(Message {
-        role: Role::User,
-        content: request.content.clone(),
+    let mut role = build_upstream_role(&role_id, role_def, &chain);
+    if !allowed_tools.is_empty() { role.system_prompt.push_str(&tool_usage_prompt(&allowed_tools)); }
+    let agent = Agent::new_with_chain(role_id.clone(), role, resolved_models, latte_ai::params::GenerateParams::default())
+        .map_err(|e| format!("build agent '{role_id}': {e}"))?;
+    let mut runner: AgentRunner = if !allowed_tools.is_empty() {
+        AgentRunner::new_with_tools(agent, build_tool_manager(&allowed_tools)?, 0)
+    } else {
+        AgentRunner::new(agent)
+    };
+    // Forward every ToolExec as a Tauri event so the UI shows the
+    // trace inline (mirrors the CLI's on-stdout ToolExec print).
+    let sink: Arc<dyn TraceSink> = Arc::new(TauriToolSink {
+        app: app.clone(),
+        session_id: request.session_id.clone(),
+        role_id: role_id.clone(),
     });
+    runner = runner.with_sink(sink);
 
-    // 7. Run the model turn.
-    let response = runner.run_turn(&messages, None).await.map_err(|e| {
-        format!("model call failed for '{role_id}': {e}")
-    })?;
+    // Build messages: from session store or request history.
+    let mut messages: Vec<Message> = Vec::new();
+    if let Some(ref sid) = request.session_id {
+        if let Ok(session) = store().get(sid).await {
+            for sm in &session.messages {
+                if let Some(msg) = stored_to_msg(sm) { messages.push(msg); }
+            }
+        }
+    } else {
+        for entry in &request.history {
+            messages.push(Message {
+                role: if entry.role == "assistant" { Role::Assistant } else { Role::User },
+                content: entry.content.clone(),
+            });
+        }
+    }
+    messages.push(Message { role: Role::User, content: request.content.clone() });
 
-    // 8. Emit the full response as a `chat:stream_done` event so the
-    //    frontend's listener can route it.
+    let response = runner.run_turn(&messages, None).await
+        .map_err(|e| format!("model call failed for '{role_id}': {e}"))?;
+
+    if let Some(ref sid) = request.session_id {
+        if store().get(sid).await.is_err() {
+            let _ = store().create(sid, "single", vec![role_id.clone()]).await;
+        }
+        let _ = store().append_message(sid, StoredMessage::User { content: request.content.clone(), timestamp: iso_now() }).await;
+        let _ = store().append_message(sid, StoredMessage::Assistant { role_id: role_id.clone(), content: response.clone(), timestamp: iso_now(), tokens: None }).await;
+    }
+
     let reply = StreamReply {
         role_id: role_id.clone(),
+        session_id: request.session_id.clone(),
+        model_id,
+        tier: tier_label,
         content: response.clone(),
     };
     let _ = app.emit("chat:stream_done", &reply);
-
     Ok(reply)
 }

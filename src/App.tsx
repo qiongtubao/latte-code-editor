@@ -12,6 +12,7 @@ import { WorkspaceTabs } from "./components/WorkspaceTabs";
 import { QuickOpenModal } from "./components/QuickOpenModal";
 import { ChatPanel } from "./components/ChatPanel";
 import { openFile } from "./api/commands";
+import { graphSearch, graphResolveCall } from "./api/graphCommands";
 import { screenshotWindow, copyScreenshotToClipboard } from "./api/screenshot";
 import { useEditorStore } from "./hooks/useEditorStore";
 import { useGraphStore } from "./hooks/useGraphStore";
@@ -65,7 +66,7 @@ function App() {
   const hydrate = useWorkspaceStore((s) => s.hydrate);
   const activeId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const openQuickOpen = useQuickOpenStore((s) => s.openModal);
-  const [defPopup, setDefPopup] = useState<{ word: string; x: number; y: number } | null>(
+  const [defPopup, setDefPopup] = useState<{ word: string; x: number; y: number; filePath?: string } | null>(
     null,
   );
   const [toast, setToast] = useState<string | null>(null);
@@ -87,6 +88,18 @@ function App() {
   useEffect(() => {
     if (activeId) useGraphStore.getState().requestReload();
   }, [activeId]);
+  const handleShowInGraph = useCallback(async (word: string) => {
+    try {
+      const resp = await graphSearch(word);
+      const node = resp.nodes.find((n) => n.kind !== "file" && n.kind !== "import");
+      if (node) {
+        window.dispatchEvent(new CustomEvent("graph-show-node", { detail: { nodeId: node.id } }));
+        setActivePanel("split");
+      }
+    } catch (e) {
+      console.error("Show in graph failed:", e);
+    }
+  }, []);
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<string>).detail;
@@ -309,6 +322,7 @@ function App() {
       {defPopup && (
         <DefinitionPopup
           word={defPopup.word}
+          callerFile={defPopup.filePath}
           position={{ x: defPopup.x, y: defPopup.y }}
           onClose={() => setDefPopup(null)}
         />
@@ -357,7 +371,20 @@ function App() {
                 className={`overflow-hidden ${activePanel === "split" ? "border-r border-gray-700" : ""}`}
                 style={activePanel === "split" ? { flex: editorFlex } : { flex: 1 }}
               >
-                <EditorPanel onCtrlClick={(word, x, y) => setDefPopup({ word, x, y })} />
+                <EditorPanel onCtrlClick={async (word, x, y, fp, line) => {
+                  // Try direct call resolution via graph edges first
+                  if (fp && line != null) {
+                    try {
+                      const resolved = await graphResolveCall(fp, line);
+                      if (resolved) {
+                        const file = await openFile(resolved.file_path);
+                        useEditorStore.getState().openFileOrSwitch(file, resolved.start_line);
+                        return;
+                      }
+                    } catch { /* fall through to popup */ }
+                  }
+                  setDefPopup({ word, x, y, filePath: fp ?? undefined });
+                }} onShowInGraph={handleShowInGraph} />
               </div>
             )}
             {activePanel === "split" && (

@@ -207,9 +207,15 @@ pub fn search_nodes(graph_dir: &Path, query: &str, limit: usize) -> Result<Vec<G
 
     Ok(nodes)
 }
-/// Find definition nodes by exact name match (name or qualified_name).
-/// Excludes imports, files — returns classes, traits, functions, methods, types, etc.
-pub fn find_definitions(graph_dir: &Path, name: &str, limit: usize) -> Result<Vec<GraphNode>, String> {
+/// Find definition nodes with caller-file awareness.
+/// `caller_path` = the file the user is currently viewing; results in the caller's
+/// file rank first. Short names (len ≤ 3) skip LIKE entirely to avoid noise.
+pub fn find_definitions(
+    graph_dir: &Path,
+    name: &str,
+    caller_path: &str,
+    limit: usize,
+) -> Result<Vec<GraphNode>, String> {
     let db_path = graph_dir.join("graph.db");
     if !db_path.exists() {
         return Err("Graph database not found".to_string());
@@ -219,13 +225,34 @@ pub fn find_definitions(graph_dir: &Path, name: &str, limit: usize) -> Result<Ve
         .map_err(|e| format!("Cannot open database: {}", e))?;
 
     let pattern = format!("%{}%", name);
+    // Short names (≤3 chars) skip LIKE to avoid noise.
+    let allow_like: i32 = if name.len() >= 4 { 1 } else { 0 };
+    // Compute caller directory prefix for same-tree prioritization.
+    // E.g. caller_path = "8.x/src/aof.c" → caller_dir_pattern = "8.x/src/%"
+    let caller_dir_pattern = std::path::Path::new(caller_path)
+        .parent()
+        .and_then(|p| {
+            let s = p.to_str().unwrap_or("");
+            if s.is_empty() { None } else { Some(format!("{}/%", s)) }
+        })
+        .unwrap_or_default();
     let mut stmt = conn
         .prepare(
             "SELECT id, kind, name, qualified_name, file_path, language, \
              start_line, end_line, signature FROM nodes \
-             WHERE (name = ?1 OR qualified_name = ?1 OR name LIKE ?3 OR qualified_name LIKE ?3) \
-             AND kind NOT IN ('file', 'import', 'export') \
+             WHERE kind NOT IN ('file', 'import', 'export') \
+               AND (name = ?1 OR qualified_name = ?1 \
+                    OR (?5 = 1 AND (name LIKE ?3 OR qualified_name LIKE ?3))) \
              ORDER BY \
+               CASE WHEN file_path = ?4 THEN 0 ELSE 1 END, \
+               CASE WHEN ?6 != '' AND file_path LIKE ?6 THEN 0 ELSE 1 END, \
+               CASE \
+                 WHEN file_path LIKE '%/bench%' \
+                   OR file_path LIKE '%/test%' \
+                   OR file_path LIKE '%/example%' \
+                   OR file_path LIKE '%/deps%' THEN 1 \
+                 ELSE 0 \
+               END, \
                CASE \
                  WHEN name = ?1 THEN 0 \
                  WHEN qualified_name = ?1 THEN 1 \
@@ -244,7 +271,7 @@ pub fn find_definitions(graph_dir: &Path, name: &str, limit: usize) -> Result<Ve
         .map_err(|e| format!("Cannot prepare definitions query: {}", e))?;
 
     let nodes: Vec<GraphNode> = stmt
-        .query_map(params![name, limit as i64, pattern], |row| {
+        .query_map(params![name, limit as i64, pattern, caller_path, allow_like, caller_dir_pattern], |row| {
             Ok(GraphNode {
                 id: row.get(0)?,
                 kind: row.get(1)?,
@@ -262,6 +289,74 @@ pub fn find_definitions(graph_dir: &Path, name: &str, limit: usize) -> Result<Ve
         .collect();
 
     Ok(nodes)
+}
+
+/// Resolve a call at a specific file + line to its target definition node.
+/// Returns the called function node if a call edge is found, or None.
+pub fn resolve_call(
+    graph_dir: &Path,
+    file_path: &str,
+    line: u32,
+) -> Result<Option<GraphNode>, String> {
+    let db_path = graph_dir.join("graph.db");
+    if !db_path.exists() {
+        return Err("Graph database not found".to_string());
+    }
+
+    let conn = Connection::open(&db_path)
+        .map_err(|e| format!("Cannot open database: {}", e))?;
+
+    // Step 1: find the function that contains the click line
+    let func_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM nodes \
+             WHERE file_path = ?1 AND kind IN ('function', 'method') \
+               AND start_line <= ?2 AND end_line >= ?2 \
+             ORDER BY start_line ASC LIMIT 1",
+            params![file_path, line],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let Some(func_id) = func_id else { return Ok(None); };
+
+    // Step 2: find a call edge from this function, within +/-1 line of click
+    let target_id: Option<String> = conn
+        .query_row(
+            "SELECT target FROM edges \
+             WHERE source = ?1 AND kind = 'calls' \
+               AND line >= ?2 AND line <= ?3 \
+             LIMIT 1",
+            params![func_id, line.saturating_sub(1), line + 1],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let Some(target_id) = target_id else { return Ok(None); };
+
+    // Step 3: fetch the target node (the definition being called)
+    let node = conn
+        .query_row(
+            "SELECT id, kind, name, qualified_name, file_path, language, \
+             start_line, end_line, signature FROM nodes WHERE id = ?1",
+            params![target_id],
+            |row| {
+                Ok(GraphNode {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    name: row.get(2)?,
+                    qualified_name: row.get(3)?,
+                    file_path: row.get(4)?,
+                    language: row.get(5)?,
+                    start_line: row.get::<_, i32>(6)? as u32,
+                    end_line: row.get::<_, i32>(7)? as u32,
+                    signature: row.get(8)?,
+                })
+            },
+        )
+        .ok();
+
+    Ok(node)
 }
 
 /// Get subgraph around a specific node (neighbors up to depth)

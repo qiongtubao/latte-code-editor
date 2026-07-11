@@ -20,8 +20,8 @@ export async function graphGetData(): Promise<GraphGetDataResponse> {
 export async function graphSearch(query: string): Promise<GraphSearchResponse> {
   return invoke<GraphSearchResponse>("graph_search", { query });
 }
-export async function graphFindDefinitions(name: string): Promise<GraphSearchResponse> {
-  return invoke<GraphSearchResponse>("graph_find_definitions", { name });
+export async function graphFindDefinitions(name: string, callerPath?: string): Promise<GraphSearchResponse> {
+  return invoke<GraphSearchResponse>("graph_find_definitions", { name, callerPath });
 }
 
 export async function graphGetSubgraph(
@@ -32,4 +32,8 @@ export async function graphGetSubgraph(
     nodeId,
     depth,
   });
+}
+
+export async function graphResolveCall(filePath: string, line: number): Promise<GraphData["nodes"][0] | null> {
+  return invoke<GraphData["nodes"][0] | null>("graph_resolve_call", { filePath, line });
 }

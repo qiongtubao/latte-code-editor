@@ -561,28 +561,77 @@ pub fn load_global_models() -> GlobalModelConfig {
     }
 }
 
-/// Load roles config from merged layers (config_loader).
-/// Returns RoleConfig for back-compat with session.rs and commands.rs.
+/// Load roles config from the editor's workspace.
 ///
-/// When `LATTE_ROLES_PATH` is set (test environment), reads from
-/// that legacy path instead of config_loader, then migrates inline
-/// workflows into `workflows/<id>.yaml` files (test compat path).
+/// Resolution order (first hit wins):
+/// 1. `LATTE_ROLES_PATH` env override (test environment).
+/// 2. Production `~/.latte-code-editor/roles.yaml` + per-role files
+///    under `roles/<id>.yaml` via [`load_from_disk`].
+/// 3. Built-in defaults from `config_loader::load_merged` so a fresh
+///    install still exposes the 10 hard-coded roles.
+///
+/// Before this fix the production path was dead — only the env-var
+/// branch actually touched disk. Every chat mode silently fell back
+/// to `template_for(...)` English defaults even when the user had a
+/// fully populated `roles.yaml`. That is the root cause of
+/// "latte-code-editor 调用模型不成功" — the user's `manager.model_chain`
+/// was ignored, the editor resolved to a premium placeholder without
+/// an API key, and `Config` errors are non-retryable in
+/// `cooldown_for_error`.
 pub fn load_roles_config() -> RoleConfig {
-    // Test compat: when LATTE_ROLES_PATH is set, read from that path
-    // using the legacy migration path so existing tests pass.
     if let Ok(legacy_path) = std::env::var("LATTE_ROLES_PATH") {
         let path = std::path::PathBuf::from(&legacy_path);
         if path.exists() {
-            let raw = match std::fs::read_to_string(&path) {
-                Ok(s) => s,
-                Err(_) => return load_from_merged(),
-            };
-            if let Ok(config) = serde_yaml::from_str::<RoleConfig>(&raw) {
-                return migrate_inline_workflows_with_dir_override(config, &path);
+            if let Ok(raw) = std::fs::read_to_string(&path) {
+                if let Ok(config) = serde_yaml::from_str::<RoleConfig>(&raw) {
+                    return migrate_inline_workflows_with_dir_override(config, &path);
+                }
             }
         }
     }
+    if let Some(config) = load_from_disk() {
+        return config;
+    }
     load_from_merged()
+}
+
+/// Read the production `~/.latte-code-editor/roles.yaml` plus
+/// per-role file overrides. Returns `None` when no file exists yet
+/// (fresh install) so the caller can fall back to the built-in
+/// defaults.
+///
+/// Mirrors the test-compat path above but uses the production
+/// directory resolved by [`roles_config_path`]. Inline workflows are
+/// migrated into per-file form so subsequent edits round-trip
+/// cleanly.
+fn load_from_disk() -> Option<RoleConfig> {
+    let path = roles_config_path();
+    if !path.exists() {
+        return None;
+    }
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let mut config: RoleConfig = serde_yaml::from_str(&raw).ok()?;
+    if !config.workflows.is_empty() {
+        let wf_dir = workflows_dir();
+        let _ = std::fs::create_dir_all(&wf_dir);
+        for (id, wf) in &config.workflows {
+            let target = wf_dir.join(format!("{}.yaml", sanitize_workflow_id(id)));
+            if !target.exists() {
+                let _ = std::fs::write(
+                    &target,
+                    serde_yaml::to_string(wf).unwrap_or_default(),
+                );
+            }
+        }
+        config.workflows.clear();
+        let _ = write_roles_config(&path, &config);
+    }
+    // Per-role files override inline entries (file is source of
+    // truth once it exists). Mirrors `migrate_inline_workflows_with_dir_override`.
+    for (id, def) in read_all_role_files() {
+        config.roles.insert(id, def);
+    }
+    Some(config)
 }
 
 /// Like `migrate_inline_workflows` but also applies file-based role

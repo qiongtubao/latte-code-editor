@@ -554,14 +554,33 @@ export interface ChatHistoryEntry {
 export interface StreamRequest {
   roleId: string;
   content: string;
-  /** Previous conversation turns. */
-  history: ChatHistoryEntry[];
+  /** Session id for persistent conversations. When set, history is loaded from disk. */
+  sessionId?: string;
+  /** Tier override (premium|standard|budget). When omitted, role's model_tier from roles.yaml is used. */
+  tier?: "premium" | "standard" | "budget";
+  /** Pin a specific model id as the chain head (CLI `-m <id>`). */
+  primaryModelId?: string;
+  history?: ChatHistoryEntry[];
 }
-
-/** Response from a single-role chat turn. */
 export interface StreamReply {
   role_id: string;
+  session_id: string | null;
+  model_id: string;
+  tier: string;
   content: string;
+}
+
+/** Tool-call event payload emitted on `chat:tool_event` from the
+ * backend's TraceSink. Lets the chat UI render each tool call as a
+ * sub-bubble under the model response. */
+export interface ToolEventPayload {
+  name: string;
+  argsJson: string;
+  latencyMs: number;
+  status: "ok" | "err";
+  resultPreview: string;
+  sessionId: string | null;
+  roleId: string;
 }
 
 /** Send one chat turn and return the model's full response. */

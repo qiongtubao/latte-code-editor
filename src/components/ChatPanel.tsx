@@ -13,18 +13,24 @@ export function ChatPanel({ onClose }: Props) {
     messages,
     status,
     availableWorkflows,
+    selectedWorkflow,
     availableRoles,
-    availableModels,
-    defaultModel,
-    modelsPath,
-    rolesPath,
-    configPanelOpen,
-    visibleTopics,
-    activeTopicId,
-    setWorkflow,
-    loadWorkflows,
-    loadModels,
+    singleRoleId,
+    singleSessionId,
+    singleTier,
+    lastResolvedModel,
+    errorMessage,
+    pendingDecision,
+    controllerSessionId,
+    sessionList,
+    sessionListLoading,
     loadRoleConfig,
+    loadWorkflows,
+    loadSessionList,
+    deleteSession,
+    loadStoredSession,
+    setWorkflow,
+    setSingleRoleId,
     sendMessage,
     cancelDiscussion,
     createNewTopic,
@@ -165,11 +171,17 @@ export function ChatPanel({ onClose }: Props) {
           ))}
         </div>
       )}
-
       <div className="flex flex-col flex-1 min-w-0">
-        <div className="flex items-center gap-2 px-3 py-2 bg-[#252526] border-b border-gray-700">
           <span className="text-base">{wfIcon}</span>
-          <span className="font-semibold text-sm text-gray-200">{wfLabel}</span>
+          <span className="font-semibold text-sm text-gray-200">
+            {wfLabel}
+            {mode === "single" && lastResolvedModel && (
+              <span className="font-normal text-[10px] text-gray-400 ml-1.5">
+                · {lastResolvedModel}
+                {singleTier ? ` · ${singleTier}` : ""}
+              </span>
+            )}
+          </span>
 
           {availableWorkflows.length > 0 && (
             <select
@@ -185,32 +197,103 @@ export function ChatPanel({ onClose }: Props) {
                 </option>
               ))}
             </select>
+          )}
+
+          <span className="text-[10px] text-gray-500 ml-1">
+            {mode === "manager" ? "交互式" : mode === "swarm" ? "蜂群" : mode === "controller" ? "Controller" : mode === "single" ? "直聊" : "讨论"}
+          </span>
+
+          <div className="flex items-center gap-1 ml-1">
+            <button
+              onClick={() => useChatStore.getState().setMode("single")}
+              className={`px-1.5 py-0.5 text-[10px] rounded ${mode === "single" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}
+              title="单角色直聊"
+            >直聊</button>
+            <button
+              onClick={() => useChatStore.getState().setMode("controller")}
+              className={`px-1.5 py-0.5 text-[10px] rounded ${mode === "controller" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}
+              title="Controller 事件驱动"
+            >Ctrl</button>
+            {mode === "single" && (
+              <select
+                value={singleRoleId}
+                onChange={(e) => setSingleRoleId(e.target.value)}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-[#3a3a3a] text-gray-200 border border-gray-600"
+                title="选择角色"
+              >
+                {availableRoles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.icon} {r.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
-          
-          <div className="mb-2">
-            <div className="flex items-center text-gray-400 mb-1">
-              <span>角色模型优先级:</span>
-              <span className="ml-auto text-[10px] text-gray-500">
-                1=主, 2+=备选
-              </span>
-            </div>
-            <div className="max-h-64 overflow-y-auto space-y-1">
-              {availableRoles.map((role) => (
-                <RoleChainEditor
-                  key={role.id}
-                  roleId={role.id}
-                  icon={role.icon}
-                  name={role.name}
-                  // Prefer the explicit chain; fall back to a synthetic
-                  // one-element chain built from the primary, so roles
-                  // loaded from a pre-chain config still render a
-                  // functional editor.
-                  serverChain={
-                    role.modelChain.length > 0 ? role.modelChain : []
-                  }
-                  availableModels={availableModels}
-                  onSave={(chain) => setRoleModelChain(role.id, chain)}
-                />
+
+          {mode === "single" && (
+            <select
+              value={singleSessionId ?? ""}
+              onChange={(e) => {
+                if (e.target.value) {
+                  loadStoredSession(e.target.value);
+                } else {
+                  clearChat();
+                }
+              }}
+              className="px-1.5 py-0.5 text-[10px] rounded bg-[#3a3a3a] text-gray-200 border border-gray-600 ml-1"
+              title="加载/切换历史 session"
+            >
+              <option value="">+ 新话题</option>
+              {sessionList
+                .filter((s) => s.chatType === "single")
+                .map((s) => (
+                  <option key={s.sessionId} value={s.sessionId}>
+                    {s.sessionId.slice(0, 16)}… ({s.messageCount})
+                  </option>
+                ))}
+            </select>
+          )}
+
+          <div className="ml-auto flex items-center gap-1">
+            {mode === "controller" && status === "running" && controllerSessionId && (
+              <button onClick={handlePause} title="暂停" className="text-yellow-400 hover:text-yellow-300 text-xs px-1">⏸</button>
+            )}
+            {mode === "controller" && status !== "running" && controllerSessionId && (
+              <button onClick={handleResume} title="继续" className="text-green-400 hover:text-green-300 text-xs px-1">▶</button>
+            )}
+            {((mode === "controller" && controllerSessionId) || canStop) && (
+              <button onClick={handleAbort} title="终止" className="text-red-400 hover:text-red-300 text-xs px-1">⏹</button>
+            )}
+            {messages.length > 0 && !canStop && (
+              <button onClick={clearChat} title="清空" className="text-gray-400 hover:text-gray-200 text-xs px-1">🗑</button>
+            )}
+            {mode === "single" && messages.length > 0 && (
+              <button onClick={clearChat} title="新话题" className="text-green-400 hover:text-green-300 text-xs px-1">📄</button>
+            )}
+            <button
+              onClick={() => setShowSessions(!showSessions)}
+              className={`text-xs px-1 ${showSessions ? "text-[#007acc]" : "text-gray-400 hover:text-gray-200"}`}
+              title="会话历史"
+            >📋</button>
+            <button onClick={() => openConfigFile("roles")} title="配置" className="text-gray-400 hover:text-gray-200 text-xs px-1">⚙</button>
+            <button onClick={onClose} title="关闭" className="text-gray-400 hover:text-gray-200 text-xs px-1">✕</button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          <MessageList messages={messages} status={status} onFileClick={handleFileClick} />
+
+          {pendingDecision && pendingDecision.options.length > 0 && (
+            <div className="mx-3 my-2 space-y-1">
+              {pendingDecision.options.map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => useChatStore.getState().submitManagerDecision(opt.id)}
+                  className="block w-full text-left px-3 py-2 bg-[#2d2d2d] hover:bg-[#3a3a3a] border border-gray-600 rounded text-sm text-gray-200 transition-colors"
+                >
+                  <span className="font-medium">{opt.label}</span>
+                  {opt.description && <span className="block text-[11px] text-gray-400 mt-0.5">{opt.description}</span>}
+                </button>
               ))}
             </div>
           </div>
