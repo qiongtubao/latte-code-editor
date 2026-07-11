@@ -159,9 +159,7 @@ pub struct WorkflowDef {
     /// Hard cap on total manager turns (questions + worker runs).
     #[serde(default = "default_max_total_steps")]
     pub max_total_steps: u32,
-    /// Hard cap on how many times the manager may bother the user
-    /// with `chat:need_decision`. Beyond this the manager must pick
-    /// itself or finalize.
+    /// Legacy manager-led cap on how many user decision rounds are allowed.
     #[serde(default = "default_max_user_decisions")]
     pub max_user_decisions: u32,
 }

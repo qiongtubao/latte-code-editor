@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceChatEvent<T: Serialize> {
+    pub workspace_id: String,
+    pub event: T,
+}
+
 /// A single agent turn, sent as a streaming event.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,7 +22,6 @@ pub struct TurnPayload {
     /// Editor UI lets the user adjust this. The summarizer uses it to
     /// decide which turns to keep verbatim vs. summarize vs. drop
     /// when the model-view byte cap is hit.
-    #[serde(default = "default_weight")]
     pub weight: f32,
     /// Stable id so the frontend can target a specific message for
     /// delete / edit operations. Backend sets this to
@@ -26,10 +32,6 @@ pub struct TurnPayload {
     /// Pinned messages are never dropped by the summarizer.
     #[serde(default)]
     pub pinned: bool,
-}
-
-fn default_weight() -> f32 {
-    1.0
 }
 
 #[derive(Clone, Serialize)]
@@ -59,6 +61,8 @@ pub struct StartDiscussionRequest {
     pub workflow: String,
     pub custom_roles: Option<Vec<String>>,
     pub max_rounds: Option<usize>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 /// Request to continue with a follow-up question.
@@ -78,9 +82,8 @@ pub struct WorkflowInfo {
     pub description: String,
     pub default_roles: Vec<String>,
     pub steps: Vec<String>,
-    /// `"planned"` (sequential), `"swarm"` (planner-driven), or
-    /// `"manager_led"` (interactive: manager role reads topic +
-    /// pauses to ask the user via `chat:need_decision`).
+    /// `"planned"` (sequential), `"swarm"` (legacy planner config), or
+    /// `"manager_led"` (legacy manager workflow config).
     pub kind: String,
     /// Runtime dispatch tag. `"planned"` / `"swarm"` mirror `kind`.
     /// `"manager_led"` is set when the workflow id starts with
@@ -240,7 +243,7 @@ pub struct WorkflowPayload {
     /// Manager-led only: hard cap on total manager turns.
     #[serde(default)]
     pub max_total_steps: u32,
-    /// Manager-led only: hard cap on `chat:need_decision` count.
+    /// Legacy manager-led only: hard cap on user decision count.
     #[serde(default)]
     pub max_user_decisions: u32,
 }
@@ -371,11 +374,7 @@ pub struct ManagerSessionState {
     pub summary: Option<String>,
 }
 
-/// Streaming status payload for manager-led workflows. Emitted via
-/// `chat:manager_status` whenever the manager transitions state
-/// (planning → awaiting decision → worker running → reflecting →
-/// finalizing → done). The chat panel renders it as a compact
-/// "📊 状态" panel — Chinese labels, no jargon.
+/// Legacy manager status snapshot retained for older saved state.
 ///
 /// All values are derived from `ManagerSessionState` at the moment
 /// of emission; we don't store this struct separately. Token /

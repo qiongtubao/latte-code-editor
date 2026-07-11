@@ -35,6 +35,16 @@ export function RoleChainEditor({
   const [chain, setChain] = useState<string[]>(serverChain);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
 
+  const openRoleConfig = async () => {
+    try {
+      const path = await openConfig(`role:${roleId}`);
+      const file = await openFile(path);
+      useEditorStore.getState().openFileOrSwitch(file);
+    } catch (e) {
+      console.error(`[chain] open role config failed for '${roleId}':`, e);
+    }
+  };
+
   // If the server-side chain changes (e.g. after a save returns a
   // deduped form, or another panel updated it), drop local edits and
   // resync. This keeps the editor honest about persisted state.
@@ -109,6 +119,7 @@ export function RoleChainEditor({
           {status === "saving" ? "💾 …" : status === "error" ? "⚠️" : null}
         </span>
       </div>
+      <div className="space-y-1">
         {chain.map((modelId, idx) => (
           <div key={`${idx}-${modelId}`} className="flex items-center gap-1">
             <span className="w-4 text-right text-gray-500 text-[10px]">

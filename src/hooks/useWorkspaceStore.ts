@@ -22,6 +22,50 @@ export interface WorkspaceMeta {
   active_tab: string | null;
   ui_state: UiState;
   last_used_at: number;
+  chat_state?: PersistedWorkspaceChat | null;
+}
+
+export interface PersistedChatMessage {
+  id: string;
+  role: "user" | "agent";
+  content: string;
+  timestamp: number;
+  agentIcon?: string;
+  agentName?: string;
+}
+
+export interface PersistedChatActivityEvent {
+  id: string;
+  kind: string;
+  roleId?: string;
+  title: string;
+  detail?: string;
+  timestamp: number;
+}
+
+export interface PersistedSwarmStepSpec {
+  id: string;
+  role: string;
+  instruction: string;
+}
+
+export interface PersistedSwarmFile {
+  path: string;
+  kind: "plan" | "output" | "summary";
+}
+
+export interface PersistedWorkspaceChat {
+  mode: "discuss" | "swarm" | "manager";
+  messages: PersistedChatMessage[];
+  activityEvents: PersistedChatActivityEvent[];
+  status: "idle" | "running" | "completed" | "error";
+  selectedWorkflow: string;
+  activeSwarmId: string | null;
+  swarmPlan: PersistedSwarmStepSpec[];
+  swarmFiles: PersistedSwarmFile[];
+  swarmSummary: string | null;
+  errorMessage: string | null;
+  lastUserTopic: string | null;
 }
 
 export interface UiState {
@@ -62,6 +106,7 @@ interface WorkspaceStore {
       active_tab?: string | null;
       ui_state?: UiState;
       name?: string;
+      chat_state?: PersistedWorkspaceChat | null;
     },
   ) => Promise<void>;
   detachToWindow: (workspaceId: string) => Promise<string>;
@@ -95,6 +140,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           ? list.slice().sort((a, b) => b.meta.last_used_at - a.meta.last_used_at)[0].id
           : null;
       set({ workspaces, activeWorkspaceId: active, hydrated: true });
+      // Important: sync backend window→workspace mapping.
+      // Without this, the backend may still use a different active workspace
+      // for the current window label (e.g. from init_workspaces), which breaks
+      // workspace-scoped chat routing.
+      if (active) {
+        try {
+          await invoke("set_active_workspace", { workspaceId: active });
+        } catch (e) {
+          console.error(
+            "[useWorkspaceStore] hydrate sync set_active_workspace failed:",
+            e,
+          );
+        }
+      }
     } catch (e) {
       console.error("[useWorkspaceStore] hydrate failed:", e);
       set({ hydrated: true });
@@ -146,11 +205,23 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
     try {
       log.info("ws.close", "closing", { workspaceId });
+      const { cancelWorkspaceDiscussion } = await import("../api/chat");
+      await cancelWorkspaceDiscussion(workspaceId).catch((e) => {
+        console.error("[useWorkspaceStore] cancel workspace chat failed:", e);
+      });
       await invoke("close_workspace", { workspaceId });
     } catch (e) {
       log.error("ws.close.error", String(e), { workspaceId });
       console.error("[useWorkspaceStore] closeWorkspace failed:", e);
     }
+    const [{ useEditorStore }, { useGraphStore }, { useChatStore }] = await Promise.all([
+      import("./useEditorStore"),
+      import("./useGraphStore"),
+      import("./useChatStore"),
+    ]);
+    useEditorStore.getState().evictWorkspace(workspaceId);
+    useGraphStore.getState().evictWorkspace(workspaceId);
+    useChatStore.getState().evictWorkspace(workspaceId);
     set((s) => {
       const { [workspaceId]: _drop, ...rest } = s.workspaces;
       const isActive = s.activeWorkspaceId === workspaceId;
@@ -172,6 +243,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         patch.active_tab === undefined ? prev.active_tab : patch.active_tab,
       ui_state: patch.ui_state ?? prev.ui_state,
       name: patch.name ?? prev.name,
+      chat_state:
+        patch.chat_state === undefined ? prev.chat_state : patch.chat_state,
     };
     set((s) => ({ workspaces: { ...s.workspaces, [workspaceId]: next } }));
     try {
@@ -182,6 +255,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           active_tab: patch.active_tab === undefined ? undefined : patch.active_tab,
           ui_state: patch.ui_state,
           name: patch.name,
+          chat_state:
+            patch.chat_state === undefined ? undefined : patch.chat_state,
         },
       });
     } catch (e) {

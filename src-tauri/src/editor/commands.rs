@@ -85,6 +85,7 @@ pub async fn open_folder(
             active_tab: None,
             ui_state: Default::default(),
             last_used_at: now,
+            chat_state: None,
         };
         registry
             .add(ws_id.clone(), Workspace::new(meta))

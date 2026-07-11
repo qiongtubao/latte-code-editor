@@ -1,12 +1,22 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-use serde::Deserialize;
-use tauri::{AppHandle, Emitter};
+use std::sync::Arc;
+
+use tauri::{AppHandle, Emitter, State, Window};
+
+use crate::workspace::registry::WorkspaceRegistry;
 
 use super::config_loader;
 use super::global_config::{load_global_models, load_roles_config, write_roles_config, global_models_path, roles_config_path, WorkflowDef, WorkflowKind, WorkflowStep};
-use super::session::{default_role_ids, run_discussion, WORKFLOW_PRESETS};
+const WORKFLOW_PRESETS: &[(&str, &[&str], &str)] = &[
+    ("plan", &["pm", "architect", "programmer", "designer", "manager"], "Plan - design and architect"),
+    ("code", &["programmer", "reviewer", "security", "tester"], "Code - review and refactor"),
+    ("debug", &["tester", "programmer", "security", "devops", "manager"], "Debug - triage and fix"),
+    ("discuss", &["manager"], "Chat - controller-backed manager chat"),
+];
 use super::types::*;
-static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
+
+fn default_role_ids() -> &'static [&'static str] {
+    &["pm", "architect", "programmer", "tester", "reviewer", "devops", "security", "designer", "tech_writer", "manager"]
+}
 
 /// Map a workflow id + kind to the runtime dispatch tag used by the
 /// chat panel. Workflows whose id starts with `manager_` always run
@@ -122,6 +132,7 @@ pub async fn chat_get_role_config() -> Result<RoleConfigResponse, String> {
 /// Fetch the full editable payload for one workflow, by id. The
 /// `chat_get_role_config` summary returns only the flat roles list;
 /// the editor needs the per-step breakdown.
+#[tauri::command]
 pub async fn chat_get_workflow_full(id: String) -> Result<WorkflowPayload, String> {
     super::global_config::read_workflow_file(&id)?
         .map(|wf| workflow_def_to_payload(&id, &wf))
@@ -273,7 +284,7 @@ pub async fn chat_list_workflows() -> Result<Vec<WorkflowInfo>, String> {
     // Fallback to built-in presets (all planned; no swarm preset here)
     let out: Vec<WorkflowInfo> = WORKFLOW_PRESETS
         .iter()
-        .map(|(id, _wf_id, default_roles, _rounds, label)| WorkflowInfo {
+        .map(|(id, default_roles, label)| WorkflowInfo {
             id: id.to_string(),
             mode: derive_mode(id, "planned"),
             name: label.to_string(),
@@ -343,167 +354,45 @@ pub async fn chat_list_roles() -> Result<Vec<RoleInfo>, String> {
 #[tauri::command]
 pub async fn chat_start_discussion(
     app: AppHandle,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
     request: StartDiscussionRequest,
 ) -> Result<usize, String> {
-    let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
-    let req = request.clone();
-
-    let result = run_discussion(&app, &req).await;
-    match result {
-        Ok(payload) => {
-            let _ = app.emit("chat:complete", &payload);
-        }
-        Err(e) => {
-            let _ = app.emit("chat:error", e);
-        }
-    }
-    Ok(session_id)
+    let workspace_id = match request.workspace_id.clone() {
+        Some(id) => Some(id),
+        None => registry.active_for_window(window.label()).await,
+    };
+    tracing::info!(
+        event = "chat_start_discussion.workspace_resolve",
+        request_workspace_id = ?request.workspace_id,
+        resolved_workspace_id = ?workspace_id,
+        window_label = %window.label()
+    );
+    let project_root = if let Some(workspace_id) = workspace_id.as_ref() {
+        registry.project_root(workspace_id).await
+    } else {
+        None
+    };
+    super::controller_runtime::start(app, request, project_root, workspace_id).await
 }
 
-
-/// Request from frontend to launch a swarm-mode discussion.
-///
-/// `name` matches `roles.yaml`'s workflow id when set; otherwise
-/// defaults to `quick_task`. `topic` is the user's task.
-/// `workspace` is an optional override for the swarm persistence root
-/// (defaults to the env-var-pinned / cwd workspace).
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartSwarmRequest {
-    pub topic: String,
-    #[serde(default = "default_swarm_name")]
-    pub name: String,
-    #[serde(default)]
-    pub workspace: Option<String>,
-}
-
-fn default_swarm_name() -> String {
-    "quick_task".to_string()
-}
-
-/// Start a swarm-mode discussion. Returns the session id immediately;
-/// progress is streamed via `chat:swarm_event` (`plan` / `step` /
-/// `summary` / `file` / `complete` / `error`).
+/// Send a follow-up message
 #[tauri::command]
-pub async fn chat_start_swarm(
-    app: AppHandle,
-    request: StartSwarmRequest,
-) -> Result<usize, String> {
-    let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
-    let name = request.name.clone();
-    let topic = request.topic.clone();
-    let workspace = request.workspace.clone();
-    // Spawn on the Tauri runtime so the IPC reply goes back fast and
-    // streamed `chat:swarm_event`s reach the UI in lock-step.
-    let app_for_task = app.clone();
-    tokio::spawn(async move {
-        match super::swarm::run_swarm(
-            &app_for_task,
-            &name,
-            &topic,
-            workspace.as_deref(),
-        )
-        .await
-        {
-            Ok(_state) => {
-                // `run_swarm` already emits the `complete` event;
-                // nothing left to do here.
-            }
-            Err(e) => {
-                app_for_task
-                    .emit(
-                        "chat:swarm_event",
-                        &super::types::SwarmEvent {
-                            kind: "error".into(),
-                            swarm_id: name,
-                            steps: None,
-                            turn: None,
-                            content: Some(e),
-                            path: None,
-                            file_kind: None,
-                        },
-                    )
-                    .ok();
-            }
-        }
-    });
-    Ok(session_id)
+pub async fn chat_continue(
+    request: ContinueDiscussionRequest,
+) -> Result<(), String> {
+    super::controller_runtime::continue_chat(request).await
 }
 
 /// Cancel a running discussion
 #[tauri::command]
 pub async fn chat_cancel(session_id: usize) -> Result<(), String> {
-    Ok(())
+    super::controller_runtime::cancel(session_id).await
 }
 
-/// Start a manager-led interactive workflow. The manager role reads
-/// the topic, decides what to do next, and either asks the user
-/// (via `chat:need_decision`) or dispatches a worker (via `chat:turn`).
-///
-/// Returns the new session_id immediately. Progress streams via
-/// `chat:turn` for manager / worker bubbles and `chat:need_decision`
-/// option-button panel.
 #[tauri::command]
-pub async fn chat_start_manager_session(
-    app: AppHandle,
-    topic: String,
-    workflowId: Option<String>,
-    #[allow(non_snake_case)]
-    workspace: Option<String>,
-) -> Result<usize, String> {
-    super::manager::start_manager_session(
-        &app,
-        &topic,
-        workflowId.as_deref(),
-        workspace.as_deref(),
-    )
-    .await
-}
-/// Backend advances the state machine from `AwaitingDecision` to
-/// `AssigningWorker` / `Finalizing` and emits the resulting turn.
-#[tauri::command]
-pub async fn chat_user_decision(
-    app: AppHandle,
-    decision: UserDecision,
-) -> Result<(), String> {
-    super::manager::submit_user_decision(&app, decision).await
-}
-
-/// User pushed the session forward without picking an option, or
-/// supplied their own instruction. Forces the manager to re-plan
-/// with the user's context note appended.
-#[tauri::command]
-pub async fn chat_user_continue(
-    app: AppHandle,
-    session_id: usize,
-    message: Option<String>,
-) -> Result<(), String> {
-    super::manager::submit_user_continue(&app, session_id, message).await
-}
-
-/// Snapshot a manager session by id. Returns `null` if the session
-/// has never been started in this process (e.g. after a Tauri
-/// restart — caller should re-issue `chat_start_manager_session`).
-#[tauri::command]
-pub async fn chat_get_manager_state(
-    session_id: usize,
-) -> Result<Option<ManagerSessionState>, String> {
-    Ok(super::manager::get_session_state(session_id))
-}
-
-/// List all live manager session ids in this process.
-#[tauri::command]
-pub async fn chat_list_manager_sessions() -> Result<Vec<usize>, String> {
-    Ok(super::manager::list_sessions())
-}
-
-/// Force-stop a manager session.
-#[tauri::command]
-pub async fn chat_abort_manager_session(
-    session_id: usize,
-    reason: String,
-) -> Result<(), String> {
-    super::manager::abort_session(session_id, &reason)
+pub async fn chat_cancel_workspace(workspace_id: String) -> Result<(), String> {
+    super::controller_runtime::cancel_workspace(&workspace_id).await
 }
 
 /// Validate a workflow id.
@@ -681,7 +570,6 @@ pub async fn chat_reset_roles_to_defaults() -> Result<RoleConfigResponse, String
             .map_err(|e| format!("写入 workflows/{id}.yaml 失败：{e}"))?;
     }
 
-    let global_config = load_global_models();
     // Re-read workflows from the files we just wrote so the
     // response reflects what's actually on disk.
     let workflows: Vec<WorkflowInfo> = super::global_config::read_all_workflow_files()

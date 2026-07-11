@@ -22,6 +22,8 @@ import { useChatStore } from "./hooks/useChatStore";
 import type { ControllerEventPayload } from "./api/chat";
 import type { ChatTurn } from "./hooks/useChatStore";
 import type { DecisionRequest, ManagerStatus, SwarmEvent } from "./api/chat";
+import type { ChatEvent, WorkspaceChatEvent } from "./api/chat";
+import { unwrapWorkspaceEvent } from "./api/chat";
 import { useLspStore } from "./hooks/useLspStore";
 import { LspManagerPanel } from "./components/LspManagerPanel";
 import { DebugBar } from "./components/DebugBar";
@@ -94,12 +96,24 @@ function App() {
     return () => window.removeEventListener("latte-toast", handler);
   }, []);
 
-  // Listen for chat events from the multi-agent chat panel
+  // Listen for controller chat events from the chat panel.
   useEffect(() => {
-    const unlistens: Array<Promise<() => void>> = [];
-    unlistens.push(
-      listen<ChatTurn>("chat:turn", (e) => {
-        addTurn(e.payload);
+    const unlistens: Array<Promise<() => void>> = [
+      listen<unknown>("chat:event", (e) => {
+        const { workspaceId, event } = unwrapWorkspaceEvent<ChatEvent>(
+          e.payload as unknown as ChatEvent | WorkspaceChatEvent<ChatEvent>,
+        );
+        const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+        // Debug: confirm event routing works.
+        // Keep lightweight so it won't spam too aggressively in normal runs.
+        console.debug("latte:chat:event", {
+          workspaceId,
+          activeWorkspaceId,
+          matchesActive: workspaceId != null && workspaceId === activeWorkspaceId,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          kind: Object.keys(event as any)[0] ?? null,
+        });
+        applyChatEvent(event, workspaceId);
       }),
     );
     unlistens.push(

@@ -98,6 +98,7 @@ mod tests {
                     ..Default::default()
                 },
                 last_used_at: 1234,
+                chat_state: None,
             },
         );
         let mut windows = WindowMapping::default();

@@ -2,8 +2,8 @@
 
 use crate::workspace::persistence::Persistence;
 use crate::workspace::registry::{
-    RegistrySnapshot, UiState, WindowMapping, Workspace, WorkspaceId, WorkspaceMeta,
-    WorkspaceRegistry,
+    PersistedWorkspaceChat, RegistrySnapshot, UiState, WindowMapping, Workspace, WorkspaceId,
+    WorkspaceMeta, WorkspaceRegistry,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -66,6 +66,7 @@ pub struct UpdateMetaArgs {
     pub active_tab: Option<Option<String>>,
     pub ui_state: Option<UiState>,
     pub name: Option<String>,
+    pub chat_state: Option<Option<PersistedWorkspaceChat>>,
 }
 
 #[tauri::command]
@@ -80,6 +81,7 @@ pub async fn update_workspace_meta(
         active_tab,
         ui_state,
         name,
+        chat_state,
     } = args;
     registry
         .update_meta(&workspace_id, |m| {
@@ -94,6 +96,9 @@ pub async fn update_workspace_meta(
             }
             if let Some(n) = name {
                 m.name = n;
+            }
+            if let Some(chat) = chat_state {
+                m.chat_state = chat;
             }
         })
         .await?;
@@ -130,6 +135,7 @@ pub async fn new_workspace(
             active_tab: None,
             ui_state: UiState::default(),
             last_used_at: now,
+            chat_state: None,
         };
         registry
             .add(id.clone(), Workspace::new(meta.clone()))
