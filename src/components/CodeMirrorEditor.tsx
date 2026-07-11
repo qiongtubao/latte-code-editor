@@ -12,7 +12,7 @@ interface CodeMirrorProps {
   content: string;
   filePath: string | null;
   onChange: (content: string) => void;
-  onCtrlClick?: (word: string, x: number, y: number, filePath: string | null) => void;
+  onCtrlClick?: (word: string, x: number, y: number, filePath: string | null, line?: number) => void;
   onShowInGraph?: (word: string, filePath: string | null) => void;
 }
 
@@ -95,7 +95,6 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
     const view = viewRef.current;
     if (!view || !filePath) return;
 
-    // ---------- Ctrl+Click → show definition ----------
     const clickHandler = (e: MouseEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
@@ -103,7 +102,8 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
       const word = wordAtPos(view, pos);
       if (word) {
         e.preventDefault();
-        onCtrlClickRef.current?.(word, e.clientX, e.clientY, filePath);
+        const line = view.state.doc.lineAt(pos).number;
+        onCtrlClickRef.current?.(word, e.clientX, e.clientY, filePath, line);
       }
     };
 
@@ -117,9 +117,11 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
         const coords = view.coordsAtPos(head);
         const x = coords ? coords.left : 0;
         const y = coords ? coords.bottom : 0;
-        onCtrlClickRef.current?.(word, x, y, filePath);
+        const line = view.state.doc.lineAt(head).number;
+        onCtrlClickRef.current?.(word, x, y, filePath, line);
       }
     };
+
 
     // ---------- Context menu → definition / show-in-graph ----------
     let menuEl: HTMLDivElement | null = null;

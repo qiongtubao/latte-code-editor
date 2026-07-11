@@ -129,3 +129,20 @@ pub async fn graph_get_subgraph(
     .map_err(|e| format!("Subgraph error: {}", e))?;
     Ok(SubgraphResponse { data })
 }
+
+#[tauri::command]
+pub async fn graph_resolve_call(
+    file_path: String,
+    line: u32,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
+) -> Result<Option<codegraph::GraphNode>, String> {
+    let graph_dir = resolve_graph_dir(&window, &registry).await?;
+    let result = tokio::task::spawn_blocking(move || {
+        codegraph::resolve_call(&graph_dir, &file_path, line)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| format!("Resolve call error: {}", e))?;
+    Ok(result)
+}

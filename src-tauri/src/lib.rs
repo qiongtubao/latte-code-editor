@@ -45,6 +45,17 @@ pub fn run() {
                     eprintln!("[setup] Failed to create app_data_dir: {}", e);
                 }
             }
+            // Pin CWD to the app's data dir so relative paths in
+            // roles.yaml (prompt_file, etc.) resolve correctly.
+            // Desktop Tauri starts with `cwd` set to the working
+            // directory of the launcher binary (`tauri dev` / .app
+            // bundle root), which is rarely the user's project root
+            // or the config directory. This caused `prompt_file:
+            // "prompts/manager.md"` to look in the bundle root
+            // rather than `~/.latte-code-editor/prompts/manager.md`.
+            if let Some(dir) = &data_dir {
+                let _ = std::env::set_current_dir(dir);
+            }
             let settings_store = Arc::new(SettingsStore::new(data_dir.unwrap_or_else(|| std::env::temp_dir())));
             let hub = IncrementalHub::start(app.handle().clone(), (*settings_store).clone());
             app.manage(settings_store);
@@ -84,6 +95,7 @@ pub fn run() {
             crate::graph::commands::graph_search,
             crate::graph::commands::graph_find_definitions,
             crate::graph::commands::graph_get_subgraph,
+            crate::graph::commands::graph_resolve_call,
             crate::graph::build_commands::build_code_graph,
             crate::graph::build_commands::update_code_graph,
             // settings

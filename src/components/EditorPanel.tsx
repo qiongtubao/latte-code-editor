@@ -7,7 +7,7 @@ import { DocViewer } from "./DocViewer";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { openFile, saveFile } from "../api/commands";
 interface EditorPanelProps {
-  onCtrlClick?: (word: string, x: number, y: number, filePath: string | null) => void;
+  onCtrlClick?: (word: string, x: number, y: number, filePath: string | null, line?: number) => void;
   onShowInGraph?: (word: string, filePath: string | null) => void;
 }
 export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {

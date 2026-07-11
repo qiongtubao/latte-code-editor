@@ -12,7 +12,7 @@ import { WorkspaceTabs } from "./components/WorkspaceTabs";
 import { QuickOpenModal } from "./components/QuickOpenModal";
 import { ChatPanel } from "./components/ChatPanel";
 import { openFile } from "./api/commands";
-import { graphSearch } from "./api/graphCommands";
+import { graphSearch, graphResolveCall } from "./api/graphCommands";
 import { screenshotWindow, copyScreenshotToClipboard } from "./api/screenshot";
 import { useEditorStore } from "./hooks/useEditorStore";
 import { useGraphStore } from "./hooks/useGraphStore";
@@ -357,7 +357,20 @@ function App() {
                 className={`overflow-hidden ${activePanel === "split" ? "border-r border-gray-700" : ""}`}
                 style={activePanel === "split" ? { flex: editorFlex } : { flex: 1 }}
               >
-                <EditorPanel onCtrlClick={(word, x, y, fp) => setDefPopup({ word, x, y, filePath: fp ?? undefined })} onShowInGraph={handleShowInGraph} />
+                <EditorPanel onCtrlClick={async (word, x, y, fp, line) => {
+                  // Try direct call resolution via graph edges first
+                  if (fp && line != null) {
+                    try {
+                      const resolved = await graphResolveCall(fp, line);
+                      if (resolved) {
+                        const file = await openFile(resolved.file_path);
+                        useEditorStore.getState().openFileOrSwitch(file, resolved.start_line);
+                        return;
+                      }
+                    } catch { /* fall through to popup */ }
+                  }
+                  setDefPopup({ word, x, y, filePath: fp ?? undefined });
+                }} onShowInGraph={handleShowInGraph} />
               </div>
             )}
             {activePanel === "split" && (

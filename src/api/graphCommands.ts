@@ -33,3 +33,7 @@ export async function graphGetSubgraph(
     depth,
   });
 }
+
+export async function graphResolveCall(filePath: string, line: number): Promise<GraphData["nodes"][0] | null> {
+  return invoke<GraphData["nodes"][0] | null>("graph_resolve_call", { filePath, line });
+}
