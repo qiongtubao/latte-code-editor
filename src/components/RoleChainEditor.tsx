@@ -182,5 +182,6 @@ export function RoleChainEditor({
           </div>
         )}
       </div>
+    </div>
   );
 }

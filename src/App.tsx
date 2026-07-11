@@ -128,7 +128,7 @@ function App() {
         });
         applyChatEvent(event, workspaceId);
       }),
-    );
+    ];
     unlistens.push(
       listen<SwarmEvent>("chat:swarm_event", (e) => {
         applySwarmEvent(e.payload);

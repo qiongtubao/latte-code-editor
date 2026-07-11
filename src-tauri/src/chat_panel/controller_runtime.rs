@@ -65,9 +65,11 @@ pub async fn start(
             agent_config,
             model_resolver: resolver,
             default_params: GenerateParams::default(),
+            initial_history: vec![],
             primary_model_id: None,
             initial_tier,
             cwd,
+            subsession_store: Arc::new(latte_agent_core::subsession::SubsessionStore::new()),
         })
         .await;
 

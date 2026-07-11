@@ -422,7 +422,7 @@ pub async fn refresh_file(
     let workspace_id = resolve_workspace_id(&window, &registry).await?;
     
     let snap = registry.snapshot().await;
-    let workspace = snap.workspaces.get(&workspace_id)
+    let _workspace = snap.workspaces.get(&workspace_id)
         .ok_or_else(|| format!("Workspace {} not found", workspace_id))?;
     
     // 获取 workspace 实例（包含 BufferManager）

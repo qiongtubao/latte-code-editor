@@ -2413,20 +2413,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "latte-agent-orchestrator"
-version = "0.1.0"
-dependencies = [
- "futures",
- "latte-agent-core",
- "latte-ai",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "toml 0.8.2",
-]
-
-[[package]]
 name = "latte-ai"
 version = "0.1.0"
 dependencies = [
@@ -2455,7 +2441,6 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "latte-agent-core",
- "latte-agent-orchestrator",
  "latte-ai",
  "latte-rs-agent-tools",
  "latte-rs-graph",

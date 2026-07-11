@@ -2430,5 +2430,4 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   cancelHilEditMessage: () => set({ hilEditingMessage: null }),
-  };
-});
+}));

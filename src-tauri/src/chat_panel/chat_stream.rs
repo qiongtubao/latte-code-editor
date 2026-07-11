@@ -14,13 +14,12 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use serde::{Deserialize, Serialize};
 use latte_agent_core::agent::{Agent, AgentRunner};
-use latte_agent_core::model_resolver::{ModelResolver, ModelTier};
+use latte_agent_core::model_resolver::ModelTier;
 use latte_agent_core::session_store::{SessionStore, StoredMessage};
 use latte_agent_core::trace::{ToolStatus, TraceEvent, TraceSink};
 use latte_ai::models::{Message, Role};
 use latte_rs_agent_tools::prelude::*;
-
-use super::session::{build_agent_config, build_upstream_role};
+use super::config_loader;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatHistoryEntry {
@@ -130,21 +129,20 @@ pub(crate) fn build_tool_manager(allowed: &[String]) -> Result<Arc<dyn latte_rs_
 }
 
 pub(crate) fn tool_usage_prompt(allowed: &[String]) -> String {
-    let real_names: Vec<String> = allowed.iter().map(|s| match s.as_str() {
+    let _tool_list = allowed.iter().map(|s| match s.as_str() {
         "bash" => "exec".to_string(),
         other => other.to_string(),
-    }).collect();
-    let tool_list = real_names.join(", ");
+    }).collect::<Vec<_>>().join(", ");
     format!(
         r#"
 
 ## Tool calling protocol
 
-Use this exact raw format on its own line — no markdown, no code fences:
+Use this exact raw format on its own line -- no markdown, no code fences:
 
 When you need a tool, emit:
 
-Plain text — the markers are literal, copy them character-for-character.
+Plain text -- the markers are literal, copy them character-for-character.
 
 End with a plain text response when done.
 "#
@@ -176,22 +174,19 @@ pub async fn chat_stream(app: AppHandle, request: StreamRequest) -> Result<Strea
     let role_id = request.role_id.trim().to_string();
     if role_id.is_empty() { return Err("role_id cannot be empty".to_string()); }
 
-    let roles_config = super::global_config::load_roles_config();
-    let global_config = super::global_config::load_global_models();
-    let role_def = roles_config.roles.get(&role_id).ok_or_else(|| {
-        format!("role '{role_id}' not found. Available: {}", roles_config.roles.keys().cloned().collect::<Vec<_>>().join(", "))
+    let merged = config_loader::load_merged();
+    let role_template = merged.roles.get(&role_id).ok_or_else(|| {
+        format!("role '{role_id}' not found in merged config. Available: {}", merged.roles.keys().cloned().collect::<Vec<_>>().join(", "))
     })?;
-    let allowed_tools = role_def.tools.clone();
+    let allowed_tools = role_template.tools.clone();
 
-    let agent_config = build_agent_config(&global_config, &roles_config, &[role_id.clone()]);
-    let resolver = ModelResolver::from_config(&agent_config)
-        .map_err(|e| format!("model resolver: {e}"))?;
+    let resolver = config_loader::build_resolver(&merged)
+        .ok_or_else(|| "failed to build model resolver from merged config".to_string())?;
 
-    let chain = role_def.chain();
+    let chain = role_template.model_chain.clone();
     let tier = request.tier.as_deref()
         .and_then(|t| ModelTier::parse(t).ok())
-        .unwrap_or_else(|| ModelTier::parse(&role_def.model_tier).unwrap_or(ModelTier::Standard));
-    // CLI `-m <id>` parity: prepend user-pinned model so it's the chain head.
+        .unwrap_or_else(|| ModelTier::parse(&role_template.model_tier).unwrap_or(ModelTier::Standard));
     let mut chain_tail: Vec<String> = Vec::with_capacity(1 + chain.len());
     if let Some(ref mid) = request.primary_model_id {
         if !mid.is_empty() && chain.first().map(|s| s.as_str()) != Some(mid.as_str()) {
@@ -205,7 +200,11 @@ pub async fn chat_stream(app: AppHandle, request: StreamRequest) -> Result<Strea
     let model_id = resolved_models.first().map(|m| m.id.clone()).unwrap_or_default();
     let tier_label = tier.label().to_string();
 
-    let mut role = build_upstream_role(&role_id, role_def, &chain);
+    // Build the role via RoleTemplate::resolve (replaces build_upstream_role)
+    let mut role = role_template
+        .resolve(&latte_ai::params::GenerateParams::default())
+        .await
+        .map_err(|e| format!("failed to resolve role '{role_id}': {e}"))?;
     if !allowed_tools.is_empty() { role.system_prompt.push_str(&tool_usage_prompt(&allowed_tools)); }
     let agent = Agent::new_with_chain(role_id.clone(), role, resolved_models, latte_ai::params::GenerateParams::default())
         .map_err(|e| format!("build agent '{role_id}': {e}"))?;

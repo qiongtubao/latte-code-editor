@@ -44,11 +44,6 @@ export function ChatPanel({ onClose }: Props) {
     closeWorkflowEditor,
     editingWorkflow,
   } = useChatStore();
-  const [input, setInput] = useState("");
-   useEffect(() => {
-    loadWorkflows();
-    loadModels();
-  }, [loadWorkflows, loadModels, loadRoleConfig]);
 
   const [input, setInput] = useState("");
   const [showSessions, setShowSessions] = useState(false);
@@ -86,7 +81,7 @@ export function ChatPanel({ onClose }: Props) {
       e.preventDefault();
       handleSend();
     }
-  };
+  }, [handleSend]);
   const managerWorkflows = availableWorkflows.filter(
     (w) => w.id.startsWith("manager_") || w.mode === "manager_led",
   );
@@ -296,7 +291,7 @@ export function ChatPanel({ onClose }: Props) {
                 </button>
               ))}
             </div>
-          </div>
+          )}
 
           {/* ── Workflow settings ───────────────────────────── */}
           <div className="mt-3 pt-3 border-t border-gray-700">
@@ -374,7 +369,6 @@ export function ChatPanel({ onClose }: Props) {
             {rolesPath}
           </div>
         </div>
-      )}
 
       {/* Messages */}
       <MessageList messages={messages} status={status} onFileClick={handleFileClick} />
@@ -402,6 +396,8 @@ export function ChatPanel({ onClose }: Props) {
               📄 打开配置文件
             </button>
           )}
+        </div>
+        )}
 
       <div className="px-3 py-2 bg-[#252526] border-t border-gray-700">
           <textarea
