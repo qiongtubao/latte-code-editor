@@ -12,18 +12,21 @@ interface CodeMirrorProps {
   content: string;
   filePath: string | null;
   onChange: (content: string) => void;
-  onCtrlClick?: (word: string, x: number, y: number) => void;
+  onCtrlClick?: (word: string, x: number, y: number, filePath: string | null) => void;
+  onShowInGraph?: (word: string, filePath: string | null) => void;
 }
 
-export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: CodeMirrorProps) {
+export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick, onShowInGraph }: CodeMirrorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const targetLine = useEditorStore((s) => s.targetLine);
   const contentRef = useRef(content);
   const onChangeRef = useRef(onChange);
   const onCtrlClickRef = useRef(onCtrlClick);
+  const onShowInGraphRef = useRef(onShowInGraph);
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
   useEffect(() => { onCtrlClickRef.current = onCtrlClick; }, [onCtrlClick]);
+useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
   useEffect(() => { contentRef.current = content; }, [content]);
 
   const buildEditor = () => {
@@ -87,26 +90,86 @@ export function CodeMirrorEditor({ content, filePath, onChange, onCtrlClick }: C
     return unsub;
   }, []);
 
-  // Ctrl+Click handler — pick the entire token (Identifier, function name,
-  // macro name, type name, etc.) at the click position. This mirrors VS Code
-  // semantics: clicking anywhere inside `println!` resolves to `println`.
+  // Ctrl+Click / F12 / context menu handlers
   useEffect(() => {
     const view = viewRef.current;
     if (!view || !filePath) return;
 
-    const handler = (e: MouseEvent) => {
+    // ---------- Ctrl+Click → show definition ----------
+    const clickHandler = (e: MouseEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return;
       const word = wordAtPos(view, pos);
       if (word) {
         e.preventDefault();
-        onCtrlClickRef.current?.(word, e.clientX, e.clientY);
+        onCtrlClickRef.current?.(word, e.clientX, e.clientY, filePath);
       }
     };
 
-    view.dom.addEventListener("click", handler);
-    return () => view.dom.removeEventListener("click", handler);
+    // ---------- F12 → show definition (at cursor) ----------
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key !== "F12") return;
+      const head = view.state.selection.main.head;
+      const word = wordAtPos(view, head);
+      if (word) {
+        e.preventDefault();
+        const coords = view.coordsAtPos(head);
+        const x = coords ? coords.left : 0;
+        const y = coords ? coords.bottom : 0;
+        onCtrlClickRef.current?.(word, x, y, filePath);
+      }
+    };
+
+    // ---------- Context menu → definition / show-in-graph ----------
+    let menuEl: HTMLDivElement | null = null;
+
+    const closeMenu = () => {
+      if (menuEl) { menuEl.remove(); menuEl = null; }
+    };
+
+    const contextHandler = (e: MouseEvent) => {
+      e.preventDefault();
+      closeMenu();
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+      if (pos == null) return;
+      const word = wordAtPos(view, pos);
+      if (!word) return;
+
+      menuEl = document.createElement("div");
+      menuEl.className = "fixed z-50 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl py-1 text-xs min-w-[140px]";
+      menuEl.style.left = `${e.clientX}px`;
+      menuEl.style.top = `${e.clientY}px`;
+
+      const defItem = document.createElement("button");
+      defItem.className = "w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] cursor-pointer";
+      defItem.textContent = "跳转定义";
+      defItem.onclick = () => { closeMenu(); onCtrlClickRef.current?.(word, e.clientX, e.clientY, filePath); };
+      menuEl.appendChild(defItem);
+
+      const graphItem = document.createElement("button");
+      graphItem.className = "w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] cursor-pointer";
+      graphItem.textContent = "在图谱中查看";
+      graphItem.onclick = () => { closeMenu(); onShowInGraphRef.current?.(word, filePath); };
+      menuEl.appendChild(graphItem);
+
+      document.body.appendChild(menuEl);
+      // Click outside to dismiss
+      const outsideHandler = (ev: MouseEvent) => {
+        if (menuEl && !menuEl.contains(ev.target as Node)) { closeMenu(); document.removeEventListener("mousedown", outsideHandler); }
+      };
+      document.addEventListener("mousedown", outsideHandler);
+    };
+
+    view.dom.addEventListener("click", clickHandler);
+    view.dom.addEventListener("keydown", keyHandler);
+    view.dom.addEventListener("contextmenu", contextHandler);
+    return () => {
+      view.dom.removeEventListener("click", clickHandler);
+      view.dom.removeEventListener("keydown", keyHandler);
+      view.dom.removeEventListener("contextmenu", contextHandler);
+      closeMenu();
+    };
   }, [filePath]);
   return <div ref={containerRef} className="h-full overflow-auto" />;
 }

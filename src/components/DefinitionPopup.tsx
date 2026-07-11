@@ -7,11 +7,12 @@ import { useEditorStore } from "../hooks/useEditorStore";
 
 interface DefinitionPopupProps {
   word: string;
+  callerFile?: string;
   position: { x: number; y: number };
   onClose: () => void;
 }
 
-export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProps) {
+export function DefinitionPopup({ word, callerFile, position, onClose }: DefinitionPopupProps) {
   const [results, setResults] = useState<GraphData["nodes"]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +23,7 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
     async function search() {
       setLoading(true);
       try {
-        const resp = await graphFindDefinitions(word);
+        const resp = await graphFindDefinitions(word, callerFile);
         if (!cancelled) setResults(resp.nodes);
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -32,7 +33,7 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
     }
     search();
     return () => { cancelled = true; };
-  }, [word]);
+  }, [word, callerFile]);
 
   // Close on click outside
   useEffect(() => {
@@ -155,7 +156,7 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => handleJump(node)}
               onDoubleClick={() => handleJump(node)}
-              className="flex items-start gap-2 px-3 py-1.5 cursor-pointer hover:bg-[#3a3a3a] border-b border-gray-800 last:border-0"
+              className={`flex items-start gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-800 last:border-0 ${callerFile && node.file_path === callerFile ? "bg-[#1a3a1a] hover:bg-[#1e4a1e]" : "hover:bg-[#3a3a3a]"}`}
             >
               <span
                 className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1"
@@ -170,8 +171,11 @@ export function DefinitionPopup({ word, position, onClose }: DefinitionPopupProp
                     {kindLabel(node.kind)}
                   </span>
                 </div>
-                <div className="text-gray-300 truncate mt-0.5">
-                  {node.file_path}:{node.start_line}
+                <div className="flex items-center gap-1 text-gray-300 truncate mt-0.5">
+                  <span>{node.file_path}:{node.start_line}</span>
+                  {callerFile && node.file_path === callerFile && (
+                    <span className="text-green-400 text-[9px] border border-green-600 rounded px-1 leading-tight">current</span>
+                  )}
                 </div>
                 {node.signature && (
                   <div className="text-gray-400 font-mono truncate mt-0.5">

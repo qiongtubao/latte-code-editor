@@ -7,9 +7,10 @@ import { DocViewer } from "./DocViewer";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { openFile, saveFile } from "../api/commands";
 interface EditorPanelProps {
-  onCtrlClick?: (word: string, x: number, y: number) => void;
+  onCtrlClick?: (word: string, x: number, y: number, filePath: string | null) => void;
+  onShowInGraph?: (word: string, filePath: string | null) => void;
 }
-export function EditorPanel({ onCtrlClick }: EditorPanelProps) {
+export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
   const {
     currentContent,
     setContent,
@@ -146,6 +147,7 @@ export function EditorPanel({ onCtrlClick }: EditorPanelProps) {
               ) : (
                 <CodeMirrorEditor
                   onCtrlClick={onCtrlClick}
+                  onShowInGraph={onShowInGraph}
                   content={currentContent}
                   filePath={filePath}
                   onChange={handleChange}
@@ -158,6 +160,7 @@ export function EditorPanel({ onCtrlClick }: EditorPanelProps) {
         return (
           <CodeMirrorEditor
             onCtrlClick={onCtrlClick}
+            onShowInGraph={onShowInGraph}
             content={currentContent}
             filePath={filePath}
             onChange={handleChange}

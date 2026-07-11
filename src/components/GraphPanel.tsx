@@ -97,6 +97,18 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
     load();
     return () => { cancelled = true; };
   }, [loadVersion, setGraphData, setLoading, setError]);
+  // Listen for "Show in Graph" events from the editor
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { nodeId } = (e as CustomEvent<{ nodeId: string }>).detail;
+      setFocusedNodeId(nodeId);
+      setDisplayMode("focus");
+      setSearchResults([]);
+      setSearchQuery("");
+    };
+    window.addEventListener("graph-show-node", handler);
+    return () => window.removeEventListener("graph-show-node", handler);
+  }, []);
 
   // Filtered data
   const filteredData = useMemo(() => {
