@@ -1,7 +1,7 @@
 {
   "sessionId": 1,
   "state": "awaiting_decision",
-  "topic": "查看代码 分析项目功能",
+  "topic": "查看项目 了解功能",
   "managerRoleId": "tech_director",
   "availableRoles": [
     "pm",
@@ -24,12 +24,12 @@
       "roleId": "tech_director",
       "roleName": "工程经理",
       "icon": "👔",
-      "content": "[🧭 通用]\n\n**我不太确定怎么拆解这个任务 —— 你想怎么开始？**\n\n_Stub-mode heuristic: branch=🧭 通用, topic='查看代码 分析项目功能', decisions_taken=0, steps_taken=0_\n\n- **先让产品经理理清需求** — 任务多半隐含没说明的需求（约 $0.005）\n- **先让架构师看可行性** — 技术风险高的先排除（约 $0.008）\n- **直接让软件工程师开干** — 需求清晰，重在实现（约 $0.006）\n- **我说了算（让 manager 自己定 / 跳过）** — 不要上面这些选项，让 manager 自己决定下一步（约 $0.000）",
+      "content": "[🧭 通用]\n\n**我不太确定怎么拆解这个任务 —— 你想怎么开始？**\n\n_Stub-mode heuristic: branch=🧭 通用, topic='查看项目 了解功能', decisions_taken=0, steps_taken=0_\n\n- **先让产品经理理清需求** — 任务多半隐含没说明的需求（约 $0.005）\n- **先让架构师看可行性** — 技术风险高的先排除（约 $0.008）\n- **直接让软件工程师开干** — 需求清晰，重在实现（约 $0.006）\n- **我说了算（让 manager 自己定 / 跳过）** — 不要上面这些选项，让 manager 自己决定下一步（约 $0.000）",
       "action": {
         "kind": "needDecision",
         "branch_label": "🧭 通用",
         "question": "我不太确定怎么拆解这个任务 —— 你想怎么开始？",
-        "reason": "Stub-mode heuristic: branch=🧭 通用, topic='查看代码 分析项目功能', decisions_taken=0, steps_taken=0",
+        "reason": "Stub-mode heuristic: branch=🧭 通用, topic='查看项目 了解功能', decisions_taken=0, steps_taken=0",
         "options": [
           {
             "id": "ask_pm",
@@ -64,10 +64,10 @@
       "userDecision": null,
       "weight": 2.0,
       "pinned": false,
-      "tsMs": 1782672673080
+      "tsMs": 1783148690128
     }
   ],
-  "startedAtMs": 1782672673073,
+  "startedAtMs": 1783148687206,
   "finishedAtMs": null,
   "summary": null
 }

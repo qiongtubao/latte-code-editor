@@ -50,6 +50,7 @@ base64 = "0.22"
 tauri-plugin-clipboard-manager = "2.3.2"
 serde_yaml = "0.9"
 dirs = "6"
+latte-rs-agent-tools = { path = "../../latte-rs-agent-tools" }
 
 [dev-dependencies]
 tempfile = "3"

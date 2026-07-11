@@ -15,6 +15,11 @@ export function ChatPanel({ onClose }: Props) {
     status,
     availableWorkflows,
     selectedWorkflow,
+    availableRoles,
+    singleRoleId,
+    singleSessionId,
+    singleTier,
+    lastResolvedModel,
     errorMessage,
     pendingDecision,
     controllerSessionId,
@@ -24,7 +29,9 @@ export function ChatPanel({ onClose }: Props) {
     loadWorkflows,
     loadSessionList,
     deleteSession,
+    loadStoredSession,
     setWorkflow,
+    setSingleRoleId,
     sendMessage,
     clearChat,
     cancelDiscussion,
@@ -179,11 +186,17 @@ export function ChatPanel({ onClose }: Props) {
           </div>
         </div>
       )}
-
       <div className="flex flex-col flex-1 min-w-0">
-        <div className="flex items-center gap-2 px-3 py-2 bg-[#252526] border-b border-gray-700">
           <span className="text-base">{wfIcon}</span>
-          <span className="font-semibold text-sm text-gray-200">{wfLabel}</span>
+          <span className="font-semibold text-sm text-gray-200">
+            {wfLabel}
+            {mode === "single" && lastResolvedModel && (
+              <span className="font-normal text-[10px] text-gray-400 ml-1.5">
+                · {lastResolvedModel}
+                {singleTier ? ` · ${singleTier}` : ""}
+              </span>
+            )}
+          </span>
 
           {availableWorkflows.length > 0 && (
             <select
@@ -216,7 +229,45 @@ export function ChatPanel({ onClose }: Props) {
               className={`px-1.5 py-0.5 text-[10px] rounded ${mode === "controller" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}
               title="Controller 事件驱动"
             >Ctrl</button>
+            {mode === "single" && (
+              <select
+                value={singleRoleId}
+                onChange={(e) => setSingleRoleId(e.target.value)}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-[#3a3a3a] text-gray-200 border border-gray-600"
+                title="选择角色"
+              >
+                {availableRoles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.icon} {r.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
+
+          {mode === "single" && (
+            <select
+              value={singleSessionId ?? ""}
+              onChange={(e) => {
+                if (e.target.value) {
+                  loadStoredSession(e.target.value);
+                } else {
+                  clearChat();
+                }
+              }}
+              className="px-1.5 py-0.5 text-[10px] rounded bg-[#3a3a3a] text-gray-200 border border-gray-600 ml-1"
+              title="加载/切换历史 session"
+            >
+              <option value="">+ 新话题</option>
+              {sessionList
+                .filter((s) => s.chatType === "single")
+                .map((s) => (
+                  <option key={s.sessionId} value={s.sessionId}>
+                    {s.sessionId.slice(0, 16)}… ({s.messageCount})
+                  </option>
+                ))}
+            </select>
+          )}
 
           <div className="ml-auto flex items-center gap-1">
             {mode === "controller" && status === "running" && controllerSessionId && (
@@ -230,6 +281,9 @@ export function ChatPanel({ onClose }: Props) {
             )}
             {messages.length > 0 && !canStop && (
               <button onClick={clearChat} title="清空" className="text-gray-400 hover:text-gray-200 text-xs px-1">🗑</button>
+            )}
+            {mode === "single" && messages.length > 0 && (
+              <button onClick={clearChat} title="新话题" className="text-green-400 hover:text-green-300 text-xs px-1">📄</button>
             )}
             <button
               onClick={() => setShowSessions(!showSessions)}
@@ -292,7 +346,6 @@ export function ChatPanel({ onClose }: Props) {
             >Send</button>
             <span className="text-[10px] text-gray-500 ml-auto">Enter 发送 · Shift+Enter 换行</span>
           </div>
-        </div>
       </div>
     </div>
   );

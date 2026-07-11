@@ -650,7 +650,7 @@ where
     // If the action was AssignWorker, immediately fire that worker
     // turn (in stub mode — real LLM would call run_discussion).
     if let ManagerAction::AssignWorker { worker_role, instruction } = &action {
-        run_worker_stub(app, state_arc, workspace, worker_role, instruction, turn_number + 1)?;
+        run_worker_stub(app, &state_arc, Some(workspace), worker_role, instruction, turn_number + 1)?;
     }
     persist_state(&state_arc.lock(), workspace).ok();
     emit_manager_status(app, &state_arc.lock());
@@ -693,7 +693,7 @@ pub(crate) fn render_context_summary(turns: &[ManagerTurn]) -> String {
 fn run_worker_stub(
     app: &AppHandle,
     state_arc: &Arc<Mutex<ManagerSessionState>>,
-    workspace: &Path,
+    workspace: Option<&Path>,
     worker_role: &str,
     instruction: &str,
     turn_number: usize,
@@ -705,7 +705,18 @@ fn run_worker_stub(
         None => (worker_role.to_string(), "💬".to_string()),
     };
     let topic = state_arc.lock().topic.clone();
-    let response = stub_worker_response(worker_role, &topic, instruction);
+    // Real LLM call: dispatch the worker via run_discussion so it has
+    // full tool access (bash, read, search). The worker's response is
+    // surfaced as a chat:turn bubble.
+    let response = match run_live_worker(app, worker_role, &topic, instruction) {
+        Ok(r) => { r },
+        Err(e) => {
+            // LLM failed — fall back to stub so the user sees
+            // something rather than a broken session.
+            eprintln!("worker LLM failed for '{worker_role}': {e}; using stub fallback");
+            stub_worker_response(worker_role, &topic, instruction)
+        },
+    };
 
     let payload = TurnPayload {
         agent: role_name.clone(),
@@ -736,16 +747,53 @@ fn run_worker_stub(
             pinned: false,
             ts_ms: now_ms(),
         });
-        // After worker runs, manager reflects.
         s.state = ManagerState::Reflecting;
     }
 
     emit_turn(app, &payload);
-    persist_state(&state_arc.lock(), workspace).ok();
+    let ws = workspace.unwrap_or(std::path::Path::new("."));
+    persist_state(&state_arc.lock(), ws).ok();
     emit_manager_status(app, &state_arc.lock());
-    take_manager_turn(app, state_arc, workspace, &topic, turn_number + 1, |s| {
+    take_manager_turn(app, state_arc, ws, &topic, turn_number + 1, |s| {
         stub_reflection(worker_role, &s.topic)
     })
+}
+
+/// Call the LLM for a single worker role with full tool access.
+/// Runs the worker via `run_discussion` with `custom_roles = [worker_role]`.
+fn run_live_worker(
+    app: &AppHandle,
+    worker_role: &str,
+    topic: &str,
+    instruction: &str,
+) -> Result<String, String> {
+    use super::session::run_discussion;
+    use super::types::StartDiscussionRequest;
+
+    // The worker prompt: context (topic) + the manager's instruction.
+    let prompt = format!(
+        "## 上文\n\n{topic}\n\n## 当前任务\n\n{instruction}",
+    );
+
+    let req = StartDiscussionRequest {
+        topic: prompt,
+        workflow: format!("__manager_worker_{worker_role}"),
+        custom_roles: Some(vec![worker_role.to_string()]),
+        max_rounds: Some(1),
+    };
+
+    let rt = tokio::runtime::Handle::current();
+    let payload = rt.block_on(run_discussion(app, &req))
+        .map_err(|e| format!("worker discussion failed: {e}"))?;
+
+    let text = payload
+        .rounds
+        .first()
+        .and_then(|r| r.turns.first())
+        .map(|t| t.response.clone())
+        .ok_or_else(|| "worker returned empty response".to_string())?;
+
+    Ok(text)
 }
 
 /// Handle the user's choice. Resumes the state machine from

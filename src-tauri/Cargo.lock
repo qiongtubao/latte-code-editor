@@ -2399,7 +2399,7 @@ dependencies = [
 name = "latte-agent-core"
 version = "0.1.0"
 dependencies = [
- "dirs",
+ "async-trait",
  "handlebars",
  "latte-ai",
  "latte-rs-agent-tools",
@@ -2457,6 +2457,7 @@ dependencies = [
  "latte-agent-core",
  "latte-agent-orchestrator",
  "latte-ai",
+ "latte-rs-agent-tools",
  "latte-rs-graph",
  "lsp-types 0.97.0",
  "notify",

@@ -80,9 +80,16 @@ pub async fn run_discussion(
         return run_stub_discussion(app, req).await;
     }
 
-    let merged = crate::chat_panel::config_loader::load_merged();
+    // Roles + models come from the editor's workspace so the manager /
+    // programmer / reviewer prompts the user wrote into
+    // `~/.latte-code-editor/roles.yaml` actually reach the LLM call.
+    // The previous path (`config_loader::load_merged()`) only saw
+    // `~/.latte/agents.d/<id>.toml` and the upstream `template_for()`
+    // defaults — editor-side role files were silently ignored.
+    let roles_config = super::global_config::load_roles_config();
+    let global_config = super::global_config::load_global_models();
 
-    if merged.models.models.is_empty() {
+    if global_config.models.is_empty() {
         let models_path = crate::chat_panel::config_loader::global_models_path();
         return Err(format!(
             "未配置 API 密钥。\n\n配置: {}\n\n请在配置文件中设置 API 密钥:\n1. 打开 ~/.latte/models.yaml\n2. 在模型定义中填入 api_key:\n\n   models:\n     - id: deepseek-chat\n       api_key: YOUR_API_KEY_HERE\n\n或强制使用 stub 模式:\nexport LATTE_CHAT_LIVE=0",
@@ -90,17 +97,20 @@ pub async fn run_discussion(
         ));
     }
 
-    // Build a ModelResolver from the merged config
+    let upstream_models: Vec<UpstreamModelDef> =
+        global_config.models.iter().map(super::session::convert_project_to_upstream_model).collect();
     let agent_cfg = latte_agent_core::config::AgentConfig {
-        models: merged.models.clone(),
-        roles: merged.roles.clone(),
+        models: latte_agent_core::config::ModelCatalog {
+            models: upstream_models,
+            tiers: None,
+            role_tiers: None,
+        },
+        roles: Default::default(),
     };
     let _resolver = latte_agent_core::model_resolver::ModelResolver::from_config(&agent_cfg)
         .map_err(|e| format!("model resolver init: {e}"))?;
 
-    // Check: does any model have an api_key?
-    let has_key = merged
-        .models
+    let has_key = global_config
         .models
         .iter()
         .any(|m| !m.api_key.trim().is_empty());
@@ -112,19 +122,36 @@ pub async fn run_discussion(
         ));
     }
 
-    // Convert merged -> old types for downstream callers
-    // (TODO: fully migrate build_agent_runners & co. to use MergedConfig directly)
-    let global_config = GlobalModelConfig {
-        models: merged.models.models.iter().map(convert_upstream_to_project_model).collect(),
-        default_model: merged.default_model.clone(),
-    };
-    let roles_config = RoleConfig {
-        default_model: merged.default_model.clone(),
-        roles: merged.roles.iter().map(|(id, tmpl)| (id.clone(), convert_role_template_to_def(tmpl))).collect(),
-        workflows: super::global_config::read_all_workflow_files(),
-    };
-
     run_live_discussion(app, req, &global_config, &roles_config).await
+}
+
+/// Convert project's `ModelDef` (used after the loader refactor) back
+/// to upstream `ModelDef` for the resolver. The fields are 1:1 except
+/// `reasoning` ↔ `supports_thinking`; the rest is identical.
+pub(crate) fn convert_project_to_upstream_model(m: &ProjectModelDef) -> UpstreamModelDef {
+    UpstreamModelDef {
+        id: m.id.clone(),
+        name: m.name.clone(),
+        api: m.api.clone(),
+        provider: m.provider.clone(),
+        base_url: m.base_url.clone(),
+        api_key: m.api_key.clone(),
+        context_window: m.context_window,
+        max_tokens: m.max_tokens,
+        supports_thinking: m.reasoning,
+        cost_per_million_input: if m.cost_per_million_input > 0.0 {
+            Some(m.cost_per_million_input)
+        } else {
+            None
+        },
+        cost_per_million_output: if m.cost_per_million_output > 0.0 {
+            Some(m.cost_per_million_output)
+        } else {
+            None
+        },
+        tier: m.tier.clone(),
+        timeout_secs: None,
+    }
 }
 
 /// Convert upstream `ModelDef` to the project's `ModelDef`.
@@ -330,8 +357,23 @@ pub(crate) fn build_agent_config(
             .cloned()
             .or_else(|| resolve_primary_by_tier(global_config, &role_def.model_tier))
             .unwrap_or_else(|| global_config.default_model.clone());
-        let mut tier_map = HashMap::new();
-        tier_map.insert("standard".to_string(), primary);
+        // Only register the role's own `model_tier` tier — NOT all
+        // three. The previous code wrote the chain head to every tier
+        // (premium/standard/budget), which meant a role set to
+        // "standard" would force the PREMIUM slot to the same chain
+        // head. That killed the fallback chain: when the chain head
+        // had no API key, `candidates_for` found zero alternatives
+        // for other tiers, and the resolver returned the head's model
+        // unconditionally — guaranteeing a Config error.
+        //
+        // By only pinning one tier, other tiers fall through to the
+        // catalog's `tier` field (step 3 in `ModelResolver::candidates_for`)
+        // and eventually to the first model in the catalog as u
+        // ltimate fallback. This gives the resolver enough scrap
+        // candidates to walk through when the primary is misconfigured.
+        let mut tier_map = HashMap::with_capacity(1);
+        let tier_label = role_def.model_tier.to_lowercase();
+        tier_map.insert(tier_label, primary);
         role_tiers.insert(role_id.clone(), tier_map);
     }
 
@@ -377,7 +419,16 @@ fn build_agent_runners(
             format!("role '{role_id}' not found in roles.yaml")
         })?;
         let chain = role_def.chain();
-        let role = build_upstream_role(role_id, role_def, &chain);
+        let allowed_tools = role_def.tools.clone();
+        let mut role = build_upstream_role(role_id, role_def, &chain);
+        // Append tool-usage protocol to system prompt when the role
+        // declares tools — mirrors the CLI's `build_runner` + the
+        // `chat_stream` command. Without this, discussion workers
+        // are blind: they can't run bash, read files, or inspect
+        // the project, forcing themselves to guess from context.
+        if !allowed_tools.is_empty() {
+            role.system_prompt.push_str(&super::chat_stream::tool_usage_prompt(&allowed_tools));
+        }
         // Snapshot `role.id` so we can use it after `new_with_chain` moves the role.
         let role_id_owned = role.id.clone();
         // The resolver picks the primary via `role_tiers`; pass the rest
@@ -396,7 +447,14 @@ fn build_agent_runners(
             latte_ai::params::GenerateParams::default(),
         )
         .map_err(|e| format!("build agent '{role_id}': {e}"))?;
-    agents.insert(role_id_owned, AgentRunner::new(agent));
+        // Wire tools when the role declares them — same as chat_stream.
+        let runner: AgentRunner = if !allowed_tools.is_empty() {
+            let tm = super::chat_stream::build_tool_manager(&allowed_tools)?;
+            AgentRunner::new_with_tools(agent, tm, 0)
+        } else {
+            AgentRunner::new(agent)
+        };
+        agents.insert(role_id_owned, runner);
     }
     Ok(agents)
 }

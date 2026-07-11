@@ -903,8 +903,11 @@ pub async fn chat_controller_spawn(
         primary_model_id,
         initial_tier,
         cwd,
+        initial_history: vec![],
+        subsession_store: Arc::new(
+            latte_agent_core::subsession::SubsessionStore::new(),
+        ),
     };
-
     // Use persistent session spawn.
     super::session_controller::spawn_persistent(
         &app,
