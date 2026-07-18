@@ -2,6 +2,8 @@
 node_modules/
 dist/
 src-tauri/target/
+# scripts/sync-chat-ui.sh 的构建产物（latte-rs-agents UI dist + skin.css）
+public/chat-ui/
 *.log
 .DS_Store
 .codegraph/

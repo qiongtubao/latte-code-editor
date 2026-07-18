@@ -10,7 +10,7 @@ import { DefinitionPopup } from "./components/DefinitionPopup";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { WorkspaceTabs } from "./components/WorkspaceTabs";
 import { QuickOpenModal } from "./components/QuickOpenModal";
-import { ChatPanel } from "./components/ChatPanel";
+import { ChatAgentPanel } from "./components/ChatAgentPanel";
 import { openFile } from "./api/commands";
 import { graphSearch, graphResolveCall } from "./api/graphCommands";
 import { screenshotWindow, copyScreenshotToClipboard } from "./api/screenshot";
@@ -19,12 +19,6 @@ import { useGraphStore } from "./hooks/useGraphStore";
 import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
-import { useChatStore } from "./hooks/useChatStore";
-import type { ControllerEventPayload } from "./api/chat";
-import type { ChatTurn } from "./hooks/useChatStore";
-import type { DecisionRequest, ManagerStatus, SwarmEvent } from "./api/chat";
-import type { ChatEvent, WorkspaceChatEvent } from "./api/chat";
-import { unwrapWorkspaceEvent } from "./api/chat";
 import { useLspStore } from "./hooks/useLspStore";
 import { LspManagerPanel } from "./components/LspManagerPanel";
 import { DebugBar } from "./components/DebugBar";
@@ -32,7 +26,6 @@ import { DebugEventInjectModal } from "./components/DebugEventInjectModal";
 import { useDebugStore } from "./utils/debug/store";
 import { replayLastAction } from "./utils/debug/inject";
 import { invoke } from "./api/ipcDebug";
-import { listen } from "@tauri-apps/api/event";
 type ActivePanel = "editor" | "graph" | "split";
 function App() {
   const [activePanel, setActivePanel] = useState<ActivePanel>("split");
@@ -44,20 +37,11 @@ function App() {
   const [lspManagerOpen, setLspManagerOpen] = useState(false);
   const [injectOpen, setInjectOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatWidth, setChatWidth] = useState(400);
   const hydrateDebug = useDebugStore((s) => s.hydrate);
   const setDebugOn = useDebugStore((s) => s.setOn);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastRRef = useRef(0);
   const lastSRef = useRef(0);
-  const addTurn = useChatStore((s) => s.addTurn);
-  const setChatComplete = useChatStore((s) => s.setComplete);
-  const setChatError = useChatStore((s) => s.setError);
-  const applySwarmEvent = useChatStore((s) => s.applySwarmEvent);
-  const applyNeedDecision = useChatStore((s) => s.applyNeedDecision);
-  const applyManagerStatus = useChatStore((s) => s.applyManagerStatus);
-  const applyControllerEvent = useChatStore((s) => s.applyControllerEvent);
-  const applyHilState = useChatStore((s) => s.applyHilState);
   const { openFileOrSwitch, filePath } = useEditorStore();
   const { graphData } = useGraphStore();
   const activeMeta = useWorkspaceStore((s) =>
@@ -108,66 +92,6 @@ function App() {
     window.addEventListener("latte-toast", handler);
     return () => window.removeEventListener("latte-toast", handler);
   }, []);
-
-  // Listen for controller chat events from the chat panel.
-  useEffect(() => {
-    const unlistens: Array<Promise<() => void>> = [
-      listen<unknown>("chat:event", (e) => {
-        const { workspaceId, event } = unwrapWorkspaceEvent<ChatEvent>(
-          e.payload as unknown as ChatEvent | WorkspaceChatEvent<ChatEvent>,
-        );
-        const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-        // Debug: confirm event routing works.
-        // Keep lightweight so it won't spam too aggressively in normal runs.
-        console.debug("latte:chat:event", {
-          workspaceId,
-          activeWorkspaceId,
-          matchesActive: workspaceId != null && workspaceId === activeWorkspaceId,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          kind: Object.keys(event as any)[0] ?? null,
-        });
-        applyChatEvent(event, workspaceId);
-      }),
-    ];
-    unlistens.push(
-      listen<SwarmEvent>("chat:swarm_event", (e) => {
-        applySwarmEvent(e.payload);
-      }),
-    );
-    unlistens.push(
-      listen<DecisionRequest>("chat:need_decision", (e) => {
-        applyNeedDecision(e.payload);
-      }),
-    );
-    unlistens.push(
-      listen<ManagerStatus>("chat:manager_status", (e) => {
-        applyManagerStatus(e.payload);
-      }),
-    );
-    unlistens.push(
-      listen<unknown>("chat:complete", () => {
-        setChatComplete();
-      }),
-    );
-    unlistens.push(
-      listen<string>("chat:error", (e) => {
-        setChatError(e.payload);
-      }),
-    );
-    unlistens.push(
-      listen<import("./api/chat").HilSessionState>("chat:hil_state", (e) => {
-        applyHilState(e.payload);
-      }),
-    );
-    unlistens.push(
-      listen<ControllerEventPayload>("chat:controller_event", (e) => {
-        applyControllerEvent(e.payload);
-      }),
-    );
-    return () => {
-      for (const p of unlistens) p.then((fn) => fn());
-    };
-  }, [addTurn, applySwarmEvent, applyNeedDecision, applyManagerStatus, applyHilState, setChatComplete, setChatError, applyControllerEvent]);
 
   const folderRoot = activeMeta?.project_root ?? null;
 
@@ -369,7 +293,7 @@ function App() {
             {(activePanel === "editor" || activePanel === "split") && (
               <div
                 className={`overflow-hidden ${activePanel === "split" ? "border-r border-gray-700" : ""}`}
-                style={activePanel === "split" ? { flex: editorFlex } : { flex: 1 }}
+                style={(activePanel === "split" || chatOpen) ? { flex: editorFlex } : { flex: 1 }}
               >
                 <EditorPanel onCtrlClick={async (word, x, y, fp, line) => {
                   // Try direct call resolution via graph edges first
@@ -387,7 +311,7 @@ function App() {
                 }} onShowInGraph={handleShowInGraph} />
               </div>
             )}
-            {activePanel === "split" && (
+            {(activePanel === "split" || (chatOpen && activePanel === "editor")) && (
               <div
                 className="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-[#007acc] bg-[#333] z-10 transition-colors"
                 onMouseDown={(e) => {
@@ -415,10 +339,18 @@ function App() {
               </div>
             )}
             {chatOpen && (
-              <div
-                className="flex-1 overflow-hidden border-l border-gray-700"
-              >
-                <ChatPanel onClose={() => setChatOpen(false)} />
+              /* chat 占满中间行剩余宽度（整行 − 左侧 − 编辑器），
+                 边界由上方 editorFlex 分隔条控制，与 GraphPanel 同机制 */
+              <div className="flex-1 overflow-hidden border-l border-gray-700">
+                <ChatAgentPanel
+                  onClose={() => setChatOpen(false)}
+                  onShowGraph={() => {
+                    // GraphPanel 只在 !chatOpen 时渲染（见上方条件），
+                    // 所以"在图谱中显示"需要让出侧栏并切到 split。
+                    setChatOpen(false);
+                    setActivePanel("split");
+                  }}
+                />
               </div>
             )}
           </div>

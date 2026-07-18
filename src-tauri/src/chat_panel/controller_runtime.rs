@@ -170,7 +170,7 @@ fn initial_role(agent_config: &AgentConfig, request: &StartDiscussionRequest) ->
         .unwrap_or_else(|| "manager".to_string())
 }
 
-fn load_cli_like_agent_config(
+pub(super) fn load_cli_like_agent_config(
     project_agents: Option<&Path>,
     project_models: Option<&Path>,
 ) -> Result<(AgentConfig, ModelResolver), String> {
@@ -269,6 +269,8 @@ mod tests {
                 temperature: Some(0.5),
                 tools: vec![],
                 icon: "M".to_string(),
+                // latte-agent-core 后加的字段；本测试不关心，给空表。
+                skills: vec![],
             },
         );
         let req = StartDiscussionRequest {

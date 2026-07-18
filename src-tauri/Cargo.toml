@@ -31,6 +31,7 @@ regex = "1"
 latte-rs-graph = { path = "../../latte-rs-graph" }
 parking_lot = "0.12"
 latte-agent-core = { path = "../../latte-rs-agents/latte-agent-core" }
+latte-agent-ui-server = { path = "../../latte-rs-agents/latte-agent-ui-server" }
 latte-ai = { path = "../../latte-rs-model-router/latte-ai" }
 # LSP 相关依赖
 lsp-types = "0.97"

@@ -1,0 +1,57 @@
+# latte-code-editor 项目默认讨论配置
+# =============================================================================
+# 此文件在 latte-agent 启动时自动加载，定义多角色讨论的默认设置。
+# 每次在 latte-code-editor 目录下启动 latte-agent ui/chat 时都会加载此配置。
+
+# ─── 默认工作流 ────────────────────────────────────────────────────────
+[default_workflow]
+name = "code-editor-review"
+description = "code-editor 项目标准审查流程：拆解→派发→审查→汇总"
+max_rounds = 3
+context_token_budget = 64000
+
+# ─── 默认讨论角色（按发言顺序） ────────────────────────────────────────
+# 这些角色在新讨论中默认参与，按顺序发言。
+# 不在此列表中的角色仍可通过 delegate 工具动态调用。
+default_roles = [
+  "manager",           # 工程经理 - 拆解任务、派发
+  "programmer_leader", # 程序员Leader - 协调代码实现
+  "reviewer_leader",   # 审核Leader - 协调代码审查
+  "tester_leader",     # 测试Leader - 协调测试
+  "architect",         # 系统架构师 - 架构决策
+]
+
+# ─── 讨论步骤 ──────────────────────────────────────────────────────────
+# 每一步定义哪些角色按顺序发言，以及每个角色的提示模板。
+
+[[steps]]
+id = "kickoff"
+speakers = ["manager"]
+prompt = """分析用户需求：{{topic}}
+拆解为 2-4 个子任务，并行派发给对应的专精角色。
+如果涉及代码分析，派给 programmer_leader。
+如果涉及架构评估，派给 architect。
+如果涉及测试，派给 tester_leader。
+如果涉及审查，派给 reviewer_leader。"""
+
+[[steps]]
+id = "execution"
+speakers = ["programmer_leader", "reviewer_leader", "tester_leader", "architect"]
+prompt = """根据 manager 的任务拆解，执行各自领域的分析。
+完成后汇报发现和结论。"""
+
+[[steps]]
+id = "synthesis"
+speakers = ["manager"]
+prompt = """汇总所有角色的输出，给出统一的结论或方案。
+如果涉及代码修改，明确修改建议。
+如果涉及架构决策，给出理由和替代方案。"""
+
+# ─── 角色层级映射 ──────────────────────────────────────────────────────
+# 定义角色间的汇报关系，用于自动派发决策。
+# manager 可以派发给任何角色。programmer_leader 可以派发给具体语言程序员。
+[role_hierarchy]
+manager = ["*"]  # manager 可以派发给所有角色
+programmer_leader = ["programmer", "programmer_rust", "programmer_python", "programmer_go", "programmer_cpp", "programmer_java", "programmer_c"]
+reviewer_leader = ["reviewer", "reviewer_architecture", "reviewer_functional", "reviewer_necessity", "reviewer_style", "reviewer_sanity", "reviewer_security"]
+tester_leader = ["tester", "tester_functional", "tester_performance", "tester_blackbox", "tester_whitebox", "tester_automation"]

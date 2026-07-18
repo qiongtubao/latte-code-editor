@@ -645,6 +645,12 @@ impl From<&latte_agent_core::controller::ChatEvent> for ControllerEventKind {
             ChatEvent::RoleFinished { .. } => Self::RoleFinished,
             ChatEvent::DelegateStarted { .. } => Self::DelegateStarted,
             ChatEvent::DelegateFinished { .. } => Self::DelegateFinished,
+            // latte-agent-core 后续新增的 workflow 事件：旧控制面不区分
+            // 这些 kind（其前端已退役到 src/legacy-chat/），折叠为 Status。
+            ChatEvent::WorkflowStarted { .. }
+            | ChatEvent::WorkflowStep { .. }
+            | ChatEvent::WorkflowTurn { .. }
+            | ChatEvent::WorkflowFinished { .. } => Self::Status,
         }
     }
 }
@@ -696,10 +702,11 @@ impl serde::Serialize for ControllerEventPayload {
         // Flatten the variant fields
         use latte_agent_core::controller::ChatEvent;
         match &self.event {
-            ChatEvent::RoleTurn { role_id, content, is_complete } => {
+            ChatEvent::RoleTurn { role_id, content, is_complete, sub_id } => {
                 map.serialize_entry("roleId", role_id)?;
                 map.serialize_entry("content", content)?;
                 map.serialize_entry("isComplete", is_complete)?;
+                map.serialize_entry("subId", sub_id)?;
             }
             ChatEvent::Status { message } => {
                 map.serialize_entry("message", message)?;
@@ -769,6 +776,12 @@ impl serde::Serialize for ControllerEventPayload {
                 map.serialize_entry("summary", summary)?;
                 map.serialize_entry("subId", sub_id)?;
             }
+            // workflow 事件折叠为 Status kind（见 ControllerEventKind），
+            // 字段不展开——旧控制面前端已退役，无人消费。
+            ChatEvent::WorkflowStarted { .. }
+            | ChatEvent::WorkflowStep { .. }
+            | ChatEvent::WorkflowTurn { .. }
+            | ChatEvent::WorkflowFinished { .. } => {}
         }
         map.end()
     }

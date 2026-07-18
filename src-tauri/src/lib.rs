@@ -60,7 +60,13 @@ pub fn run() {
             let hub = IncrementalHub::start(app.handle().clone(), (*settings_store).clone());
             app.manage(settings_store);
             app.manage(hub);
-            
+
+            // 内嵌 chat UI server（ui-embedding-design.md §6）：
+            // 按工作区多实例，127.0.0.1 随机端口，cwd=工作区根。
+            // 懒加载：`chat_ui_url` 命令 get-or-spawn，首次打开 chat
+            // 面板时才起对应工作区的 server，不在启动时预热。
+            app.manage(Arc::new(chat_panel::ui_server::UiServerState::new()));
+
             // 启动时恢复持久化的 workspace 列表
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -145,6 +151,8 @@ pub fn run() {
             crate::chat_panel::commands::chat_session_edit_message,
             // single-role chat replica (latte-agent chat CLI in HTML)
             crate::chat_panel::chat_stream::chat_stream,
+            // embedded agent UI server (iframe host bridge)
+            crate::chat_panel::ui_server::chat_ui_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

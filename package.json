@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "frontend:dev": "vite",
-    "frontend:build": "tsc && vite build",
+    "frontend:dev": "bash scripts/sync-chat-ui.sh && vite",
+    "frontend:build": "bash scripts/sync-chat-ui.sh && tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

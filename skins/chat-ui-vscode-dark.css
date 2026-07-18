@@ -1,0 +1,31 @@
+/* Latte Code Editor — VS Code 深色皮肤（design doc §4）。
+ *
+ * 只重新定义 latte-agent-ui `styles.css` :root 里的 CSS 变量值，
+ * 由 scripts/sync-chat-ui.sh 拷为 public/chat-ui/skin.css，
+ * 在 styles.css 之后加载（iframe 天然 CSS 隔离，不与 Tailwind 互染）。
+ * 配色对齐编辑器现有 VS Code 深色（#1e1e1e 背景 / #252526 面板 / #007acc accent）。
+ * 布局变量（--radius-bubble / --mono-font）不覆盖，保持 UI 默认。
+ */
+:root {
+  /* 背景层级：主背景 / 面板 / 上浮面（对齐编辑器 #1e1e1e → #252526 → #2d2d2d） */
+  --bg: #1e1e1e;
+  --bg-2: #252526;
+  --bg-3: #2d2d2d;
+  /* 前景：主文字 / 次要文字 */
+  --fg: #d4d4d4;
+  --fg-2: #9d9d9d;
+  --border: #3c3c3c;
+  /* 强调色（VS Code 蓝）与 hover 态 */
+  --accent: #007acc;
+  --accent-2: #0098ff;
+  /* 状态色（VS Code dark+ 语义色） */
+  --ok: #89d185;
+  --warn: #cca700;
+  --err: #f14c4c;
+  /* 气泡：工具调用 / 状态条 / 用户消息（#094771 = 编辑器 toast 同款 selection 蓝） */
+  --tool-bubble: #c586c0;
+  --status-bubble: #4fc1ff;
+  --user-bubble: #094771;
+  --bubble-bg: #252526;
+  --bubble-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}

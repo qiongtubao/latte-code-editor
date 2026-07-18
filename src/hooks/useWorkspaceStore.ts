@@ -222,14 +222,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       log.error("ws.close.error", String(e), { workspaceId });
       console.error("[useWorkspaceStore] closeWorkspace failed:", e);
     }
-    const [{ useEditorStore }, { useGraphStore }, { useChatStore }] = await Promise.all([
+    const [{ useEditorStore }, { useGraphStore }] = await Promise.all([
       import("./useEditorStore"),
       import("./useGraphStore"),
-      import("./useChatStore"),
     ]);
     useEditorStore.getState().evictWorkspace(workspaceId);
     useGraphStore.getState().evictWorkspace(workspaceId);
-    useChatStore.getState().evictWorkspace(workspaceId);
     set((s) => {
       const { [workspaceId]: _drop, ...rest } = s.workspaces;
       const isActive = s.activeWorkspaceId === workspaceId;

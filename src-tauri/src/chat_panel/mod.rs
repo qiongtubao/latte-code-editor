@@ -4,6 +4,7 @@ pub mod chat_stream;
 pub mod config;
 pub mod hil;
 pub mod controller_runtime;
+pub mod ui_server;
 pub mod types;
 pub mod controller_adapter;
 pub mod session_controller;

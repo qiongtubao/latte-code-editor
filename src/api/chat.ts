@@ -733,8 +733,9 @@ export async function editSessionMessage(
   return invoke("chat_session_edit_message", { sessionId, index, newContent });
 }
 
-// ─── Manager-led workflow types (re-exported from chat/protocol) ──
-export type { DecisionRequest, ManagerStatus } from "../chat/types";
+// ─── Manager-led workflow types ─────────────────────────────
+// （DecisionRequest/ManagerStatus 的 re-export 随旧 chat 模块退役到
+//   src/legacy-chat/ 而移除；活代码不再引用它们。）
 
 /** Launch a new manager-led chat session.
  *  The backend creates a session and returns its id.
