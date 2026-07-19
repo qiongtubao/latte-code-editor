@@ -651,6 +651,9 @@ impl From<&latte_agent_core::controller::ChatEvent> for ControllerEventKind {
             | ChatEvent::WorkflowStep { .. }
             | ChatEvent::WorkflowTurn { .. }
             | ChatEvent::WorkflowFinished { .. } => Self::Status,
+            // core 新增的用户消息事件（UI 回放恢复用户气泡用）：旧控制面
+            // 不区分，同样折叠为 Status。
+            ChatEvent::UserMessage { .. } => Self::Status,
         }
     }
 }
@@ -782,6 +785,10 @@ impl serde::Serialize for ControllerEventPayload {
             | ChatEvent::WorkflowStep { .. }
             | ChatEvent::WorkflowTurn { .. }
             | ChatEvent::WorkflowFinished { .. } => {}
+            // UserMessage（core 新增，用户气泡回放用）同样折叠为 Status
+            // kind 且不展开；新 UI 走 ui:chat_event 的前端 JSON，里面有
+            // 完整 text。
+            ChatEvent::UserMessage { .. } => {}
         }
         map.end()
     }

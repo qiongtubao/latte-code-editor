@@ -27,15 +27,18 @@ function workspaceRootArg(): string | null {
 }
 
 /** invoke 失败转换为 Error。Rust 侧 ApiError 的 status 在命令边界被
- * 压平成 message 文本，这里把 "… not found" 映射回 404，并包装成与
- * UI transport.ts HttpError 相同的 shape（name/status/method/path）——
- * api.ts ensureSession 的"session 不存在则新建"依赖它（跨 realm
- * instanceof 失效，UI 侧用 duck-type 判定）。其它错误原样抛出
- * （等价网络失败：ensureSession 会视为 fatal 而不是误建新 session）。 */
+ * ui_adapter 的错误串带 status 前缀（`"404: …"`，见 api_err）——按
+ * 状态码判定并包装成与 UI transport.ts HttpError 相同的 shape
+ * （name/status/method/path），api.ts ensureSession 的"session 不
+ * 存在则新建"依赖它（跨 realm instanceof 失效，UI 侧用 duck-type
+ * 判定）。无 status 前缀的错误原样抛出（等价网络失败：ensureSession
+ * 视为 fatal 而不是误建新 session）。 */
 function rethrowAsHttpShaped(method: string, path: string, e: unknown): never {
   const msg = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-  if (/not found/i.test(msg)) {
-    const err = new Error(`${method} ${path} 404: ${msg}`);
+  const m = /^(\d{3}):\s*(.*)$/s.exec(msg);
+  const status = m ? Number(m[1]) : null;
+  if (status === 404) {
+    const err = new Error(`${method} ${path} 404: ${m![2]}`);
     err.name = "HttpError";
     Object.assign(err, { method, path, status: 404 });
     throw err;

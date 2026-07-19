@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use latte_agent_core::controller::{ChatEvent, RoleInfo};
 use latte_agent_core::event_json::chat_event_to_frontend_json;
-use latte_agent_ui_server::api::{self, SaveRoleConfigRequest};
+use latte_agent_ui_server::api::{self, ApiError, SaveRoleConfigRequest};
 use latte_agent_ui_server::role_graph::RoleGraph;
 use latte_agent_ui_server::{UiBackend, UiBackendConfig};
 use tauri::Emitter;
@@ -136,12 +136,22 @@ async fn spawn_one(
         .map_err(|e| format!("bootstrap default session: {e}"))?;
     // 默认 session 的事件转发（容器内之后新建的 session 在
     // `ui_sessions_create` 里接）。
-    let rx = api::subscribe_session(&backend, &session_id).map_err(|e| e.message)?;
+    let rx = api::subscribe_session(&backend, &session_id)
+        .await
+        .map_err(api_err)?;
     spawn_chat_event_forwarder(app, session_id, rx);
     Ok(Arc::new(backend))
 }
 
 // ─── 事件转发 ─────────────────────────────────────────────────────
+
+/// ApiError → 命令错误串。带 status 前缀（`"404: …"`），让前端
+/// transport 能可靠地区分"资源不存在（→ 回退新建）"与"真错误
+/// （→ fatal）"——不靠错误文案匹配（曾有 "unknown" vs "not found"
+/// 文案差异导致 ensureSession 失去回退、直接红屏）。
+fn api_err(e: ApiError) -> String {
+    format!("{}: {}", e.status, e.message)
+}
 
 /// session 的 ChatEvent broadcast → 前端 JSON（C2）→
 /// `app.emit("ui:chat_event", { session_id, event })`。
@@ -223,9 +233,11 @@ pub async fn ui_sessions_create(
     workspace_root: Option<String>,
 ) -> Result<api::SessionInfo, String> {
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
-    let info = api::create_session(&b).await.map_err(|e| e.message)?;
+    let info = api::create_session(&b).await.map_err(api_err)?;
     // 新 session 的事件转发接入点。
-    let rx = api::subscribe_session(&b, &info.session_id).map_err(|e| e.message)?;
+    let rx = api::subscribe_session(&b, &info.session_id)
+        .await
+        .map_err(api_err)?;
     spawn_chat_event_forwarder(&app, info.session_id.clone(), rx);
     Ok(info)
 }
@@ -238,7 +250,7 @@ pub async fn ui_sessions_get(
     session_id: String,
 ) -> Result<api::SessionInfo, String> {
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
-    api::get_session(&b, &session_id).map_err(|e| e.message)
+    api::get_session(&b, &session_id).map_err(api_err)
 }
 
 #[tauri::command]
@@ -251,7 +263,7 @@ pub async fn ui_sessions_delete(
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
     api::delete_session(&b, &session_id)
         .await
-        .map_err(|e| e.message)
+        .map_err(api_err)
 }
 
 #[tauri::command]
@@ -263,7 +275,7 @@ pub async fn ui_sessions_set_label(
     label: String,
 ) -> Result<(), String> {
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
-    api::set_session_label(&b, &session_id, &label).map_err(|e| e.message)
+    api::set_session_label(&b, &session_id, &label).map_err(api_err)
 }
 
 #[tauri::command]
@@ -274,7 +286,7 @@ pub async fn ui_sessions_history(
     session_id: String,
 ) -> Result<Vec<serde_json::Value>, String> {
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
-    api::session_history(&b, &session_id).map_err(|e| e.message)
+    api::session_history(&b, &session_id).map_err(api_err)
 }
 
 // ─── Roles ────────────────────────────────────────────────────────
@@ -296,7 +308,7 @@ pub async fn ui_roles_config_get(
     workspace_root: Option<String>,
 ) -> Result<api::RolesConfigResponse, String> {
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
-    api::get_roles_config(&b).await.map_err(|e| e.message)
+    api::get_roles_config(&b).await.map_err(api_err)
 }
 
 #[tauri::command]
@@ -307,7 +319,7 @@ pub async fn ui_roles_config_save(
     config: SaveRoleConfigRequest,
 ) -> Result<api::RoleConfigEntry, String> {
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
-    api::save_role_config(&b, config).map_err(|e| e.message)
+    api::save_role_config(&b, config).map_err(api_err)
 }
 
 // ─── Chat ─────────────────────────────────────────────────────────
@@ -323,7 +335,7 @@ pub async fn ui_chat_send(
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
     api::chat_send(&b, Some(&session_id), &message)
         .await
-        .map_err(|e| e.message)
+        .map_err(api_err)
 }
 
 #[tauri::command]
@@ -337,7 +349,7 @@ pub async fn ui_chat_command(
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
     api::chat_command(&b, Some(&session_id), &command)
         .await
-        .map_err(|e| e.message)
+        .map_err(api_err)
 }
 
 #[tauri::command]
@@ -351,7 +363,7 @@ pub async fn ui_chat_role(
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
     api::chat_switch_role(&b, Some(&session_id), &role_id)
         .await
-        .map_err(|e| e.message)
+        .map_err(api_err)
 }
 
 // ─── Traces / Subsessions / Role Graph ────────────────────────────
@@ -376,7 +388,7 @@ pub async fn ui_traces_get(
     session_id: String,
 ) -> Result<serde_json::Value, String> {
     let _b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
-    api::read_trace(&session_id).map_err(|e| e.message)
+    api::read_trace(&session_id).map_err(api_err)
 }
 
 #[tauri::command]
@@ -397,7 +409,7 @@ pub async fn ui_role_graph(
     workspace_root: Option<String>,
 ) -> Result<RoleGraph, String> {
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
-    api::role_graph(&b).await.map_err(|e| e.message)
+    api::role_graph(&b).await.map_err(api_err)
 }
 
 // ─── Self-Loop ────────────────────────────────────────────────────
@@ -413,7 +425,7 @@ pub async fn ui_self_loop_start(
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
     let (resp, rx) = api::self_loop_start(&b, task, max_iterations)
         .await
-        .map_err(|e| e.message)?;
+        .map_err(api_err)?;
     // start 返回的 receiver 在 node 子进程 spawn 前就绪，"started"
     // 及之后的事件都不会丢。
     spawn_self_loop_forwarder(&app, rx);

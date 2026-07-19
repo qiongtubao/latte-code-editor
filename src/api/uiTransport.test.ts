@@ -182,8 +182,8 @@ describe("request → ui_* 命令映射", () => {
 });
 
 describe("错误形态：ensureSession 的 404 语义", () => {
-  it('"not found" 类 reject → HttpError shape（name/status/method/path）', async () => {
-    mockInvoke.mockRejectedValueOnce('session_id "x" not found');
+  it('带 status 前缀的 404 reject → HttpError shape（name/status/method/path）', async () => {
+    mockInvoke.mockRejectedValueOnce('404: session ui-x unknown');
     const err = (await transport.request("GET", "/api/session?id=x").catch((e) => e)) as Error;
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe("HttpError");
@@ -192,8 +192,8 @@ describe("错误形态：ensureSession 的 404 语义", () => {
     expect((err as { path?: string }).path).toBe("/api/session?id=x");
   });
 
-  it("其它错误原样抛出（不包装成 HttpError）", async () => {
-    mockInvoke.mockRejectedValueOnce("spawn ui backend failed: boom");
+  it("非 404 的 status 前缀错误原样抛出（不包装成 HttpError）", async () => {
+    mockInvoke.mockRejectedValueOnce("500: spawn ui backend failed: boom");
     const err = (await transport.request("GET", "/api/session?id=x").catch((e) => e)) as Error;
     expect(err.name).not.toBe("HttpError");
     expect((err as { status?: number }).status).toBeUndefined();
