@@ -61,11 +61,10 @@ pub fn run() {
             app.manage(settings_store);
             app.manage(hub);
 
-            // 内嵌 chat UI server（ui-embedding-design.md §6）：
-            // 按工作区多实例，127.0.0.1 随机端口，cwd=工作区根。
-            // 懒加载：`chat_ui_url` 命令 get-or-spawn，首次打开 chat
-            // 面板时才起对应工作区的 server，不在启动时预热。
-            app.manage(Arc::new(chat_panel::ui_server::UiServerState::new()));
+            // chat 面板后端（ui-embedding-design.md §3 阶段 2）：
+            // 进程内 Tauri commands + 事件，按工作区 get-or-spawn
+            // UiBackend 容器。懒加载：首个 ui_* 命令触发，不在启动时预热。
+            app.manage(Arc::new(chat_panel::ui_adapter::UiAdapterState::new()));
 
             // 启动时恢复持久化的 workspace 列表
             let handle = app.handle().clone();
@@ -151,8 +150,26 @@ pub fn run() {
             crate::chat_panel::commands::chat_session_edit_message,
             // single-role chat replica (latte-agent chat CLI in HTML)
             crate::chat_panel::chat_stream::chat_stream,
-            // embedded agent UI server (iframe host bridge)
-            crate::chat_panel::ui_server::chat_ui_url,
+            // agent UI (iframe) IPC transport — ui_* commands + ui:chat_event /
+            // ui:self_loop_event 事件（ui-embedding-design.md §3 阶段 2）
+            crate::chat_panel::ui_adapter::ui_sessions_list,
+            crate::chat_panel::ui_adapter::ui_sessions_create,
+            crate::chat_panel::ui_adapter::ui_sessions_get,
+            crate::chat_panel::ui_adapter::ui_sessions_delete,
+            crate::chat_panel::ui_adapter::ui_sessions_set_label,
+            crate::chat_panel::ui_adapter::ui_sessions_history,
+            crate::chat_panel::ui_adapter::ui_roles_list,
+            crate::chat_panel::ui_adapter::ui_roles_config_get,
+            crate::chat_panel::ui_adapter::ui_roles_config_save,
+            crate::chat_panel::ui_adapter::ui_chat_send,
+            crate::chat_panel::ui_adapter::ui_chat_command,
+            crate::chat_panel::ui_adapter::ui_chat_role,
+            crate::chat_panel::ui_adapter::ui_traces_list,
+            crate::chat_panel::ui_adapter::ui_traces_get,
+            crate::chat_panel::ui_adapter::ui_subsessions_get,
+            crate::chat_panel::ui_adapter::ui_role_graph,
+            crate::chat_panel::ui_adapter::ui_self_loop_start,
+            crate::chat_panel::ui_adapter::ui_self_loop_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -7,7 +7,9 @@ import { basicSetup } from "codemirror";
 import { languages } from "./languageExtensions";
 import { useSettingsStore } from "../hooks/useSettingsStore";
 import { useEditorStore } from "../hooks/useEditorStore";
+import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
 import { cmThemes, getHighlightStyle } from "../hooks/themes";
+import { toWorkspaceRel } from "../chatBridge";
 interface CodeMirrorProps {
   content: string;
   filePath: string | null;
@@ -135,25 +137,44 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
       closeMenu();
       const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return;
+      const sel = view.state.selection.main;
+      const hasSelection = !sel.empty;
       const word = wordAtPos(view, pos);
-      if (!word) return;
+      if (!word && !hasSelection) return;
 
       menuEl = document.createElement("div");
       menuEl.className = "fixed z-50 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl py-1 text-xs min-w-[140px]";
       menuEl.style.left = `${e.clientX}px`;
       menuEl.style.top = `${e.clientY}px`;
 
-      const defItem = document.createElement("button");
-      defItem.className = "w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] cursor-pointer";
-      defItem.textContent = "跳转定义";
-      defItem.onclick = () => { closeMenu(); onCtrlClickRef.current?.(word, e.clientX, e.clientY, filePath); };
-      menuEl.appendChild(defItem);
+      const mkItem = (label: string, onclick: () => void) => {
+        const item = document.createElement("button");
+        item.className = "w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] cursor-pointer";
+        item.textContent = label;
+        item.onclick = () => { closeMenu(); onclick(); };
+        menuEl!.appendChild(item);
+      };
 
-      const graphItem = document.createElement("button");
-      graphItem.className = "w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] cursor-pointer";
-      graphItem.textContent = "在图谱中查看";
-      graphItem.onclick = () => { closeMenu(); onShowInGraphRef.current?.(word, filePath); };
-      menuEl.appendChild(graphItem);
+      // 询问 Agent（有选区时）：选区引用 + quote 经 ask-agent 事件
+      // 打进 chat 输入框（App.tsx → chatBridge → iframe）。
+      if (hasSelection) {
+        mkItem("询问 Agent", () => {
+          const startLine = view.state.doc.lineAt(sel.from).number;
+          const endLine = view.state.doc.lineAt(sel.to).number;
+          let quote = view.state.doc.sliceString(sel.from, sel.to);
+          if (quote.length > 2000) quote = `${quote.slice(0, 2000)}…`;
+          const ws = useWorkspaceStore.getState();
+          const root = (ws.activeWorkspaceId && ws.workspaces[ws.activeWorkspaceId]?.project_root) || null;
+          window.dispatchEvent(new CustomEvent("ask-agent", {
+            detail: { path: toWorkspaceRel(filePath, root), startLine, endLine, quote },
+          }));
+        });
+      }
+
+      if (word) {
+        mkItem("跳转定义", () => onCtrlClickRef.current?.(word, e.clientX, e.clientY, filePath));
+        mkItem("在图谱中查看", () => onShowInGraphRef.current?.(word, filePath));
+      }
 
       document.body.appendChild(menuEl);
       // Click outside to dismiss

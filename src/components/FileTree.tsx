@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import type { FsEntry } from "../api/commands";
 import { listDirectory, createFile, createFolder, deleteEntry } from "../api/commands";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { toWorkspaceRel } from "../chatBridge";
 
 interface FileTreeProps {
   root: string;
@@ -151,6 +152,19 @@ export function FileTree({ root, entries, onFileOpen }: FileTreeProps) {
     if (entry.is_dir) {
       items.push({ label: "New File", onClick: () => promptAndCreate(entry.path, false) });
       items.push({ label: "New Folder", onClick: () => promptAndCreate(entry.path, true) });
+      items.push({ label: "", separator: true, onClick: () => {} });
+    }
+
+    // 文件节点 → chat：路径引用打进 chat 输入框（App.tsx ask-agent → chatBridge）。
+    if (!entry.is_dir) {
+      items.push({
+        label: "询问 Agent",
+        onClick: () => {
+          window.dispatchEvent(new CustomEvent("ask-agent", {
+            detail: { path: toWorkspaceRel(entry.path, root) },
+          }));
+        },
+      });
       items.push({ label: "", separator: true, onClick: () => {} });
     }
 

@@ -26,6 +26,7 @@ import { DebugEventInjectModal } from "./components/DebugEventInjectModal";
 import { useDebugStore } from "./utils/debug/store";
 import { replayLastAction } from "./utils/debug/inject";
 import { invoke } from "./api/ipcDebug";
+import * as chatBridge from "./chatBridge";
 type ActivePanel = "editor" | "graph" | "split";
 function App() {
   const [activePanel, setActivePanel] = useState<ActivePanel>("split");
@@ -91,6 +92,21 @@ function App() {
     };
     window.addEventListener("latte-toast", handler);
     return () => window.removeEventListener("latte-toast", handler);
+  }, []);
+
+  // editor → chat 反向注入（阶段 3b，design §5.4）：选区/图谱节点/文件树
+  // dispatch "ask-agent" → 引用打进 chat 输入框（面板未就绪则由
+  // chatBridge 缓冲，register 时 flush）并展开面板。只插入不发送。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ref = (e as CustomEvent<chatBridge.ContextRef>).detail;
+      if (!ref || typeof ref.path !== "string") return;
+      chatBridge.insertContext(ref);
+      setChatOpen(true);
+      chatBridge.focus();
+    };
+    window.addEventListener("ask-agent", handler);
+    return () => window.removeEventListener("ask-agent", handler);
   }, []);
 
   const folderRoot = activeMeta?.project_root ?? null;

@@ -70,6 +70,10 @@ pub async fn start(
             initial_tier,
             cwd,
             subsession_store: Arc::new(latte_agent_core::subsession::SubsessionStore::new()),
+            // core 新增字段（默认开）。本路径不 spawn AdvisorMonitor（监察
+            // 在 ui-server 的 create_session_handle 里），仅补齐配置。
+            advisor_monitor:
+                latte_agent_core::advisor_monitor::AdvisorMonitorConfig::default(),
         })
         .await;
 

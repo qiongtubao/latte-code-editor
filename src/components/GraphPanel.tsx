@@ -14,6 +14,7 @@ import {
 import type { GraphNode, SimResult, GraphDisplayMode } from "../hooks/graphTypes";
 import { nodeKindToGroup } from "../hooks/graphTypes";
 import { NODE_COLORS } from "./graphRenderer";
+import { toWorkspaceRel } from "../chatBridge";
 
 export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }) {
   const {
@@ -355,6 +356,24 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
     if (node) navigator.clipboard.writeText(node.name).catch(() => {});
   }, [contextMenu, filteredData]);
 
+  // 节点 → chat：引用打进 chat 输入框（App.tsx ask-agent → chatBridge）。
+  // filteredData 的 RawNode 只有 start_line，endLine/qualified_name
+  // 从 store 里的完整 GraphNode（同 id）补齐。
+  const handleContextAskAgent = useCallback(() => {
+    if (!contextMenu) return; setContextMenu(null);
+    const raw = filteredData?.nodes.find((n) => n.id === contextMenu.nodeId);
+    if (!raw) return;
+    const full = graphData?.nodes.find((n) => n.id === raw.id);
+    window.dispatchEvent(new CustomEvent("ask-agent", {
+      detail: {
+        path: toWorkspaceRel(raw.file_path, folderRoot),
+        startLine: full?.start_line ?? raw.start_line,
+        endLine: full?.end_line,
+        symbol: full?.qualified_name ?? raw.name,
+      },
+    }));
+  }, [contextMenu, filteredData, graphData, folderRoot]);
+
   const nodeCount = filteredData?.nodes.length ?? 0;
   const edgeCount = filteredData?.edges.length ?? 0;
   const hasWorker = simNodes.length > 0;
@@ -520,6 +539,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
           <div className="absolute z-20 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl py-1 text-xs min-w-[140px]" style={{ left: contextMenu.x, top: contextMenu.y }}>
             <div className="px-3 py-1 text-gray-500 border-b border-gray-700 truncate max-w-[200px]">{filteredData?.nodes.find((x) => x.id === contextMenu.nodeId)?.name ?? contextMenu.nodeId}</div>
             <button onClick={handleContextJumpToCode} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>📄</span><span>Jump to Code</span></button>
+            <button onClick={handleContextAskAgent} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>💬</span><span>在 chat 中询问</span></button>
             <button onClick={handleContextExpand} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>🔍</span><span>Expand as Center</span></button>
             <button onClick={handleContextCopyName} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>📋</span><span>Copy Name</span></button>
           </div>

@@ -1,25 +1,33 @@
-// ChatAgentPanel — 嵌入式 agent chat UI 的 iframe 宿主（按工作区多实例）。
+// ChatAgentPanel — 嵌入式 agent chat UI 的 iframe 宿主（阶段 2：同源 + IPC）。
 //
-// 设计：latte-rs-agents/docs/ui-embedding-design.md §1/§5。
-// - src-tauri 按工作区内嵌 latte-agent-ui-server（127.0.0.1 随机端口，
-//   cwd=工作区根；无工作区时走 default server，cwd=app_data_dir），
-//   本组件按当前工作区 invoke `chat_ui_url` get-or-spawn 拿 base URL；
-// - 切换工作区 → URL 变化 → iframe 因 key 重载 → handleLoad 重发
-//   init（各工作区的 chat 状态在各自 server 上保留，可切回）；
-// - iframe 内 UI 与 server 同源，REST/SSE 直连，前端零改动；
-// - 宿主桥走 postMessage（契约 C3）：
-//     父 → iframe: "latte:init"（iframe load 后注入 host 能力声明）
-//     iframe → 父: "latte:call"（openLocation / revealInGraph / openDoc）
-import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+// 设计：latte-rs-agents/docs/ui-embedding-design.md §1/§3/§5。
+// - iframe 指同源 `/chat-ui/index.html`（dev：vite public/chat-ui；
+//   prod：tauri 协议 dist/chat-ui；UI dist 用相对 base "./" 构建），
+//   不再走内嵌 HTTP server；
+// - 传输层（契约 C1）：同源直注入 `contentWindow.__LATTE_HOST__ =
+//   { platform, transport, sessionKey, workspaceRoot, openLocation,
+//   revealInGraph }` + "latte-host-ready" 事件（host.ts 通道 1/2），
+//   UI 的 waitForHost 拾取后 initTransport(transport)，api.ts 全部
+//   调用落进 src-tauri `ui_*` 命令 + `ui:chat_event` 事件；
+//   函数引用无法过 postMessage，直注入是 transport 的唯一通道；
+// - 宿主能力（openLocation/revealInGraph）也随 host 直传（C3），
+//   不再走 postMessage "latte:init"/"latte:call"（那是跨源时代的通道）；
+// - 反向调用（editor → chat，阶段 3b）维持 chatBridge postMessage
+//   （"latte:ui-call"，同源可用）；
+// - 工作区切换：root 变化 → iframe key 变化 → React 重挂 iframe →
+//   onLoad 重新注入（sessionKey/workspaceRoot 按当前工作区取值）；
+//   后端按 workspaceRoot 各自 get-or-spawn UiBackend，chat 状态隔离。
+import { useCallback, useEffect, useRef } from "react";
 import { openFile } from "../api/commands";
 import { graphGetData } from "../api/graphCommands";
+import { createUiTransport } from "../api/uiTransport";
 import type { GraphData, GraphNode } from "../hooks/graphTypes";
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useGraphStore } from "../hooks/useGraphStore";
 import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
+import * as chatBridge from "../chatBridge";
 
-/** 契约 C3（design §5.1）：UI → 宿主的代码引用。path 相对工作区根。 */
+/** 契约 C3（host.ts CodeRef）：UI → 宿主的代码引用。path 相对工作区根。 */
 interface CodeRef {
   path: string;
   startLine?: number;
@@ -28,15 +36,8 @@ interface CodeRef {
   symbol?: string;
 }
 
-/** UI 侧发来的调用消息（design §5：window "message" 事件载荷）。 */
-interface HostCallMessage {
-  type: "latte:call";
-  method: "openLocation" | "revealInGraph" | "openDoc";
-  args: [CodeRef];
-}
-
-/** 本宿主声明支持的能力子集（openDoc 留给阶段 3c）。 */
-const HOST_CAPABILITIES = ["openLocation", "revealInGraph"];
+/** transport 无内部状态（workspaceRoot 每次调用现取），进程级单例即可。 */
+const transport = createUiTransport();
 
 function currentWorkspaceRoot(): string | null {
   const ws = useWorkspaceStore.getState();
@@ -85,57 +86,12 @@ interface Props {
 }
 
 export function ChatAgentPanel({ onClose, onShowGraph }: Props) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  // 跟随活动工作区（无工作区 → null → default server）。
+  // 跟随活动工作区（无工作区 → null → 后端 default 容器）。
+  // root 是 iframe 的 key：变了 React 重挂 iframe → onLoad 重新注入。
   const workspaceRoot = useWorkspaceStore((s) =>
     s.activeWorkspaceId ? (s.workspaces[s.activeWorkspaceId]?.project_root ?? null) : null,
   );
-
-  // 按工作区 get-or-spawn 对应 server：root 变化 → 重新取 URL（变了
-  // iframe 因 key 自动重载，handleLoad 重发 init；没变则不动，chat
-  // 状态保留）。快速连切时 cleanup 丢弃过期结果。
-  useEffect(() => {
-    let cancelled = false;
-    setUrl(null);
-    setError(null);
-    invoke<string>("chat_ui_url", { workspaceRoot })
-      .then((u) => {
-        if (!cancelled) setUrl(u);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceRoot]);
-
-  const origin = url ? new URL(url).origin : null;
-
-  // iframe load 后注入 host（契约 C3 握手）。init 取"当前"工作区：
-  // 切工作区后 URL 变化 → iframe 重载 → 这里随 load 重发最新值；
-  // sessionKey/workspaceRoot 按当前工作区派生，无需额外跟随逻辑。
-  const handleLoad = useCallback(() => {
-    const win = iframeRef.current?.contentWindow;
-    if (!win || !origin) return;
-    const ws = useWorkspaceStore.getState();
-    const wsId = ws.activeWorkspaceId;
-    const root = (wsId && ws.workspaces[wsId]?.project_root) || undefined;
-    win.postMessage(
-      {
-        type: "latte:init",
-        host: {
-          platform: "tauri",
-          capabilities: HOST_CAPABILITIES,
-          ...(wsId ? { sessionKey: `latte:session:${wsId}` } : {}),
-          ...(root ? { workspaceRoot: root } : {}),
-        },
-      },
-      origin,
-    );
-  }, [origin]);
 
   const openLocation = useCallback(async (ref: CodeRef) => {
     try {
@@ -178,30 +134,36 @@ export function ChatAgentPanel({ onClose, onShowGraph }: Props) {
     [onShowGraph],
   );
 
-  // UI → 宿主调用桥：校验 origin 后分派（契约 C3 的安全要求）。
-  useEffect(() => {
-    if (!origin) return;
-    const onMessage = (e: MessageEvent) => {
-      if (e.origin !== origin) return;
-      const data = e.data as Partial<HostCallMessage> | undefined;
-      if (!data || data.type !== "latte:call") return;
-      const ref = data.args?.[0];
-      if (!ref || typeof ref.path !== "string") return;
-      switch (data.method) {
-        case "openLocation":
-          void openLocation(ref);
-          break;
-        case "revealInGraph":
-          void revealInGraph(ref);
-          break;
-        default:
-          // openDoc 未在 capabilities 里声明，UI 不应发来；忽略。
-          break;
-      }
+  // iframe load 后同源直注入 host（C3 握手，host.ts 通道 1/2）：
+  // 写 __LATTE_HOST__ → dispatch "latte-host-ready"。UI 的 waitForHost
+  // （≤250ms 窗口）拾取；注入取"当前"工作区，重载后随 load 重发最新值。
+  const handleLoad = useCallback(() => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    const ws = useWorkspaceStore.getState();
+    const wsId = ws.activeWorkspaceId;
+    const root = (wsId && ws.workspaces[wsId]?.project_root) || undefined;
+    (win as unknown as { __LATTE_HOST__?: unknown }).__LATTE_HOST__ = {
+      platform: "tauri",
+      transport,
+      ...(wsId ? { sessionKey: `latte:session:${wsId}` } : {}),
+      ...(root ? { workspaceRoot: root } : {}),
+      openLocation: (ref: CodeRef) => {
+        void openLocation(ref);
+      },
+      revealInGraph: (ref: CodeRef) => {
+        void revealInGraph(ref);
+      },
     };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [origin, openLocation, revealInGraph]);
+    win.dispatchEvent(new Event("latte-host-ready"));
+    // 反向调用通道（editor → chat，阶段 3b）：同源 origin。
+    chatBridge.register(win, window.location.origin);
+  }, [openLocation, revealInGraph]);
+
+  // iframe 重载（切工作区）/组件卸载时注销反向通道，回到缓冲态。
+  useEffect(() => {
+    return () => chatBridge.unregister(window.location.origin);
+  }, [workspaceRoot]);
 
   return (
     <div className="flex flex-col h-full bg-[#1e1e1e]">
@@ -215,24 +177,14 @@ export function ChatAgentPanel({ onClose, onShowGraph }: Props) {
           ✕
         </button>
       </div>
-      {error ? (
-        <div className="flex-1 flex items-center justify-center px-4 text-center text-xs text-red-400">
-          {error}
-        </div>
-      ) : url ? (
-        <iframe
-          ref={iframeRef}
-          key={url}
-          src={url}
-          onLoad={handleLoad}
-          className="flex-1 w-full border-0"
-          title="Latte Agent"
-        />
-      ) : (
-        <div className="flex-1 flex items-center justify-center text-xs text-gray-500">
-          Starting agent UI…
-        </div>
-      )}
+      <iframe
+        ref={iframeRef}
+        key={workspaceRoot ?? "default"}
+        src="/chat-ui/index.html"
+        onLoad={handleLoad}
+        className="flex-1 w-full border-0"
+        title="Latte Agent"
+      />
     </div>
   );
 }
