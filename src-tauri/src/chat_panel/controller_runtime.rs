@@ -367,6 +367,7 @@ models:
             context_window: 32_768,
             max_tokens: 8192,
             supports_thinking: false,
+            supports_vision: false,
             cost_per_million_input: None,
             cost_per_million_output: None,
             tier: Some("standard".to_string()),

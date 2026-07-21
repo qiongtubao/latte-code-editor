@@ -9,3 +9,5 @@ public/chat-ui/
 .codegraph/
 
 .worktrees/
+.kiro/
+.latte/ui-sessions/

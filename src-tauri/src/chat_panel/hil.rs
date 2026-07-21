@@ -142,7 +142,7 @@ pub fn send_message(
     };
     let msg = latte_ai::models::Message {
         role: role_enum,
-        content: req.content.clone(),
+        content: vec![latte_ai::models::ContentPart::text(req.content.clone())],
     };
     entry
         .manager
@@ -200,7 +200,7 @@ pub fn edit_message(
             if new_content.trim().is_empty() {
                 return Err("编辑后内容不能为空".into());
             }
-            role.messages[req.message_index].content = new_content.to_string();
+            role.messages[req.message_index].content = vec![latte_ai::models::ContentPart::text(new_content.to_string())];
         }
         "delete" => {
             role.messages.remove(req.message_index);
@@ -234,7 +234,7 @@ pub fn inject_message(
     let now = iso8601_utc_now();
     let msg = latte_ai::models::Message {
         role: latte_ai::models::Role::User,
-        content: format!("[HUMAN @ {}]\n{}", now, req.message),
+        content: vec![latte_ai::models::ContentPart::text(format!("[HUMAN @ {}]\n{}", now, req.message))],
     };
     entry
         .manager
@@ -486,7 +486,7 @@ fn build_state(mgr: &SessionManager, worktree_root: &Path) -> HilSessionState {
                 .map(|(i, m)| HilMessage {
                     index: i,
                     role: format!("{:?}", m.role).to_lowercase(),
-                    content: m.content.clone(),
+                    content: m.as_text(),
                     timestamp: None,
                 })
                 .collect(),

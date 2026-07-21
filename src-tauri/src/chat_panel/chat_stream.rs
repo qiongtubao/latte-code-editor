@@ -17,7 +17,8 @@ use latte_agent_core::agent::{Agent, AgentRunner};
 use latte_agent_core::model_resolver::ModelTier;
 use latte_agent_core::session_store::{SessionStore, StoredMessage};
 use latte_agent_core::trace::{ToolStatus, TraceEvent, TraceSink};
-use latte_ai::models::{Message, Role};
+use latte_ai::models::{ContentPart, Message, Role};
+
 use latte_rs_agent_tools::prelude::*;
 use super::config_loader;
 
@@ -163,8 +164,8 @@ fn iso_now() -> String {
 
 fn stored_to_msg(sm: &StoredMessage) -> Option<Message> {
     match sm {
-        StoredMessage::User { content, .. } => Some(Message { role: Role::User, content: content.clone() }),
-        StoredMessage::Assistant { content, .. } => Some(Message { role: Role::Assistant, content: content.clone() }),
+        StoredMessage::User { content, .. } => Some(Message { role: Role::User, content: vec![ContentPart::text(content.clone())] }),
+        StoredMessage::Assistant { content, .. } => Some(Message { role: Role::Assistant, content: vec![ContentPart::text(content.clone())] }),
         _ => None,
     }
 }
@@ -234,11 +235,11 @@ pub async fn chat_stream(app: AppHandle, request: StreamRequest) -> Result<Strea
         for entry in &request.history {
             messages.push(Message {
                 role: if entry.role == "assistant" { Role::Assistant } else { Role::User },
-                content: entry.content.clone(),
+                content: vec![ContentPart::text(entry.content.clone())],
             });
         }
     }
-    messages.push(Message { role: Role::User, content: request.content.clone() });
+    messages.push(Message { role: Role::User, content: vec![ContentPart::text(request.content.clone())] });
 
     let response = runner.run_turn(&messages, None).await
         .map_err(|e| format!("model call failed for '{role_id}': {e}"))?;
