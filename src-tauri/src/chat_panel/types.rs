@@ -730,8 +730,11 @@ impl serde::Serialize for ControllerEventPayload {
                 map.serialize_entry("round", round)?;
             }
             ChatEvent::Done => {}
-            ChatEvent::Error { message, kind: _ } => {
+            ChatEvent::Error { message, kind: _, sub_id } => {
                 map.serialize_entry("message", message)?;
+                if let Some(sub_id) = sub_id {
+                    map.serialize_entry("subId", sub_id)?;
+                }
             }
             ChatEvent::RoleList { roles } => {
                 map.serialize_entry("roles", roles)?;
@@ -795,3 +798,39 @@ impl serde::Serialize for ControllerEventPayload {
 }
 
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use latte_agent_core::controller::ChatEvent;
+
+    /// 验证 Error 事件的可选 sub_id 会以 Tauri 协议的 camelCase 字段传给前端。
+    #[test]
+    fn error_payload_preserves_sub_id() {
+        let payload = ControllerEventPayload {
+            session_id: "session-1".into(),
+            kind: ControllerEventKind::Error,
+            event: ChatEvent::Error {
+                message: "delegate failed".into(),
+                kind: None,
+                sub_id: Some("sub-42".into()),
+            },
+        };
+        let value = serde_json::to_value(payload).expect("serialize controller error");
+        assert_eq!(value["sessionId"], "session-1");
+        assert_eq!(value["kind"], "error");
+        assert_eq!(value["message"], "delegate failed");
+        assert_eq!(value["subId"], "sub-42");
+
+        let without_sub_id = ControllerEventPayload {
+            session_id: "session-1".into(),
+            kind: ControllerEventKind::Error,
+            event: ChatEvent::Error {
+                message: "main turn failed".into(),
+                kind: None,
+                sub_id: None,
+            },
+        };
+        let value = serde_json::to_value(without_sub_id).expect("serialize error without sub id");
+        assert!(value.get("subId").is_none());
+    }
+}

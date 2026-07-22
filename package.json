@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build",
+    "build": "CI=false tauri build",
     "frontend:dev": "bash scripts/sync-chat-ui.sh && vite",
     "frontend:build": "bash scripts/sync-chat-ui.sh && tsc && vite build",
     "preview": "vite preview",
