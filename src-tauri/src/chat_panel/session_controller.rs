@@ -122,7 +122,7 @@ pub async fn persist_event(session_id: &str, event: &ChatEvent) {
                 timestamp: ts,
             })
         }
-        ChatEvent::Error { message } => {
+        ChatEvent::Error { message, kind: _ } => {
             Some(StoredMessage::SystemEvent {
                 event_type: "error".into(),
                 message: message.clone(),

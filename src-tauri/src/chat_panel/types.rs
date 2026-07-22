@@ -730,7 +730,7 @@ impl serde::Serialize for ControllerEventPayload {
                 map.serialize_entry("round", round)?;
             }
             ChatEvent::Done => {}
-            ChatEvent::Error { message } => {
+            ChatEvent::Error { message, kind: _ } => {
                 map.serialize_entry("message", message)?;
             }
             ChatEvent::RoleList { roles } => {
