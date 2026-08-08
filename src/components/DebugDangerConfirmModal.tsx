@@ -20,10 +20,10 @@ export function DebugDangerConfirmModal({
       onClick={onCancel}
     >
       <div
-        className="bg-white text-black rounded-lg p-5 w-[440px] shadow-2xl"
+        className="bg-surface-2 text-fg rounded-lg p-5 w-[440px] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="font-bold mb-2 text-red-700">⚠ 危险操作确认</h3>
+        <h3 className="font-bold mb-2 text-err">⚠ 危险操作确认</h3>
         <p className="text-sm mb-1">
           <b>事件:</b> <code>{event}</code>
         </p>
@@ -33,7 +33,7 @@ export function DebugDangerConfirmModal({
             {JSON.stringify(ctx, null, 2)}
           </code>
         </p>
-        <p className="text-sm text-red-700 mb-3">此操作不可逆。</p>
+        <p className="text-sm text-err mb-3">此操作不可逆。</p>
         <label className="flex items-center gap-2 text-sm mb-3 select-none">
           <input
             type="checkbox"
@@ -45,14 +45,14 @@ export function DebugDangerConfirmModal({
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300"
+            className="px-3 py-1 bg-control rounded hover:bg-control"
           >
             取消
           </button>
           <button
             onClick={onConfirm}
             disabled={!ack}
-            className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+            className="px-3 py-1 bg-err text-white rounded hover:bg-err disabled:opacity-50"
           >
             确认触发
           </button>

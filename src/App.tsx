@@ -27,6 +27,8 @@ import { useDebugStore } from "./utils/debug/store";
 import { replayLastAction } from "./utils/debug/inject";
 import { invoke } from "./api/ipcDebug";
 import * as chatBridge from "./chatBridge";
+import { applySkin, SKINS } from "./skins";
+import { useSettingsStore } from "./hooks/useSettingsStore";
 type ActivePanel = "editor" | "graph" | "split";
 function App() {
   const [activePanel, setActivePanel] = useState<ActivePanel>("split");
@@ -69,6 +71,15 @@ function App() {
   useEffect(() => {
     hydrate();
   }, [hydrate]);
+
+  // 皮肤应用：挂载时按 persist 恢复的皮肤执行一次，之后跟随设置变化。
+  // chrome 变量写到 documentElement（@theme inline 工具类即时跟随），
+  // chatVars 经 chatBridge 同源写进 chat iframe（未打开则缓存，register 时补）。
+  const skin = useSettingsStore((s) => s.skin);
+  useEffect(() => {
+    applySkin(skin);
+    chatBridge.setSkin(SKINS[skin].chatVars);
+  }, [skin]);
 
   useEffect(() => {
     if (activeId) useGraphStore.getState().requestReload();
@@ -225,35 +236,35 @@ function App() {
     <div className="flex flex-col h-screen">
       <WorkspaceTabs />
 
-      <div className="flex items-center gap-0 text-xs bg-[#2d2d2d] border-b border-gray-700 select-none">
+      <div className="flex items-center gap-0 text-xs bg-surface-3 border-b border-edge select-none">
         <button
           onClick={() => setSidebarOpen((v) => !v)}
-          className="px-2 py-1.5 border-r border-gray-700 cursor-pointer transition-colors hover:text-gray-200 text-gray-400"
+          className="px-2 py-1.5 border-r border-edge cursor-pointer transition-colors hover:text-fg text-fg-2"
           title="Toggle Sidebar (Ctrl+B)"
         >
           {sidebarOpen ? "◀" : "▶"}
         </button>
         <button
           onClick={() => setActivePanel("editor")}
-          className={`px-3 py-1.5 border-r border-gray-700 cursor-pointer transition-colors ${activePanel === "editor" ? "bg-[#1e1e1e] text-white" : "text-gray-400 hover:text-gray-200"}`}
+          className={`px-3 py-1.5 border-r border-edge cursor-pointer transition-colors ${activePanel === "editor" ? "bg-surface text-fg" : "text-fg-2 hover:text-fg"}`}
         >
           Editor
         </button>
         <button
           onClick={() => setActivePanel("graph")}
-          className={`px-3 py-1.5 border-r border-gray-700 cursor-pointer transition-colors ${activePanel === "graph" ? "bg-[#1e1e1e] text-white" : "text-gray-400 hover:text-gray-200"}`}
+          className={`px-3 py-1.5 border-r border-edge cursor-pointer transition-colors ${activePanel === "graph" ? "bg-surface text-fg" : "text-fg-2 hover:text-fg"}`}
         >
           Graph
         </button>
         <button
           onClick={() => setActivePanel("split")}
-          className={`px-3 py-1.5 cursor-pointer transition-colors ${activePanel === "split" ? "bg-[#1e1e1e] text-white" : "text-gray-400 hover:text-gray-200"}`}
+          className={`px-3 py-1.5 cursor-pointer transition-colors ${activePanel === "split" ? "bg-surface text-fg" : "text-fg-2 hover:text-fg"}`}
         >
           Split
         </button>
         <button
           onClick={() => setChatOpen((v) => !v)}
-          className={`px-3 py-1.5 border-l border-gray-700 cursor-pointer transition-colors ${chatOpen ? "bg-[#1e1e1e] text-white" : "text-gray-400 hover:text-gray-200"}`}
+          className={`px-3 py-1.5 border-l border-edge cursor-pointer transition-colors ${chatOpen ? "bg-surface text-fg" : "text-fg-2 hover:text-fg"}`}
           title="Toggle Chat Panel (Ctrl+Shift+L)"
         >
           💬 Chat
@@ -272,7 +283,7 @@ function App() {
         {sidebarOpen && (
           <>
             <div
-              className="flex-shrink-0 border-r border-gray-700 overflow-hidden flex flex-col"
+              className="flex-shrink-0 border-r border-edge overflow-hidden flex flex-col"
               style={{ width: sidebarWidth }}
             >
               <Sidebar folderRoot={folderRoot} onFileOpen={handleFileOpen} />
@@ -293,7 +304,7 @@ function App() {
             {(activePanel === "editor" || activePanel === "split") && hasOutline && (
               <>
                 <div
-                  className="flex-shrink-0 border-r border-gray-700 overflow-hidden flex flex-col"
+                  className="flex-shrink-0 border-r border-edge overflow-hidden flex flex-col"
                   style={{ width: outlineWidth }}
                 >
                   <OutlinePanel />
@@ -308,7 +319,7 @@ function App() {
             )}
             {(activePanel === "editor" || activePanel === "split") && (
               <div
-                className={`overflow-hidden ${activePanel === "split" ? "border-r border-gray-700" : ""}`}
+                className={`overflow-hidden ${activePanel === "split" ? "border-r border-edge" : ""}`}
                 style={(activePanel === "split" || chatOpen) ? { flex: editorFlex } : { flex: 1 }}
               >
                 <EditorPanel onCtrlClick={async (word, x, y, fp, line) => {
@@ -329,7 +340,7 @@ function App() {
             )}
             {(activePanel === "split" || (chatOpen && activePanel === "editor")) && (
               <div
-                className="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-[#007acc] bg-[#333] z-10 transition-colors"
+                className="flex-shrink-0 w-[3px] cursor-col-resize hover:bg-accent bg-edge z-10 transition-colors"
                 onMouseDown={(e) => {
                   e.preventDefault();
                   const startX = e.clientX;
@@ -357,7 +368,7 @@ function App() {
             {chatOpen && (
               /* chat 占满中间行剩余宽度（整行 − 左侧 − 编辑器），
                  边界由上方 editorFlex 分隔条控制，与 GraphPanel 同机制 */
-              <div className="flex-1 overflow-hidden border-l border-gray-700">
+              <div className="flex-1 overflow-hidden border-l border-edge">
                 <ChatAgentPanel
                   onClose={() => setChatOpen(false)}
                   onShowGraph={() => {
@@ -390,7 +401,7 @@ function App() {
       {toast && (
         <div
           onClick={() => setToast(null)}
-          className="fixed bottom-12 right-4 z-50 max-w-md px-4 py-2 bg-[#094771] text-blue-100 rounded shadow-lg cursor-pointer text-xs"
+          className="fixed bottom-12 right-4 z-50 max-w-md px-4 py-2 bg-info text-accent-2 rounded shadow-lg cursor-pointer text-xs"
         >
           {toast}
         </div>

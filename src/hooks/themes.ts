@@ -13,7 +13,7 @@ export const cmThemes: Record<EditorTheme, ReturnType<typeof EditorView.theme>> 
     ".cm-selectionBackground": { backgroundColor: "#49483e80" },
     "&.cm-focused .cm-selectionBackground": { backgroundColor: "#49483e" },
     ".cm-matchingBracket": { backgroundColor: "#3b3a32", outline: "1px solid #75715e" },
-  }),
+  }, { dark: true }),
 
   dracula: EditorView.theme({
     "&": { color: "#f8f8f2", backgroundColor: "#282a36" },
@@ -24,7 +24,7 @@ export const cmThemes: Record<EditorTheme, ReturnType<typeof EditorView.theme>> 
     ".cm-selectionBackground": { backgroundColor: "#44475a80" },
     "&.cm-focused .cm-selectionBackground": { backgroundColor: "#44475a" },
     ".cm-matchingBracket": { backgroundColor: "#56594d", outline: "1px solid #6272a4" },
-  }),
+  }, { dark: true }),
 
   oneDark: EditorView.theme({
     "&": { color: "#abb2bf", backgroundColor: "#282c34" },
@@ -35,7 +35,7 @@ export const cmThemes: Record<EditorTheme, ReturnType<typeof EditorView.theme>> 
     ".cm-selectionBackground": { backgroundColor: "#3e445180" },
     "&.cm-focused .cm-selectionBackground": { backgroundColor: "#3e4451" },
     ".cm-matchingBracket": { backgroundColor: "#2c313a", outline: "1px solid #636d83" },
-  }),
+  }, { dark: true }),
 
   solarizedLight: EditorView.theme({
     "&": { color: "#657b83", backgroundColor: "#fdf6e3" },
@@ -46,7 +46,7 @@ export const cmThemes: Record<EditorTheme, ReturnType<typeof EditorView.theme>> 
     ".cm-selectionBackground": { backgroundColor: "#eee8d5" },
     "&.cm-focused .cm-selectionBackground": { backgroundColor: "#d6d1bf" },
     ".cm-matchingBracket": { backgroundColor: "#eee8d5", outline: "1px solid #93a1a1" },
-  }),
+  }, { dark: false }),
 
   githubLight: EditorView.theme({
     "&": { color: "#24292e", backgroundColor: "#ffffff" },
@@ -57,7 +57,7 @@ export const cmThemes: Record<EditorTheme, ReturnType<typeof EditorView.theme>> 
     ".cm-selectionBackground": { backgroundColor: "#c8c8fa" },
     "&.cm-focused .cm-selectionBackground": { backgroundColor: "#c8c8fa" },
     ".cm-matchingBracket": { backgroundColor: "#f6f8fa", outline: "1px solid #d1d5da" },
-  }),
+  }, { dark: false }),
 };
 
 const themeHighlights: Record<EditorTheme, HighlightStyle> = {

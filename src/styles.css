@@ -1,18 +1,44 @@
 @import "tailwindcss";
 
+/* 皮肤语义 token → Tailwind 工具类（bg-surface / text-fg / border-edge / ...）。
+ * inline 让工具类直接引用 var(--*)，applySkin（src/skins.ts）运行时写
+ * documentElement 上的变量即可全站换肤，无需重建 CSS。
+ * 默认值与 SKINS["vscode-dark"] 一致，保证首帧（applySkin 执行前）不闪浅色。 */
+@theme inline {
+  --color-surface: var(--surface, #1e1e1e);
+  --color-surface-2: var(--surface-2, #252526);
+  --color-surface-3: var(--surface-3, #2d2d2d);
+  --color-control: var(--control, #3a3a3a);
+  --color-control-hover: var(--control-hover, #4a4a4a);
+  --color-fg: var(--fg, #d4d4d4);
+  --color-fg-2: var(--fg-2, #9d9d9d);
+  --color-fg-3: var(--fg-3, #6a6a6a);
+  --color-edge: var(--edge, #3c3c3c);
+  --color-accent: var(--accent, #007acc);
+  --color-accent-2: var(--accent-2, #0098ff);
+  --color-ok: var(--ok, #89d185);
+  --color-warn: var(--warn, #cca700);
+  --color-err: var(--err, #f14c4c);
+  --color-ok-bg: var(--ok-bg, #1a3a1a);
+  --color-warn-bg: var(--warn-bg, #3d3418);
+  --color-err-bg: var(--err-bg, #401d1d);
+  --color-selection: var(--selection, #264f78);
+  --color-info: var(--info, #094771);
+}
+
 :root {
   font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
   font-size: 14px;
   line-height: 1.5;
-  color-scheme: dark;
+  /* color-scheme 由 applySkin 按皮肤明暗动态设置 */
 }
 
 body {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--surface, #1e1e1e);
+  color: var(--fg, #d4d4d4);
 }
 
 #root {
@@ -22,40 +48,41 @@ body {
   flex-direction: column;
 }
 
-/* CodeMirror overrides for dark theme */
+/* CodeMirror 兜底样式（跟随皮肤变量）；themes.ts 的 EditorView.theme
+ * 选择器更具体，代码区实际配色以所选代码主题为准。 */
 .cm-editor {
   height: 100%;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--surface, #1e1e1e);
+  color: var(--fg, #d4d4d4);
 }
 
 .cm-editor .cm-gutters {
-  background: #1e1e1e;
-  color: #858585;
-  border-right: 1px solid #333;
+  background: var(--surface, #1e1e1e);
+  color: var(--fg-2, #858585);
+  border-right: 1px solid var(--edge, #333);
 }
 
 .cm-editor .cm-activeLineGutter {
-  background: #282828;
+  background: var(--surface-3, #282828);
 }
 
 .cm-editor .cm-activeLine {
-  background: #282828;
+  background: var(--surface-3, #282828);
 }
 
 .cm-editor .cm-cursor {
-  border-left-color: #aeafad;
+  border-left-color: var(--fg, #aeafad);
 }
 
 .cm-editor .cm-selectionBackground,
 .cm-editor.cm-focused .cm-selectionBackground {
-  background: #264f78;
+  background: var(--selection, #264f78);
 }
 
 .cm-editor .cm-matchingBracket,
 .cm-editor .cm-nonmatchingBracket {
-  background: #343434;
-  outline: 1px solid #515151;
+  background: var(--control, #343434);
+  outline: 1px solid var(--fg-3, #515151);
 }
 
 .cm-editor .cm-scroller {

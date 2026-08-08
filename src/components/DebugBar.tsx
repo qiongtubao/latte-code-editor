@@ -29,7 +29,7 @@ export function DebugBar({ onOpenInject, onSnapshot }: Props) {
 
   return (
     <div data-testid="debug-bar" className="fixed bottom-2 right-2 z-50">
-      <div className="bg-gray-900/90 text-white text-xs rounded shadow-lg p-2 w-[420px] font-mono">
+      <div className="bg-surface-2/90 text-fg text-xs rounded shadow-lg p-2 w-[420px] font-mono">
         <div className="flex justify-between items-center mb-1">
           <span>
             🛠 DEBUG | sid: {sid} | locks: {replayLocks.size}
@@ -38,7 +38,7 @@ export function DebugBar({ onOpenInject, onSnapshot }: Props) {
           <button
             onClick={() => setOn(false)}
             aria-label="close debug"
-            className="text-red-300 hover:text-red-100"
+            className="text-err hover:text-err"
           >
             ✕
           </button>
@@ -46,18 +46,18 @@ export function DebugBar({ onOpenInject, onSnapshot }: Props) {
         <div className="flex gap-1 flex-wrap items-center">
           <button
             onClick={onSnapshot}
-            className="px-2 py-0.5 bg-blue-700 rounded hover:bg-blue-600"
+            className="px-2 py-0.5 bg-accent rounded hover:bg-accent"
           >
             📸 Snapshot
           </button>
           <button
             onClick={onOpenInject}
-            className="px-2 py-0.5 bg-blue-700 rounded hover:bg-blue-600"
+            className="px-2 py-0.5 bg-accent rounded hover:bg-accent"
           >
             📨 Inject
           </button>
           <label
-            className="flex items-center gap-1 text-[10px] text-gray-300 select-none"
+            className="flex items-center gap-1 text-[10px] text-fg select-none"
             title="When on, also emit level=debug events (file.content, ipc.invoke) — high volume."
           >
             <input

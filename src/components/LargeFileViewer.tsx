@@ -50,12 +50,12 @@ export function LargeFileViewer({ content, fileName }: LargeFileViewerProps) {
   }, [totalLines]);
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#1e1e1e" }}>
-      <div className="px-4 py-2 text-xs text-gray-400 border-b border-gray-700 bg-[#252526] flex items-center gap-4">
-        <span className="text-yellow-400 font-medium">⚠ Large File Mode</span>
+    <div className="flex flex-col h-full" style={{ background: "var(--surface)" }}>
+      <div className="px-4 py-2 text-xs text-fg-2 border-b border-edge bg-surface-2 flex items-center gap-4">
+        <span className="text-warn font-medium">⚠ Large File Mode</span>
         <span>{fileName}</span>
-        <span className="text-gray-500">{fileSize}</span>
-        <span className="text-gray-500">Read-only | No syntax highlighting</span>
+        <span className="text-fg-3">{fileSize}</span>
+        <span className="text-fg-3">Read-only | No syntax highlighting</span>
       </div>
       <div
         ref={containerRef}

@@ -121,11 +121,11 @@ export function WorkflowEditor({ availableRoles, onClose }: Props) {
       }}
     >
       <div
-        className="w-[640px] max-h-[85vh] flex flex-col bg-[#1e1e1e] border border-gray-700 rounded-lg shadow-2xl text-gray-200"
+        className="w-[640px] max-h-[85vh] flex flex-col bg-surface border border-edge rounded-lg shadow-2xl text-fg"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center px-4 py-3 bg-[#252526] border-b border-gray-700">
+        <div className="flex items-center px-4 py-3 bg-surface-2 border-b border-edge">
           <span className="text-base mr-2">⚙️</span>
           <span className="font-semibold text-sm flex-1">
             {isDuplicateId
@@ -134,7 +134,7 @@ export function WorkflowEditor({ availableRoles, onClose }: Props) {
           </span>
           <button
             onClick={handleReset}
-            className="text-yellow-300 hover:text-yellow-200 text-[11px] px-2 py-0.5 mr-2 rounded hover:bg-yellow-900/30"
+            className="text-warn hover:text-warn text-[11px] px-2 py-0.5 mr-2 rounded hover:bg-warn/30"
             title="覆盖 roles.yaml，重置为中文默认"
             type="button"
           >
@@ -142,7 +142,7 @@ export function WorkflowEditor({ availableRoles, onClose }: Props) {
           </button>
           <button
             onClick={closeEditor}
-            className="text-gray-400 hover:text-gray-200 text-sm px-2"
+            className="text-fg-2 hover:text-fg text-sm px-2"
             title="关闭 (Esc)"
             type="button"
           >
@@ -175,36 +175,36 @@ export function WorkflowEditor({ availableRoles, onClose }: Props) {
           )}
         </div>
         {error && (
-          <div className="mx-4 mb-2 p-2 bg-red-900/30 border border-red-700 rounded text-xs text-red-200">
+          <div className="mx-4 mb-2 p-2 bg-err/30 border border-err rounded text-xs text-err">
             <div className="font-semibold mb-1">⚠️ {error}</div>
           </div>
         )}
 
         {/* Footer */}
-        <div className="flex items-center gap-2 px-4 py-3 bg-[#252526] border-t border-gray-700">
+        <div className="flex items-center gap-2 px-4 py-3 bg-surface-2 border-t border-edge">
           <button
             onClick={handleSave}
             disabled={saving || isDuplicateId}
-            className="px-3 py-1 bg-[#007acc] hover:bg-[#1f8ad2] text-white text-xs rounded disabled:opacity-50"
+            className="px-3 py-1 bg-accent hover:bg-accent-2 text-white text-xs rounded disabled:opacity-50"
             type="button"
           >
             {saving ? "保存中…" : dirty ? "💾 保存 *" : "💾 保存"}
           </button>
           <button
             onClick={closeEditor}
-            className="px-3 py-1 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-200 text-xs rounded"
+            className="px-3 py-1 bg-control hover:bg-control-hover text-fg text-xs rounded"
             type="button"
           >
             取消
           </button>
-          <span className="text-[10px] text-gray-500">
+          <span className="text-[10px] text-fg-3">
             {dirty ? "有未保存的改动" : "已保存"}
           </span>
           <div className="ml-auto">
             <button
               onClick={handleDelete}
               disabled={isProtected || saving}
-              className="px-3 py-1 bg-red-700 hover:bg-red-600 text-white text-xs rounded disabled:opacity-30"
+              className="px-3 py-1 bg-err hover:bg-err text-white text-xs rounded disabled:opacity-30"
               title={
                 isProtected
                   ? "内置工作流不可删除"
@@ -236,29 +236,29 @@ function BasicFields({
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
         <label className="space-y-1">
-          <div className="text-gray-400">工作流 id（英文，用于 YAML）</div>
+          <div className="text-fg-2">工作流 id（英文，用于 YAML）</div>
           <input
             value={editing.id}
             onChange={(e) => patch({ id: e.target.value.trim() })}
             disabled={["default", "plan", "code_review", "debug"].includes(editing.id)}
             className={
-              "w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border outline-none focus:border-[#007acc] " +
-              (isDuplicateId ? "border-red-500" : "border-gray-600")
+              "w-full px-2 py-1 bg-surface-3 text-fg text-xs rounded border outline-none focus:border-accent " +
+              (isDuplicateId ? "border-err" : "border-edge")
             }
             placeholder="例如：code_review_v2"
           />
           {isDuplicateId && (
-            <div className="text-[10px] text-red-400">
+            <div className="text-[10px] text-err">
               ⚠️ id 与已有工作流冲突，请换一个
             </div>
           )}
         </label>
         <label className="space-y-1">
-          <div className="text-gray-400">显示名称（中文）</div>
+          <div className="text-fg-2">显示名称（中文）</div>
           <input
             value={editing.name}
             onChange={(e) => patch({ name: e.target.value })}
-            className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+            className="w-full px-2 py-1 bg-surface-3 text-fg text-xs rounded border border-edge outline-none focus:border-accent"
             placeholder="例如：🔍 代码审查 v2"
           />
         </label>
@@ -266,20 +266,20 @@ function BasicFields({
 
       <div className="grid grid-cols-3 gap-2">
         <label className="space-y-1">
-          <div className="text-gray-400">工作流类型</div>
+          <div className="text-fg-2">工作流类型</div>
           <select
             value={editing.kind}
             onChange={(e) =>
               patch({ kind: e.target.value as "planned" | "swarm" })
             }
-            className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+            className="w-full px-2 py-1 bg-surface-3 text-fg text-xs rounded border border-edge outline-none focus:border-accent"
           >
             <option value="planned">💬 计划型 — 固定步骤</option>
             <option value="swarm">🪄 智能型 — 计划者编排</option>
           </select>
         </label>
         <label className="space-y-1">
-          <div className="text-gray-400">
+          <div className="text-fg-2">
             {editing.kind === "swarm"
               ? "每轮轮数（保留位）"
               : "每步重复轮数"}
@@ -292,11 +292,11 @@ function BasicFields({
             onChange={(e) =>
               patch({ maxRounds: Math.max(1, Number(e.target.value) || 1) })
             }
-            className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+            className="w-full px-2 py-1 bg-surface-3 text-fg text-xs rounded border border-edge outline-none focus:border-accent"
           />
         </label>
         <label className="space-y-1">
-          <div className="text-gray-400">
+          <div className="text-fg-2">
             {editing.kind === "swarm" ? "最多生成多少步" : "备用：每步发言角色"}
           </div>
           <input
@@ -309,7 +309,7 @@ function BasicFields({
               if (editing.kind === "swarm") patch({ maxSteps: v });
             }}
             disabled={editing.kind !== "swarm"}
-            className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc] disabled:opacity-50"
+            className="w-full px-2 py-1 bg-surface-3 text-fg text-xs rounded border border-edge outline-none focus:border-accent disabled:opacity-50"
           />
         </label>
       </div>
@@ -338,19 +338,19 @@ function StepsSection({
   return (
     <div className="space-y-2">
       <div className="flex items-center">
-        <div className="font-semibold text-gray-300 flex-1">
+        <div className="font-semibold text-fg flex-1">
           流程步骤（按顺序）
         </div>
         <button
           onClick={addStep}
-          className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-200 text-[11px] rounded"
+          className="px-2 py-0.5 bg-control hover:bg-control-hover text-fg text-[11px] rounded"
           type="button"
         >
           ＋ 添加步骤
         </button>
       </div>
       {editing.steps.length === 0 ? (
-        <div className="text-gray-500 italic p-2 bg-[#252526] rounded">
+        <div className="text-fg-3 italic p-2 bg-surface-2 rounded">
           暂无步骤 —— 保存后将按顺序执行下方默认角色列表。
         </div>
       ) : (
@@ -370,8 +370,8 @@ function StepsSection({
         </ol>
       )}
       {editing.steps.length > 0 && editing.steps.length > 0 && (
-        <details className="text-[10px] text-gray-500">
-          <summary className="cursor-pointer hover:text-gray-400">
+        <details className="text-[10px] text-fg-3">
+          <summary className="cursor-pointer hover:text-fg-2">
             默认角色列表（步骤为空时使用）
           </summary>
           <div className="mt-1 pl-2">
@@ -406,23 +406,23 @@ function StepEditor({
   moveStep: (i: number, d: -1 | 1) => void;
 }) {
   return (
-    <li className="bg-[#252526] border border-gray-700 rounded p-2 space-y-2">
+    <li className="bg-surface-2 border border-edge rounded p-2 space-y-2">
       <div className="flex items-center gap-2">
-        <span className="text-gray-500 text-[10px] w-6">
+        <span className="text-fg-3 text-[10px] w-6">
           {index + 1}.
         </span>
         <input
           value={step.name}
           onChange={(e) => patchStep(index, { name: e.target.value })}
           placeholder="步骤名称（中文，如：需求澄清）"
-          className="flex-1 px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+          className="flex-1 px-2 py-1 bg-surface-3 text-fg text-xs rounded border border-edge outline-none focus:border-accent"
         />
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => moveStep(index, -1)}
             disabled={index === 0}
-            className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-200 text-[10px] rounded disabled:opacity-30"
+            className="px-1.5 py-0.5 bg-control hover:bg-control-hover text-fg text-[10px] rounded disabled:opacity-30"
             title="上移"
           >
             ↑
@@ -431,7 +431,7 @@ function StepEditor({
             type="button"
             onClick={() => moveStep(index, 1)}
             disabled={index === total - 1}
-            className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-200 text-[10px] rounded disabled:opacity-30"
+            className="px-1.5 py-0.5 bg-control hover:bg-control-hover text-fg text-[10px] rounded disabled:opacity-30"
             title="下移"
           >
             ↓
@@ -439,7 +439,7 @@ function StepEditor({
           <button
             type="button"
             onClick={() => removeStep(index)}
-            className="px-1.5 py-0.5 bg-red-900 hover:bg-red-700 text-white text-[10px] rounded"
+            className="px-1.5 py-0.5 bg-err hover:bg-err text-white text-[10px] rounded"
             title="删除步骤"
           >
             ✕
@@ -484,8 +484,8 @@ function RolePicker({
             className={
               "px-2 py-0.5 text-[11px] rounded border " +
               (on
-                ? "bg-[#007acc] border-[#007acc] text-white"
-                : "bg-[#2a2a2a] border-gray-600 text-gray-300 hover:border-gray-400")
+                ? "bg-accent border-accent text-white"
+                : "bg-surface-3 border-edge text-fg hover:border-edge")
             }
             title={r.id}
           >
@@ -508,15 +508,15 @@ function SwarmFields({
 }) {
   return (
     <div className="space-y-2">
-      <div className="font-semibold text-gray-300">智能型（Swarm）专属设置</div>
+      <div className="font-semibold text-fg">智能型（Swarm）专属设置</div>
       <label className="space-y-1 block">
-        <div className="text-gray-400">
+        <div className="text-fg-2">
           计划者角色（拆分任务、最后综合的角色）
         </div>
         <select
           value={editing.plannerRole}
           onChange={(e) => patch({ plannerRole: e.target.value })}
-          className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+          className="w-full px-2 py-1 bg-surface-3 text-fg text-xs rounded border border-edge outline-none focus:border-accent"
         >
           <option value="">— 默认：工程经理 —</option>
           {source.map((r) => (
@@ -527,7 +527,7 @@ function SwarmFields({
         </select>
       </label>
       <div className="space-y-1">
-        <div className="text-gray-400">
+        <div className="text-fg-2">
           可被选为工作者的角色（不勾选则所有角色都可被选中）
         </div>
         <RolePicker
@@ -551,15 +551,15 @@ function ManagerFields({
 }) {
   return (
     <div className="space-y-2">
-      <div className="font-semibold text-gray-300">管理者主导（Manager-led）专属设置</div>
+      <div className="font-semibold text-fg">管理者主导（Manager-led）专属设置</div>
       <label className="space-y-1 block">
-        <div className="text-gray-400">
+        <div className="text-fg-2">
           负责人角色（让谁当 manager 来拆解任务）
         </div>
         <select
           value={editing.managerRole || ""}
           onChange={(e) => patch({ managerRole: e.target.value })}
-          className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+          className="w-full px-2 py-1 bg-surface-3 text-fg text-xs rounded border border-edge outline-none focus:border-accent"
         >
           <option value="">— 默认：工程经理 —</option>
           {source
@@ -572,12 +572,12 @@ function ManagerFields({
           {/* Built-in manager role is always available */}
           <option value="manager">👔 工程经理（manager）</option>
         </select>
-        <div className="text-[10px] text-gray-500 italic">
+        <div className="text-[10px] text-fg-3 italic">
           推荐：manager / tech_director。负责人会用自己配置的模型链和提示词做实时决策。
         </div>
       </label>
       <div className="space-y-1">
-        <div className="text-gray-400">
+        <div className="text-fg-2">
           初始可调度角色（负责人第一轮默认看到的候选名单；不勾选则全部可用）
         </div>
         <RolePicker
@@ -588,7 +588,7 @@ function ManagerFields({
       </div>
       <div className="grid grid-cols-2 gap-2">
         <label className="space-y-1 block">
-          <div className="text-gray-400">总轮数上限</div>
+          <div className="text-fg-2">总轮数上限</div>
           <input
             type="number"
             min={1}
@@ -597,11 +597,11 @@ function ManagerFields({
             onChange={(e) =>
               patch({ maxTotalSteps: Math.max(1, Number(e.target.value) || 1) })
             }
-            className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+            className="w-full px-2 py-1 bg-surface-3 text-fg text-xs rounded border border-edge outline-none focus:border-accent"
           />
         </label>
         <label className="space-y-1 block">
-          <div className="text-gray-400">用户决策轮数上限</div>
+          <div className="text-fg-2">用户决策轮数上限</div>
           <input
             type="number"
             min={0}
@@ -610,7 +610,7 @@ function ManagerFields({
             onChange={(e) =>
               patch({ maxUserDecisions: Math.max(0, Number(e.target.value) || 0) })
             }
-            className="w-full px-2 py-1 bg-[#2a2a2a] text-gray-200 text-xs rounded border border-gray-600 outline-none focus:border-[#007acc]"
+            className="w-full px-2 py-1 bg-surface-3 text-fg text-xs rounded border border-edge outline-none focus:border-accent"
           />
         </label>
       </div>

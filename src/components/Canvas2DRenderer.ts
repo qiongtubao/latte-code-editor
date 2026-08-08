@@ -1,5 +1,6 @@
 import type { GraphRenderer, GraphRendererInitOptions, RenderParams, SimRenderNode } from "./graphRenderer";
 import { NODE_COLORS, EDGE_COLORS } from "./graphRenderer";
+import { cssVar } from "../skins";
 
 /**
  * Canvas 2D renderer with refined node/edge visuals.
@@ -97,6 +98,10 @@ export class Canvas2DRenderer implements GraphRenderer {
     }
     const isDimmed = (id: string): boolean => hoveredNodeId != null && !hoveredNodes.has(id);
 
+    // 皮肤联动的对比色（高亮边/选中描边/标签），绘制时现取。
+    const fgColor = cssVar("--fg", "#ffffff");
+    const surfaceColor = cssVar("--surface", "#1e1e1e");
+
     // === Edges ===
     for (const e of simEdges) {
       const s = src(e);
@@ -124,7 +129,7 @@ export class Canvas2DRenderer implements GraphRenderer {
       ctx.beginPath();
       ctx.moveTo(sNode.x, sNode.y);
       ctx.lineTo(tNode.x, tNode.y);
-      ctx.strokeStyle = isHighlighted ? "#ffffff" : edgeColor;
+      ctx.strokeStyle = isHighlighted ? fgColor : edgeColor;
       ctx.lineWidth = isHighlighted ? baseWidth * 2 : baseWidth;
       // Stronger association → more opaque
       ctx.globalAlpha = dim ? 0.06 : isHighlighted ? 0.95 : (0.25 + weight * 0.55);
@@ -145,7 +150,7 @@ export class Canvas2DRenderer implements GraphRenderer {
         ctx.lineTo(-arrowLen * 0.5, -arrowLen * 0.5);
         ctx.lineTo(-arrowLen * 0.5, arrowLen * 0.5);
         ctx.closePath();
-        ctx.fillStyle = isHighlighted ? "#e0e0e0" : edgeColor;
+        ctx.fillStyle = isHighlighted ? fgColor : edgeColor;
         ctx.globalAlpha = isHighlighted ? 0.9 : 0.5;
         ctx.fill();
         ctx.globalAlpha = 1;
@@ -188,7 +193,7 @@ export class Canvas2DRenderer implements GraphRenderer {
         ctx.lineWidth = 3;
         ctx.stroke();
       } else if (isSelected) {
-        ctx.strokeStyle = "#fff";
+        ctx.strokeStyle = fgColor;
         ctx.lineWidth = 2.5;
         ctx.stroke();
       }
@@ -209,9 +214,9 @@ export class Canvas2DRenderer implements GraphRenderer {
           ctx.fill();
           ctx.fillStyle = "#ffffff";
         } else {
-          // Default: bright text with dark outline so it pops on any background
-          ctx.fillStyle = "#ffffff";
-          ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+          // Default: 前景色文字 + 底色描边，深浅皮肤下都有对比度
+          ctx.fillStyle = fgColor;
+          ctx.strokeStyle = surfaceColor;
           ctx.lineWidth = 3;
           ctx.lineJoin = "round";
           ctx.strokeText(display, n.x, n.y + r + 2);

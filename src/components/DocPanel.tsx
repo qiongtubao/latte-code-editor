@@ -53,24 +53,24 @@ export function DocPanel({ onDocOpen, folderRoot }: Props) {
 
   return (
     <div className="flex-1 overflow-y-auto text-xs">
-      <div className="px-2 py-1 text-gray-500 text-[10px] border-b border-gray-700 flex justify-between items-center">
+      <div className="px-2 py-1 text-fg-3 text-[10px] border-b border-edge flex justify-between items-center">
         <span>{loading ? "Loading docs..." : groups.reduce((s, g) => s + g.entries.length, 0) + " docs"}</span>
-        <button onClick={refresh} className="text-gray-400 hover:text-white" title="Refresh">↻</button>
+        <button onClick={refresh} className="text-fg-2 hover:text-fg" title="Refresh">↻</button>
       </div>
       {!folderRoot && (
-        <div className="px-3 py-6 text-gray-500 text-center">
+        <div className="px-3 py-6 text-fg-3 text-center">
           Open a folder to see docs
         </div>
       )}
       {groups.map((g) => (
         <div key={g.type}>
-          <div className="px-2 py-1 text-gray-400 font-medium text-[10px] uppercase tracking-wider bg-[#252526] sticky top-0">
+          <div className="px-2 py-1 text-fg-2 font-medium text-[10px] uppercase tracking-wider bg-surface-2 sticky top-0">
             {g.type}
           </div>
           {g.entries.map((e) => (
             <div
               key={e.path}
-              className="flex items-center px-3 py-1 cursor-pointer hover:bg-[#3a3a3a] text-gray-300 gap-2"
+              className="flex items-center px-3 py-1 cursor-pointer hover:bg-control text-fg gap-2"
               onClick={() => onDocOpen(e.path)}
             >
               <span className="shrink-0">{e.is_dir ? "📁" : "📄"}</span>

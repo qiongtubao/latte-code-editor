@@ -143,13 +143,13 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
       if (!word && !hasSelection) return;
 
       menuEl = document.createElement("div");
-      menuEl.className = "fixed z-50 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl py-1 text-xs min-w-[140px]";
+      menuEl.className = "fixed z-50 bg-surface-3 border border-edge rounded shadow-xl py-1 text-xs min-w-[140px]";
       menuEl.style.left = `${e.clientX}px`;
       menuEl.style.top = `${e.clientY}px`;
 
       const mkItem = (label: string, onclick: () => void) => {
         const item = document.createElement("button");
-        item.className = "w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] cursor-pointer";
+        item.className = "w-full text-left px-3 py-1.5 text-fg hover:bg-info cursor-pointer";
         item.textContent = label;
         item.onclick = () => { closeMenu(); onclick(); };
         menuEl!.appendChild(item);

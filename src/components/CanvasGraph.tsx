@@ -224,7 +224,7 @@ export function CanvasGraph({
     <canvas
       ref={canvasRef}
       className="w-full h-full cursor-grab active:cursor-grabbing"
-      style={{ background: "#1e1e1e" }}
+      style={{ background: "var(--surface)" }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}

@@ -26,6 +26,7 @@ import type {
   SimRenderNode,
 } from "./graphRenderer";
 import { NODE_COLORS, EDGE_COLORS } from "./graphRenderer";
+import { cssVar } from "../skins";
 
 /** GPU buffer 容量上限（避免极端情况下无限增长） */
 const MAX_NODES = 50_000;
@@ -699,6 +700,8 @@ export class WebGPURenderer implements GraphRenderer {
     const data = new ArrayBuffer(edges.length * EDGE_VERTEX_STRIDE);
     const f32 = new Float32Array(data);
     const u32 = new Uint32Array(data);
+    // 高亮边的对比色跟随皮肤（绘制时现取一次）。
+    const fgColor = cssVar("--fg", "#ffffff");
 
     for (let i = 0; i < edges.length; i++) {
       const e = edges[i];
@@ -725,7 +728,7 @@ export class WebGPURenderer implements GraphRenderer {
       else if (isHighlighted) alpha = 0.95;
       else alpha = 0.25 + w * 0.55;
 
-      const color = isHighlighted ? hexToRgba("#ffffff", 1) : hexToRgba(baseColor, 1);
+      const color = isHighlighted ? hexToRgba(fgColor, 1) : hexToRgba(baseColor, 1);
       const width = isHighlighted ? (0.4 + w * 1.6) * 2 : (0.4 + w * 1.6);
 
       const base = i * (EDGE_VERTEX_STRIDE / 4);
@@ -828,10 +831,10 @@ export class WebGPURenderer implements GraphRenderer {
         ctx.fill();
         ctx.fillStyle = "#ffffff";
       } else {
-        // Default: bright text with dark outline so it pops on any background
+        // Default: 前景色文字 + 底色描边，深浅皮肤下都有对比度
         ctx.font = `${Math.min(12, radius * 1.3)}px monospace`;
-        ctx.fillStyle = "#ffffff";
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+        ctx.fillStyle = cssVar("--fg", "#ffffff");
+        ctx.strokeStyle = cssVar("--surface", "#1e1e1e");
         ctx.lineWidth = 3;
         ctx.lineJoin = "round";
         ctx.strokeText(truncated, screenX, screenY + radius + 2);

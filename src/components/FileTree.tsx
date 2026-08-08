@@ -72,7 +72,7 @@ function FileTreeItem({
   return (
     <div>
       <div
-        className="flex items-center gap-1 px-2 py-0.5 cursor-pointer select-none hover:bg-[#2a2d2e] text-xs truncate"
+        className="flex items-center gap-1 px-2 py-0.5 cursor-pointer select-none hover:bg-surface-3 text-xs truncate"
         style={{ paddingLeft: `${padLeft + 8}px` }}
         onClick={handleToggle}
         onContextMenu={(e) => { e.preventDefault(); onContextMenu(e, entry); }}
@@ -81,14 +81,14 @@ function FileTreeItem({
         <span className="flex-shrink-0 w-4 text-center text-xs">
           {loading ? "⏳" : icon}
         </span>
-        <span className="truncate text-gray-300">{entry.name}</span>
+        <span className="truncate text-fg">{entry.name}</span>
       </div>
 
       {expanded && children && (
         <div>
           {children.length === 0 && (
             <div
-              className="text-gray-600 text-xs px-2 py-0.5 italic"
+              className="text-fg-3 text-xs px-2 py-0.5 italic"
               style={{ paddingLeft: `${padLeft + 24}px` }}
             >
               empty
@@ -181,9 +181,9 @@ export function FileTree({ root, entries, onFileOpen }: FileTreeProps) {
   }, [root]);
 
   return (
-    <div key={refreshVersion} className="h-full overflow-y-auto text-sm" style={{ background: "#252526" }}>
+    <div key={refreshVersion} className="h-full overflow-y-auto text-sm" style={{ background: "var(--surface-2)" }}>
       <div
-        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-400 border-b border-gray-700 cursor-pointer select-none hover:bg-[#2a2a2a]"
+        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-fg-2 border-b border-edge cursor-pointer select-none hover:bg-surface-3"
         onClick={() => setRootExpanded((v) => !v)}
         onContextMenu={handleRootContextMenu}
         title={`${root} — click to collapse, right-click for menu`}
@@ -193,7 +193,7 @@ export function FileTree({ root, entries, onFileOpen }: FileTreeProps) {
         <span className="truncate flex-1">{rootName}</span>
         <button
           onClick={(e) => { e.stopPropagation(); setRefreshVersion((v) => v + 1); }}
-          className="text-gray-500 hover:text-gray-300 px-1"
+          className="text-fg-3 hover:text-fg px-1"
           title="Refresh"
         >↻</button>
       </div>
@@ -201,7 +201,7 @@ export function FileTree({ root, entries, onFileOpen }: FileTreeProps) {
       {rootExpanded && (
         <>
           {entries.length === 0 && (
-            <div className="text-gray-500 text-xs px-3 py-2 italic">empty folder</div>
+            <div className="text-fg-3 text-xs px-3 py-2 italic">empty folder</div>
           )}
           {entries.map((entry) => (
             <FileTreeItem

@@ -80,29 +80,29 @@ export function OutlinePanel() {
       import: 4, export: 4,
       constant: 5, variable: 5,
     };
-    return NODE_COLORS[groupMap[kind] ?? 7] || "#808080";
+    return NODE_COLORS[groupMap[kind] ?? 7] || "var(--fg-3)";
   };
 
   return (
-    <div className="text-xs overflow-y-auto" style={{ background: "#252526", maxHeight: "200px" }}>
-      <div className="px-3 py-1 text-gray-500 font-medium border-b border-gray-700">
+    <div className="text-xs overflow-y-auto" style={{ background: "var(--surface-2)", maxHeight: "200px" }}>
+      <div className="px-3 py-1 text-fg-3 font-medium border-b border-edge">
         Outline ({symbols.length})
       </div>
       {symbols.map((node) => (
         <div
           key={node.id}
           onClick={() => handleSymbolClick(node)}
-          className="flex items-center gap-2 px-3 py-0.5 cursor-pointer hover:bg-[#2a2d2e] truncate"
+          className="flex items-center gap-2 px-3 py-0.5 cursor-pointer hover:bg-surface-3 truncate"
           title={`${node.kind}: ${node.name} (line ${node.start_line})`}
         >
           <span
             className="w-2 h-2 rounded-full flex-shrink-0"
             style={{ background: nodeColor(node.kind) }}
           />
-          <span className="text-gray-400 w-8 flex-shrink-0 text-right font-mono">
+          <span className="text-fg-2 w-8 flex-shrink-0 text-right font-mono">
             {node.start_line}
           </span>
-          <span className="text-gray-200 truncate">{node.name}</span>
+          <span className="text-fg truncate">{node.name}</span>
         </div>
       ))}
     </div>

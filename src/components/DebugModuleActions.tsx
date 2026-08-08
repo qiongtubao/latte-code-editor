@@ -12,48 +12,48 @@ export function DebugModuleActions() {
   if (!isOn) return null;
 
   return (
-    <div className="flex flex-col gap-1 text-[11px] mt-1 pt-1 border-t border-gray-700">
+    <div className="flex flex-col gap-1 text-[11px] mt-1 pt-1 border-t border-edge">
       <div className="flex items-center gap-1">
-        <span className="w-20 text-gray-400">LSP</span>
+        <span className="w-20 text-fg-2">LSP</span>
         <button
           onClick={() => void debugEmit("lsp.start", { language: "rust" })}
-          className="px-1 bg-blue-800 rounded hover:bg-blue-700"
+          className="px-1 bg-info rounded hover:bg-accent"
         >
           ▶ start(rust)
         </button>
         <button
           onClick={() => void debugEmit("lsp.stop", { language: "rust" })}
-          className="px-1 bg-red-800 rounded hover:bg-red-700"
+          className="px-1 bg-err rounded hover:bg-err"
         >
           ⏹ stop
         </button>
       </div>
       <div className="flex items-center gap-1">
-        <span className="w-20 text-gray-400">Graph</span>
+        <span className="w-20 text-fg-2">Graph</span>
         <button
           onClick={() => reloadGraph()}
-          className="px-1 bg-blue-800 rounded hover:bg-blue-700"
+          className="px-1 bg-info rounded hover:bg-accent"
         >
           🔄 reload
         </button>
         <button
           onClick={() => void debugEmit("graph.rebuild", {})}
-          className="px-1 bg-red-800 rounded hover:bg-red-700"
+          className="px-1 bg-err rounded hover:bg-err"
         >
           ▶ rebuild ⚠
         </button>
       </div>
       <div className="flex items-center gap-1">
-        <span className="w-20 text-gray-400">Workspace</span>
+        <span className="w-20 text-fg-2">Workspace</span>
         <button
           onClick={() => void hydrateWs()}
-          className="px-1 bg-blue-800 rounded hover:bg-blue-700"
+          className="px-1 bg-info rounded hover:bg-accent"
         >
           ↻ hydrate
         </button>
         <button
           onClick={() => startLsp("rust")}
-          className="px-1 bg-blue-800 rounded hover:bg-blue-700"
+          className="px-1 bg-info rounded hover:bg-accent"
         >
           ▶ direct lsp.start
         </button>

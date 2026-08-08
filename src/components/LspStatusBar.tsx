@@ -95,7 +95,7 @@ export function LspStatusBar() {
       {/* 下拉菜单 */}
       {showMenu && currentLsp && (
         <div
-          className="absolute right-0 top-full mt-1 bg-gray-800 text-white rounded shadow-lg z-50 min-w-[200px]"
+          className="absolute right-0 top-full mt-1 bg-surface-3 text-fg rounded shadow-lg z-50 min-w-[200px]"
           onClick={(e) => e.stopPropagation()}
         >
           {currentLsp.state === "running" && (
@@ -105,7 +105,7 @@ export function LspStatusBar() {
                   hibernateLsp(currentLang!);
                   setShowMenu(false);
                 }}
-                className="block w-full text-left px-3 py-1.5 hover:bg-gray-700"
+                className="block w-full text-left px-3 py-1.5 hover:bg-control"
               >
                 💤 Hibernate (save memory)
               </button>
@@ -114,7 +114,7 @@ export function LspStatusBar() {
                   stopLsp(currentLang!);
                   setShowMenu(false);
                 }}
-                className="block w-full text-left px-3 py-1.5 hover:bg-gray-700"
+                className="block w-full text-left px-3 py-1.5 hover:bg-control"
               >
                 ⏹ Stop (free memory)
               </button>
@@ -126,7 +126,7 @@ export function LspStatusBar() {
                 wake(currentLang!);
                 setShowMenu(false);
               }}
-              className="block w-full text-left px-3 py-1.5 hover:bg-gray-700"
+              className="block w-full text-left px-3 py-1.5 hover:bg-control"
             >
               ⚡ Wake
             </button>
@@ -137,7 +137,7 @@ export function LspStatusBar() {
                 startLsp(currentLang!);
                 setShowMenu(false);
               }}
-              className="block w-full text-left px-3 py-1.5 hover:bg-gray-700"
+              className="block w-full text-left px-3 py-1.5 hover:bg-control"
             >
               ⚡ Start LSP
             </button>

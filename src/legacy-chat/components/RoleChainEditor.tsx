@@ -102,15 +102,15 @@ export function RoleChainEditor({
   const remaining = availableModels.filter((m) => !chain.includes(m.id));
 
   return (
-    <div className="border border-gray-700 rounded p-1.5 bg-[#1e1e1e]">
-      <div className="flex items-center gap-1 text-[10px] text-gray-400 mb-1">
-        <span className="font-semibold text-gray-300">
+    <div className="border border-edge rounded p-1.5 bg-surface">
+      <div className="flex items-center gap-1 text-[10px] text-fg-2 mb-1">
+        <span className="font-semibold text-fg">
           {icon} {name}
         </span>
         <span className="ml-auto flex items-center gap-1">
           <button
             onClick={() => useChatStore.getState().openConfigFile("roles")}
-            className="px-1 text-gray-400 hover:text-white"
+            className="px-1 text-fg-2 hover:text-fg"
             title={`打开 roles/${roleId}.yaml`}
             type="button"
           >
@@ -122,13 +122,13 @@ export function RoleChainEditor({
       <div className="space-y-1">
         {chain.map((modelId, idx) => (
           <div key={`${idx}-${modelId}`} className="flex items-center gap-1">
-            <span className="w-4 text-right text-gray-500 text-[10px]">
+            <span className="w-4 text-right text-fg-3 text-[10px]">
               {idx + 1}
             </span>
             <select
               value={modelId}
               onChange={(e) => changeAt(idx, e.target.value)}
-              className="flex-1 min-w-0 px-1 py-0.5 bg-[#3a3a3a] text-gray-200 text-[10px] rounded border border-gray-600"
+              className="flex-1 min-w-0 px-1 py-0.5 bg-control text-fg text-[10px] rounded border border-edge"
             >
               {availableModels.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -140,7 +140,7 @@ export function RoleChainEditor({
               onClick={() => move(idx, -1)}
               disabled={idx === 0}
               title="Move up (higher priority)"
-              className="px-1 text-gray-400 hover:text-gray-200 disabled:opacity-30"
+              className="px-1 text-fg-2 hover:text-fg disabled:opacity-30"
             >
               ↑
             </button>
@@ -148,7 +148,7 @@ export function RoleChainEditor({
               onClick={() => move(idx, 1)}
               disabled={idx === chain.length - 1}
               title="Move down (lower priority)"
-              className="px-1 text-gray-400 hover:text-gray-200 disabled:opacity-30"
+              className="px-1 text-fg-2 hover:text-fg disabled:opacity-30"
             >
               ↓
             </button>
@@ -156,7 +156,7 @@ export function RoleChainEditor({
               onClick={() => remove(idx)}
               disabled={chain.length <= 1}
               title="Remove from chain"
-              className="px-1 text-gray-400 hover:text-red-400 disabled:opacity-30"
+              className="px-1 text-fg-2 hover:text-err disabled:opacity-30"
             >
               ×
             </button>
@@ -164,13 +164,13 @@ export function RoleChainEditor({
         ))}
         {remaining.length > 0 && (
           <div className="mt-1 flex items-center gap-1">
-            <span className="text-[10px] text-gray-500">+</span>
+            <span className="text-[10px] text-fg-3">+</span>
             <select
               value=""
               onChange={(e) => {
                 if (e.target.value) add(e.target.value);
               }}
-              className="flex-1 min-w-0 px-1 py-0.5 bg-[#3a3a3a] text-gray-200 text-[10px] rounded border border-gray-600"
+              className="flex-1 min-w-0 px-1 py-0.5 bg-control text-fg text-[10px] rounded border border-edge"
             >
               <option value="">Add fallback…</option>
               {remaining.map((m) => (

@@ -61,19 +61,19 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
   }
 
   return (
-    <div className="flex flex-col h-full text-xs" style={{ background: "#252526" }}>
+    <div className="flex flex-col h-full text-xs" style={{ background: "var(--surface-2)" }}>
       {/* Search input */}
       <div className="px-2 pt-2 pb-1 space-y-1">
         <div className="relative">
           <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
             placeholder="Search"
-            className="w-full px-2 py-1 pr-14 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc] placeholder-gray-500" />
+            className="w-full px-2 py-1 pr-14 bg-control text-fg border border-edge rounded text-xs outline-none focus:border-accent placeholder-fg-3" />
           <div className="absolute right-1 top-1/2 -translate-y-1/2 flex gap-0.5">
             <button onClick={() => setShowFilters(!showFilters)}
-              className="px-1 py-0.5 text-gray-400 hover:text-gray-200 cursor-pointer text-[11px]" title="Toggle filters">∗</button>
+              className="px-1 py-0.5 text-fg-2 hover:text-fg cursor-pointer text-[11px]" title="Toggle filters">∗</button>
             <button onClick={() => setShowReplace(!showReplace)}
-              className="px-1 py-0.5 text-gray-400 hover:text-gray-200 cursor-pointer" title="Toggle replace">{showReplace ? "▾" : "▸"}</button>
+              className="px-1 py-0.5 text-fg-2 hover:text-fg cursor-pointer" title="Toggle replace">{showReplace ? "▾" : "▸"}</button>
           </div>
         </div>
 
@@ -82,9 +82,9 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
           <div className="flex gap-1">
             <input type="text" value={replacement} onChange={(e) => setReplacement(e.target.value)}
               placeholder="Replace"
-              className="flex-1 px-2 py-1 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc] placeholder-gray-500" />
+              className="flex-1 px-2 py-1 bg-control text-fg border border-edge rounded text-xs outline-none focus:border-accent placeholder-fg-3" />
             <button onClick={handleReplaceAll} disabled={!query.trim() || loading}
-              className="px-2 py-1 bg-[#0d7acc] hover:bg-[#0b6bb3] text-white rounded text-xs cursor-pointer disabled:opacity-50">Replace All</button>
+              className="px-2 py-1 bg-accent hover:bg-accent text-white rounded text-xs cursor-pointer disabled:opacity-50">Replace All</button>
           </div>
         )}
 
@@ -92,23 +92,23 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
         {showFilters && (
           <div className="space-y-1 pt-1">
             <div className="flex items-center gap-1">
-              <span className="text-gray-500 w-12 shrink-0 text-[10px]">files to</span>
+              <span className="text-fg-3 w-12 shrink-0 text-[10px]">files to</span>
               <input type="text" value={includeGlob} onChange={(e) => setIncludeGlob(e.target.value)}
                 placeholder="include (e.g. *.ts, src/**)"
-                className="flex-1 px-2 py-0.5 bg-[#333] text-gray-200 border border-gray-700 rounded text-[10px] outline-none focus:border-[#007acc] placeholder-gray-600" />
+                className="flex-1 px-2 py-0.5 bg-control text-fg border border-edge rounded text-[10px] outline-none focus:border-accent placeholder-fg-3" />
             </div>
             <div className="flex items-center gap-1">
-              <span className="text-gray-500 w-12 shrink-0 text-[10px]">files to</span>
+              <span className="text-fg-3 w-12 shrink-0 text-[10px]">files to</span>
               <input type="text" value={excludeGlob} onChange={(e) => setExcludeGlob(e.target.value)}
                 placeholder="exclude (e.g. *.test.ts, vendor/**)"
-                className="flex-1 px-2 py-0.5 bg-[#333] text-gray-200 border border-gray-700 rounded text-[10px] outline-none focus:border-[#007acc] placeholder-gray-600" />
+                className="flex-1 px-2 py-0.5 bg-control text-fg border border-edge rounded text-[10px] outline-none focus:border-accent placeholder-fg-3" />
             </div>
           </div>
         )}
       </div>
 
       {/* Results count */}
-      <div className="px-2 py-1 text-gray-500 text-[10px] border-b border-gray-700">
+      <div className="px-2 py-1 text-fg-3 text-[10px] border-b border-edge">
         {loading
           ? "Searching..."
           : results.length > 0
@@ -122,15 +122,15 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
       <div className="flex-1 overflow-y-auto">
         {Array.from(grouped.entries()).map(([filePath, matches]) => (
           <div key={filePath}>
-            <div className="flex items-center px-2 py-1 text-gray-400 hover:bg-[#2a2d2e] cursor-pointer" onClick={() => handleResultClick(matches[0])}>
-              <span className="mr-1 text-gray-600 shrink-0">📄</span>
+            <div className="flex items-center px-2 py-1 text-fg-2 hover:bg-surface-3 cursor-pointer" onClick={() => handleResultClick(matches[0])}>
+              <span className="mr-1 text-fg-3 shrink-0">📄</span>
               <span className="truncate">{filePath}</span>
-              <span className="ml-auto text-gray-600 shrink-0">{matches.length}</span>
+              <span className="ml-auto text-fg-3 shrink-0">{matches.length}</span>
             </div>
             {matches.map((m, i) => (
-              <div key={i} className="flex items-start px-2 py-0.5 pl-7 hover:bg-[#2a2d2e] cursor-pointer" onClick={() => handleResultClick(m)}>
-                <span className="text-gray-500 mr-2 shrink-0 w-8 text-right tabular-nums">{m.line_number}</span>
-                <span className="text-gray-300 truncate">{m.line_content}</span>
+              <div key={i} className="flex items-start px-2 py-0.5 pl-7 hover:bg-surface-3 cursor-pointer" onClick={() => handleResultClick(m)}>
+                <span className="text-fg-3 mr-2 shrink-0 w-8 text-right tabular-nums">{m.line_number}</span>
+                <span className="text-fg truncate">{m.line_content}</span>
               </div>
             ))}
           </div>

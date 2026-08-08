@@ -74,31 +74,31 @@ export function HilPanel() {
   if (!hilSession) {
     return (
       <div className="flex flex-col h-full p-3 gap-2 overflow-y-auto">
-        <div className="text-sm font-semibold text-gray-200">
+        <div className="text-sm font-semibold text-fg">
           📌 HIL Blackboard 会话
         </div>
-        <p className="text-xs text-gray-400">
-          每个会话在 <code className="text-gray-300">.latte/worktrees/&lt;task-id&gt;</code> 里建一个 git
+        <p className="text-xs text-fg-2">
+          每个会话在 <code className="text-fg">.latte/worktrees/&lt;task-id&gt;</code> 里建一个 git
           worktree，会话历史写到
-          <code className="text-gray-300">.latte/sessions/&lt;id&gt;.json</code>。
+          <code className="text-fg">.latte/sessions/&lt;id&gt;.json</code>。
           暂停后可继续、可改消息内容。
         </p>
         {hilError && (
-          <div className="p-2 bg-red-900/30 border border-red-700 rounded text-xs text-red-200 whitespace-pre-wrap">
+          <div className="p-2 bg-err/30 border border-err rounded text-xs text-err whitespace-pre-wrap">
             {hilError}
           </div>
         )}
         <div className="space-y-2 mt-2">
-          <label className="block text-[10px] text-gray-500">
+          <label className="block text-[10px] text-fg-3">
             task_id（同一仓库内唯一）
           </label>
           <input
             value={taskId}
             onChange={(e) => setTaskId(e.target.value)}
             placeholder="fix-redis-bug"
-            className="w-full px-2 py-1 bg-[#3a3a3a] text-gray-200 text-sm rounded border border-gray-600 outline-none focus:border-[#007acc]"
+            className="w-full px-2 py-1 bg-control text-fg text-sm rounded border border-edge outline-none focus:border-accent"
           />
-          <label className="block text-[10px] text-gray-500">
+          <label className="block text-[10px] text-fg-3">
             初始 prompt（新建会话时填写，已存在会话可忽略）
           </label>
           <textarea
@@ -106,7 +106,7 @@ export function HilPanel() {
             onChange={(e) => setInitialPrompt(e.target.value)}
             placeholder="Redis 池在 5xx 之后没有回收"
             rows={3}
-            className="w-full px-2 py-1 bg-[#3a3a3a] text-gray-200 text-sm rounded border border-gray-600 outline-none focus:border-[#007acc] resize-none"
+            className="w-full px-2 py-1 bg-control text-fg text-sm rounded border border-edge outline-none focus:border-accent resize-none"
           />
           <button
             type="button"
@@ -114,15 +114,15 @@ export function HilPanel() {
               void startOrLoadHilSession(taskId.trim(), initialPrompt.trim())
             }
             disabled={hilBusy || !taskId.trim()}
-            className="px-3 py-1 bg-[#3aa56e] hover:bg-[#42b87a] text-white text-xs rounded disabled:opacity-50"
+            className="px-3 py-1 bg-ok hover:bg-ok text-white text-xs rounded disabled:opacity-50"
           >
             {hilBusy ? "..." : "打开 / 新建"}
           </button>
         </div>
 
         {hilSessionList.length > 0 && (
-          <div className="mt-4 border-t border-gray-700 pt-2">
-            <div className="text-[10px] text-gray-500 mb-1">
+          <div className="mt-4 border-t border-edge pt-2">
+            <div className="text-[10px] text-fg-3 mb-1">
               已存在的会话（按更新时间排序）
             </div>
             <div className="space-y-1 max-h-48 overflow-y-auto">
@@ -134,24 +134,24 @@ export function HilPanel() {
                     setTaskId(s.taskId);
                     void startOrLoadHilSession(s.taskId, "");
                   }}
-                  className="w-full text-left px-2 py-1 bg-[#2a2a2a] hover:bg-[#333] rounded text-[11px]"
+                  className="w-full text-left px-2 py-1 bg-surface-3 hover:bg-control rounded text-[11px]"
                 >
-                  <div className="text-gray-200">
+                  <div className="text-fg">
                     📌 {s.taskId}{" "}
                     <span
                       className={
                         "ml-1 text-[9px] px-1 rounded " +
                         (s.state === "paused"
-                          ? "bg-yellow-900 text-yellow-200"
+                          ? "bg-warn text-warn"
                           : s.state === "done"
-                            ? "bg-gray-700 text-gray-300"
-                            : "bg-[#1e1e1e] text-gray-400")
+                            ? "bg-control text-fg"
+                            : "bg-surface text-fg-2")
                       }
                     >
                       {s.state}
                     </span>
                   </div>
-                  <div className="text-[9px] text-gray-500">
+                  <div className="text-[9px] text-fg-3">
                     {s.updatedAt} · {s.worktreeRoot}
                   </div>
                 </button>
@@ -167,27 +167,27 @@ export function HilPanel() {
   return (
     <div className="flex flex-col h-full">
       {/* Session header */}
-      <div className="px-3 py-2 bg-[#252526] border-b border-gray-700 flex flex-wrap items-center gap-2 text-xs">
+      <div className="px-3 py-2 bg-surface-2 border-b border-edge flex flex-wrap items-center gap-2 text-xs">
         <span
           className={
             "px-1.5 py-0.5 rounded text-[10px] " +
             (hilSession.state === "paused"
-              ? "bg-yellow-900 text-yellow-200"
+              ? "bg-warn text-warn"
               : hilSession.state === "done" || hilSession.state === "failed"
-                ? "bg-gray-700 text-gray-300"
-                : "bg-[#1e1e1e] text-gray-400")
+                ? "bg-control text-fg"
+                : "bg-surface text-fg-2")
           }
         >
           {hilSession.state}
         </span>
-        <span className="text-gray-300 font-semibold">
+        <span className="text-fg font-semibold">
           📌 {hilSession.taskId}
         </span>
-        <span className="text-[10px] text-gray-500">
+        <span className="text-[10px] text-fg-3">
           turn #{hilSession.currentTurn}
         </span>
         {hilSession.pausedAt && (
-          <span className="text-[10px] text-yellow-400">
+          <span className="text-[10px] text-warn">
             ⏸ since {hilSession.pausedAt} · {hilSession.pauseReason}
           </span>
         )}
@@ -199,7 +199,7 @@ export function HilPanel() {
                 type="button"
                 onClick={() => void pauseHilSession("editor: 用户手动暂停")}
                 disabled={hilBusy}
-                className="px-2 py-0.5 bg-yellow-700 hover:bg-yellow-600 text-white text-[10px] rounded disabled:opacity-50"
+                className="px-2 py-0.5 bg-warn hover:bg-warn text-white text-[10px] rounded disabled:opacity-50"
               >
                 ⏸ 暂停
               </button>
@@ -209,7 +209,7 @@ export function HilPanel() {
               type="button"
               onClick={() => void resumeHilSession(sendRole, "")}
               disabled={hilBusy}
-              className="px-2 py-0.5 bg-[#3aa56e] hover:bg-[#42b87a] text-white text-[10px] rounded disabled:opacity-50"
+              className="px-2 py-0.5 bg-ok hover:bg-ok text-white text-[10px] rounded disabled:opacity-50"
             >
               ▶ 继续
             </button>
@@ -222,7 +222,7 @@ export function HilPanel() {
               hilSession.state === "done" ||
               hilSession.state === "failed"
             }
-            className="px-2 py-0.5 bg-red-700 hover:bg-red-600 text-white text-[10px] rounded disabled:opacity-50"
+            className="px-2 py-0.5 bg-err hover:bg-err text-white text-[10px] rounded disabled:opacity-50"
           >
             ⏹ 中止
           </button>
@@ -230,7 +230,7 @@ export function HilPanel() {
             type="button"
             onClick={() => void refreshHilSession()}
             disabled={hilBusy}
-            className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 text-[10px] rounded disabled:opacity-50"
+            className="px-2 py-0.5 bg-control hover:bg-control-hover text-fg text-[10px] rounded disabled:opacity-50"
             title="从磁盘 JSON 重新读取（用于手动编辑 session JSON 后刷新）"
           >
             ↻ 刷新
@@ -238,7 +238,7 @@ export function HilPanel() {
           <button
             type="button"
             onClick={() => void openHilPlanMd()}
-            className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 text-[10px] rounded"
+            className="px-2 py-0.5 bg-control hover:bg-control-hover text-fg text-[10px] rounded"
             title="打开 plan.md"
           >
             📄 plan.md
@@ -246,7 +246,7 @@ export function HilPanel() {
           <button
             type="button"
             onClick={() => void openHilSessionJson()}
-            className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 text-[10px] rounded"
+            className="px-2 py-0.5 bg-control hover:bg-control-hover text-fg text-[10px] rounded"
             title="打开 session JSON（可手编辑）"
           >
             📄 session.json
@@ -255,7 +255,7 @@ export function HilPanel() {
       </div>
 
       {hilError && (
-        <div className="mx-3 mt-2 p-2 bg-red-900/30 border border-red-700 rounded text-xs text-red-200 whitespace-pre-wrap">
+        <div className="mx-3 mt-2 p-2 bg-err/30 border border-err rounded text-xs text-err whitespace-pre-wrap">
           {hilError}
         </div>
       )}
@@ -263,7 +263,7 @@ export function HilPanel() {
       {/* Per-role transcripts */}
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
         {hilSession.roles.length === 0 && (
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-fg-3">
             还没有 role。在下面输入框里给一个 role 发消息即可创建。
           </div>
         )}
@@ -287,14 +287,14 @@ export function HilPanel() {
       </div>
 
       {/* Send + inject controls */}
-      <div className="px-3 py-2 bg-[#252526] border-t border-gray-700 space-y-2">
+      <div className="px-3 py-2 bg-surface-2 border-t border-edge space-y-2">
         <div className="flex items-center gap-1">
-          <span className="text-[10px] text-gray-500">发给</span>
+          <span className="text-[10px] text-fg-3">发给</span>
           <input
             value={sendRole}
             onChange={(e) => setSendRole(e.target.value)}
             placeholder="role_id (e.g. manager)"
-            className="flex-1 min-w-0 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-[11px] rounded border border-gray-600 outline-none focus:border-[#007acc]"
+            className="flex-1 min-w-0 px-2 py-0.5 bg-control text-fg text-[11px] rounded border border-edge outline-none focus:border-accent"
           />
         </div>
         <textarea
@@ -306,7 +306,7 @@ export function HilPanel() {
               : "输入内容点发送 → 追加到上方 role 的 history"
           }
           rows={2}
-          className="w-full px-2 py-1 bg-[#3a3a3a] text-gray-200 text-sm rounded border border-gray-600 outline-none focus:border-[#007acc] resize-none"
+          className="w-full px-2 py-1 bg-control text-fg text-sm rounded border border-edge outline-none focus:border-accent resize-none"
         />
         <div className="flex items-center gap-2">
           {hilSession.state === "paused" ? (
@@ -317,7 +317,7 @@ export function HilPanel() {
                 setSendContent("");
               }}
               disabled={hilBusy || !sendRole.trim()}
-              className="px-3 py-1 bg-[#3aa56e] hover:bg-[#42b87a] text-white text-xs rounded disabled:opacity-50"
+              className="px-3 py-1 bg-ok hover:bg-ok text-white text-xs rounded disabled:opacity-50"
             >
               ▶ 继续（可附带消息）
             </button>
@@ -329,12 +329,12 @@ export function HilPanel() {
                 setSendContent("");
               }}
               disabled={hilBusy || !sendContent.trim() || !sendRole.trim()}
-              className="px-3 py-1 bg-[#007acc] hover:bg-[#1f8ad2] text-white text-xs rounded disabled:opacity-50"
+              className="px-3 py-1 bg-accent hover:bg-accent-2 text-white text-xs rounded disabled:opacity-50"
             >
               发送
             </button>
           )}
-          <span className="ml-auto text-[10px] text-gray-500">
+          <span className="ml-auto text-[10px] text-fg-3">
             {hilSession.state === "paused"
               ? "暂停中 — 可编辑、可手改 JSON、点继续恢复"
               : "运行中 — 可随时暂停"}
@@ -342,20 +342,20 @@ export function HilPanel() {
         </div>
 
         {/* @role injection (the CLI's `latte-agent inject` UI) */}
-        <div className="border-t border-gray-700 pt-2 space-y-1">
+        <div className="border-t border-edge pt-2 space-y-1">
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-gray-500">注入到</span>
+            <span className="text-[10px] text-fg-3">注入到</span>
             <input
               value={injectRole}
               onChange={(e) => setInjectRole(e.target.value)}
               placeholder="@role_id"
-              className="w-24 px-1 py-0.5 bg-[#3a3a3a] text-gray-200 text-[10px] rounded border border-gray-600 outline-none focus:border-[#007acc]"
+              className="w-24 px-1 py-0.5 bg-control text-fg text-[10px] rounded border border-edge outline-none focus:border-accent"
             />
             <input
               value={injectMessage}
               onChange={(e) => setInjectMessage(e.target.value)}
               placeholder="注入消息（追加到该 role 的 history，带 [HUMAN @ <ts>] 前缀）"
-              className="flex-1 min-w-0 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-[10px] rounded border border-gray-600 outline-none focus:border-[#007acc]"
+              className="flex-1 min-w-0 px-2 py-0.5 bg-control text-fg text-[10px] rounded border border-edge outline-none focus:border-accent"
             />
             <button
               type="button"
@@ -366,7 +366,7 @@ export function HilPanel() {
               disabled={
                 hilBusy || !injectRole.trim() || !injectMessage.trim()
               }
-              className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 text-[10px] rounded disabled:opacity-50"
+              className="px-2 py-0.5 bg-control hover:bg-control-hover text-fg text-[10px] rounded disabled:opacity-50"
             >
               @
             </button>
@@ -397,14 +397,14 @@ function RoleTranscript({
   onDelete: (idx: number) => void;
 }) {
   return (
-    <div className="border border-gray-700 rounded">
-      <div className="px-2 py-1 bg-[#2a2a2a] text-[10px] text-gray-400 flex items-center gap-1">
-        <span className="font-semibold text-gray-200">@{role.roleId}</span>
-        <span className="text-gray-500">· {role.messages.length} 条</span>
+    <div className="border border-edge rounded">
+      <div className="px-2 py-1 bg-surface-3 text-[10px] text-fg-2 flex items-center gap-1">
+        <span className="font-semibold text-fg">@{role.roleId}</span>
+        <span className="text-fg-3">· {role.messages.length} 条</span>
       </div>
       <div className="px-2 py-1 space-y-1">
         {role.messages.length === 0 && (
-          <div className="text-[10px] text-gray-500 italic">
+          <div className="text-[10px] text-fg-3 italic">
             还没有消息
           </div>
         )}
@@ -457,21 +457,21 @@ function MessageRow({
       className={
         "rounded px-2 py-1 text-xs " +
         (isUser
-          ? "bg-[#1e2a3a] border border-[#2a3a4a]"
-          : "bg-[#2a2a2a] border border-[#333]")
+          ? "bg-info border border-edge"
+          : "bg-surface-3 border border-edge")
       }
     >
-      <div className="flex items-center gap-1 text-[9px] text-gray-500 mb-0.5">
+      <div className="flex items-center gap-1 text-[9px] text-fg-3 mb-0.5">
         <span>{isUser ? "👤 user" : "💬 assistant"}</span>
         {message.timestamp && (
-          <span className="text-gray-600">· {message.timestamp}</span>
+          <span className="text-fg-3">· {message.timestamp}</span>
         )}
         {editable && !isEditing && (
           <div className="ml-auto flex items-center gap-1">
             <button
               type="button"
               onClick={onBeginEdit}
-              className="px-1 text-gray-400 hover:text-white"
+              className="px-1 text-fg-2 hover:text-fg"
               title="编辑"
             >
               ✏️
@@ -479,7 +479,7 @@ function MessageRow({
             <button
               type="button"
               onClick={onDelete}
-              className="px-1 text-gray-400 hover:text-red-400"
+              className="px-1 text-fg-2 hover:text-err"
               title="删除"
             >
               🗑
@@ -493,28 +493,28 @@ function MessageRow({
             value={draft}
             onChange={(e) => onUpdateDraft(e.target.value)}
             rows={Math.max(2, draft.split("\n").length)}
-            className="w-full px-2 py-1 bg-[#1e1e1e] text-gray-200 text-xs rounded border border-[#007acc] outline-none resize-none"
+            className="w-full px-2 py-1 bg-surface text-fg text-xs rounded border border-accent outline-none resize-none"
             autoFocus
           />
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={onCommitEdit}
-              className="px-2 py-0.5 bg-[#007acc] hover:bg-[#1f8ad2] text-white text-[10px] rounded"
+              className="px-2 py-0.5 bg-accent hover:bg-accent-2 text-white text-[10px] rounded"
             >
               保存
             </button>
             <button
               type="button"
               onClick={onCancelEdit}
-              className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 text-[10px] rounded"
+              className="px-2 py-0.5 bg-control hover:bg-control-hover text-fg text-[10px] rounded"
             >
               取消
             </button>
           </div>
         </div>
       ) : (
-        <pre className="whitespace-pre-wrap break-words font-sans text-gray-200">
+        <pre className="whitespace-pre-wrap break-words font-sans text-fg">
           {message.content}
         </pre>
       )}

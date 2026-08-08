@@ -38,7 +38,7 @@ export function StatusBar({
     <div
       className="flex items-center justify-between px-4 py-0.5 text-xs select-none"
       style={{
-        background: "#007acc",
+        background: "var(--accent)",
         color: "#fff",
         height: "24px",
       }}

@@ -1,10 +1,16 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { SKINS, type SkinId } from "../skins";
 
 export type EditorTheme = "monokai" | "dracula" | "oneDark" | "solarizedLight" | "githubLight";
 export type GraphRendererKind = "auto" | "webgpu" | "canvas2d";
 
+export type { SkinId };
+
 export interface SettingsState {
+  // Appearance
+  /** chrome 皮肤；setSkin 会联动把 theme 切到皮肤搭配的代码主题。 */
+  skin: SkinId;
   // Editor
   theme: EditorTheme;
   fontSize: number;
@@ -19,6 +25,7 @@ export interface SettingsState {
   docsInputDir: string;
   docsOutputDir: string;
   // Actions
+  setSkin: (s: SkinId) => void;
   setTheme: (t: EditorTheme) => void;
   setFontSize: (s: number) => void;
   setTabSize: (s: number) => void;
@@ -33,6 +40,7 @@ export interface SettingsState {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
+      skin: "vscode-dark",
       theme: "monokai",
       fontSize: 13,
       tabSize: 4,
@@ -43,6 +51,7 @@ export const useSettingsStore = create<SettingsState>()(
       graphRenderer: "auto",
       docsInputDir: "docs",
       docsOutputDir: ".latte-review/reports",
+      setSkin: (s) => set({ skin: s, theme: SKINS[s].cmTheme }),
       setTheme: (t) => set({ theme: t }),
       setFontSize: (s) => set({ fontSize: s }),
       setTabSize: (s) => set({ tabSize: s }),

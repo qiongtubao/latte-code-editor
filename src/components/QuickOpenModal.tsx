@@ -130,12 +130,12 @@ export function QuickOpenModal() {
 
       {/* 模态面板 */}
       <div
-        className="relative z-10 w-[600px] max-w-[90vw] bg-[#1e1e1e] border border-gray-600 rounded-lg shadow-2xl overflow-hidden"
+        className="relative z-10 w-[600px] max-w-[90vw] bg-surface border border-edge rounded-lg shadow-2xl overflow-hidden"
         style={{ maxHeight: "60vh" }}
       >
         {/* 输入框 */}
-        <div className="flex items-center border-b border-gray-600">
-          <span className="px-3 text-gray-500 select-none">⌕</span>
+        <div className="flex items-center border-b border-edge">
+          <span className="px-3 text-fg-3 select-none">⌕</span>
           <input
             ref={inputRef}
             type="text"
@@ -143,7 +143,7 @@ export function QuickOpenModal() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Type a file name + optional :line:col (e.g. main.rs:42)"
-            className="flex-1 px-1 py-3 bg-transparent text-gray-200 text-sm outline-none placeholder-gray-600"
+            className="flex-1 px-1 py-3 bg-transparent text-fg text-sm outline-none placeholder-fg-3"
             spellCheck={false}
             autoComplete="off"
           />
@@ -152,13 +152,13 @@ export function QuickOpenModal() {
         {/* 结果列表 */}
         <div className="overflow-y-auto" style={{ maxHeight: "calc(60vh - 56px)" }}>
           {loading && (
-            <div className="px-4 py-3 text-gray-500 text-xs">Searching…</div>
+            <div className="px-4 py-3 text-fg-3 text-xs">Searching…</div>
           )}
           {fetchError && (
-            <div className="px-4 py-3 text-yellow-400 text-xs">{fetchError}</div>
+            <div className="px-4 py-3 text-warn text-xs">{fetchError}</div>
           )}
           {!loading && !fetchError && query.trim() && results.length === 0 && (
-            <div className="px-4 py-3 text-gray-300 text-xs">
+            <div className="px-4 py-3 text-fg text-xs">
               No files match "{query.trim()}"
             </div>
           )}
@@ -178,21 +178,21 @@ export function QuickOpenModal() {
                   onClick={() => handleSelect(r.path + suffix)}
                   className={`flex items-center gap-2 px-4 py-2 text-xs cursor-pointer transition-colors ${
                     isSelected
-                      ? "bg-[#094771] text-white"
-                      : "text-gray-300 hover:bg-[#2a2d2e]"
+                      ? "bg-info text-white"
+                      : "text-fg hover:bg-surface-3"
                   }`}
                 >
-                  <span className="w-4 text-center text-gray-500">📄</span>
+                  <span className="w-4 text-center text-fg-3">📄</span>
                   <span className="truncate flex-1">{displayPath(r.path)}</span>
                   {parsed.line != null && (
-                    <span className="text-blue-300 shrink-0 font-medium">{parsed.line}</span>
+                    <span className="text-accent-2 shrink-0 font-medium">{parsed.line}</span>
                   )}
-                  <span className="text-gray-400 shrink-0 text-2xs">{r.score}</span>
+                  <span className="text-fg-2 shrink-0 text-2xs">{r.score}</span>
                 </div>
               );
             });
           })()}
-          <div className="px-4 py-2 text-2xs text-gray-400 border-t border-gray-700 flex items-center gap-3">
+          <div className="px-4 py-2 text-2xs text-fg-2 border-t border-edge flex items-center gap-3">
             <span>↵ open</span>
             <span>Esc close</span>
             <span className="ml-auto">path:line:col supported</span>

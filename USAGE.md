@@ -203,6 +203,10 @@ latte-graph build    # 生成 .codegraph/codegraph.db
 | 字号 | 14px |
 | 主题 | 暗色 (`#1e1e1e`) |
 
+注：设置面板（Settings）中可切换皮肤（VS Code Dark / Monokai / Dracula / GitHub Light / Solarized Light），
+皮肤同时作用于编辑器 chrome、代码区主题（联动切换，可再单改）和嵌入的 chat 面板，
+定义见 `src/skins.ts`，设置持久化在 localStorage `latte-settings`。
+
 ---
 
 ### 常见问题

@@ -26,10 +26,10 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
 
   const getStateColor = (state: string) => {
     switch (state) {
-      case "running": return "#4ade80";
-      case "hibernated": return "#facc15";
-      case "error": return "#f87171";
-      default: return "#9ca3af";
+      case "running": return "var(--ok)";
+      case "hibernated": return "var(--warn)";
+      case "error": return "var(--err)";
+      default: return "var(--fg-2)";
     }
   };
 
@@ -39,31 +39,31 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="bg-gray-900 text-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4"
+        className="bg-surface-2 text-fg rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">LSP Manager</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
+          <button onClick={onClose} className="text-fg-2 hover:text-fg">
             ✕
           </button>
         </div>
 
-        <div className="text-xs text-gray-400 mb-4">
+        <div className="text-xs text-fg-2 mb-4">
           Manual trigger mode - LSP starts only when you explicitly request it
         </div>
 
         {/* 列表 */}
         <div className="space-y-2 mb-4">
           {status.length === 0 ? (
-            <div className="text-gray-500 text-center py-8">
+            <div className="text-fg-3 text-center py-8">
               No LSP running. All resources are free.
             </div>
           ) : (
             status.map((lsp) => (
               <div
                 key={lsp.language}
-                className="flex items-center justify-between bg-gray-800 rounded p-3"
+                className="flex items-center justify-between bg-surface-3 rounded p-3"
               >
                 <div className="flex items-center gap-3">
                   <div
@@ -72,7 +72,7 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
                   />
                   <div>
                     <div className="font-medium">{lsp.language}</div>
-                    <div className="text-xs text-gray-400">
+                    <div className="text-xs text-fg-2">
                       {lsp.state}
                       {lsp.memory_mb ? ` • ${lsp.memory_mb} MB` : ''}
                     </div>
@@ -82,7 +82,7 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
                   {lsp.state === "stopped" && (
                     <button
                       onClick={() => startLsp(lsp.language)}
-                      className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm"
+                      className="px-3 py-1 bg-accent hover:bg-accent rounded text-sm"
                     >
                       Start
                     </button>
@@ -91,13 +91,13 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
                     <>
                       <button
                         onClick={() => hibernateLsp(lsp.language)}
-                        className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-sm"
+                        className="px-3 py-1 bg-warn hover:bg-warn rounded text-sm"
                       >
                         Hibernate
                       </button>
                       <button
                         onClick={() => stopLsp(lsp.language)}
-                        className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm"
+                        className="px-3 py-1 bg-err hover:bg-err rounded text-sm"
                       >
                         Stop
                       </button>
@@ -106,7 +106,7 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
                   {lsp.state === "hibernated" && (
                     <button
                       onClick={() => wakeLsp(lsp.language)}
-                      className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm"
+                      className="px-3 py-1 bg-ok hover:bg-ok rounded text-sm"
                     >
                       Wake
                     </button>
@@ -118,16 +118,16 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* 统计信息 */}
-        <div className="border-t border-gray-700 pt-4">
+        <div className="border-t border-edge pt-4">
           <div className="flex justify-between items-center text-sm">
             <div>
-              <span className="text-gray-400">Total Memory: </span>
+              <span className="text-fg-2">Total Memory: </span>
               <span className="font-bold">{getTotalMemory()} MB</span>
             </div>
             {status.length > 0 && (
               <button
                 onClick={stopAll}
-                className="px-4 py-1 bg-red-700 hover:bg-red-800 rounded text-sm"
+                className="px-4 py-1 bg-err hover:bg-err rounded text-sm"
               >
                 Stop All
               </button>
@@ -136,7 +136,7 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* 使用说明 */}
-        <div className="mt-4 text-xs text-gray-500 border-t border-gray-700 pt-3">
+        <div className="mt-4 text-xs text-fg-3 border-t border-edge pt-3">
           <div className="font-semibold mb-1">Keyboard Shortcuts:</div>
           <ul className="space-y-0.5">
             <li>• Ctrl+L / Cmd+L: Start LSP for current file</li>

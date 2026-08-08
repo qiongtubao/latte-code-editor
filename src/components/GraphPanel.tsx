@@ -379,20 +379,20 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   const hasWorker = simNodes.length > 0;
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#1e1e1e" }}>
-      <div className="text-xs text-gray-400 border-b border-gray-700 bg-[#252526]">
+    <div className="flex flex-col h-full" style={{ background: "var(--surface)" }}>
+      <div className="text-xs text-fg-2 border-b border-edge bg-surface-2">
         {/* Major view selector: Code Graph | Doc Graph */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-edge">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase text-gray-500 font-semibold tracking-wider">View</span>
-            <div className="flex bg-[#1e1e1e] rounded p-0.5">
+            <span className="text-[10px] uppercase text-fg-3 font-semibold tracking-wider">View</span>
+            <div className="flex bg-surface rounded p-0.5">
               <button
                 onClick={() => setGraphMode("code")}
-                className={`px-3 py-1 rounded text-xs font-medium cursor-pointer transition-colors ${graphMode === "code" ? "bg-[#007acc] text-white shadow" : "text-gray-400 hover:text-gray-200"}`}
+                className={`px-3 py-1 rounded text-xs font-medium cursor-pointer transition-colors ${graphMode === "code" ? "bg-accent text-white shadow" : "text-fg-2 hover:text-fg"}`}
               >{'\u{1F4BB}'} Code Graph</button>
               <button
                 onClick={() => setGraphMode("docs")}
-                className={`px-3 py-1 rounded text-xs font-medium cursor-pointer transition-colors ${graphMode === "docs" ? "bg-[#007acc] text-white shadow" : "text-gray-400 hover:text-gray-200"}`}
+                className={`px-3 py-1 rounded text-xs font-medium cursor-pointer transition-colors ${graphMode === "docs" ? "bg-accent text-white shadow" : "text-fg-2 hover:text-fg"}`}
               >{'\u{1F4C4}'} Doc Graph</button>
             </div>
           </div>
@@ -402,49 +402,49 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
                 <button
                   key={m}
                   onClick={() => switchMode(m)}
-                  className={`px-2 py-0.5 rounded cursor-pointer transition-colors text-[10px] ${displayMode === m ? "bg-[#3a3a3a] text-gray-200" : "text-gray-500 hover:text-gray-300"}`}
+                  className={`px-2 py-0.5 rounded cursor-pointer transition-colors text-[10px] ${displayMode === m ? "bg-control text-fg" : "text-fg-3 hover:text-fg"}`}
                 >{m === "main" ? "Main" : "Full"}</button>
               ))}
               {displayMode === "focus" && (
                 <span className="flex items-center gap-1 ml-1">
-                  <span className="px-1.5 py-0.5 bg-[#094771] text-blue-200 rounded text-[10px]">Focus</span>
-                  <button onClick={() => switchMode("main")} className="px-1 py-0.5 bg-[#3a3a3a] text-gray-300 rounded cursor-pointer text-[10px] hover:bg-[#4a4a4a]">×</button>
+                  <span className="px-1.5 py-0.5 bg-info text-accent-2 rounded text-[10px]">Focus</span>
+                  <button onClick={() => switchMode("main")} className="px-1 py-0.5 bg-control text-fg rounded cursor-pointer text-[10px] hover:bg-control-hover">×</button>
                 </span>
               )}
-              <span className="text-gray-500 text-[10px] ml-1">{displayLabel || `${nodeCount}n`}</span>
-              <button onClick={handleZoomFit} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">⊞</button>
-              <button onClick={handleRebuild} disabled={rebuilding} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer disabled:opacity-50 text-xs">{rebuilding ? "⟳" : "↻"}</button>
+              <span className="text-fg-3 text-[10px] ml-1">{displayLabel || `${nodeCount}n`}</span>
+              <button onClick={handleZoomFit} className="px-1.5 py-0.5 bg-control hover:bg-control-hover text-fg rounded cursor-pointer text-xs">⊞</button>
+              <button onClick={handleRebuild} disabled={rebuilding} className="px-1.5 py-0.5 bg-control hover:bg-control-hover text-fg rounded cursor-pointer disabled:opacity-50 text-xs">{rebuilding ? "⟳" : "↻"}</button>
             </div>
           )}
           {graphMode === "docs" && (
-            <button className="text-[10px] text-gray-500 hover:text-gray-300 px-2 py-0.5" disabled>↻ refresh docs</button>
+            <button className="text-[10px] text-fg-3 hover:text-fg px-2 py-0.5" disabled>↻ refresh docs</button>
           )}
         </div>
         {/* Search (code mode only) */}
         {graphMode === "code" && (
           <div className="flex items-center gap-1 px-3 py-1.5">
             {(["symbols", "files", "text"] as const).map((tab) => (
-              <button key={tab} onClick={() => { setSearchTab(tab); setSearchResults([]); setSearchTextResults([]); }} className={`px-2 py-0.5 rounded text-[10px] cursor-pointer ${searchTab === tab ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400"}`}>{tab}</button>
+              <button key={tab} onClick={() => { setSearchTab(tab); setSearchResults([]); setSearchTextResults([]); }} className={`px-2 py-0.5 rounded text-[10px] cursor-pointer ${searchTab === tab ? "bg-accent text-white" : "bg-control text-fg-2"}`}>{tab}</button>
             ))}
             <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
               placeholder={`Search ${searchTab}...`}
-              className="flex-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc]" />
+              className="flex-1 px-2 py-0.5 bg-control text-fg border border-edge rounded text-xs outline-none focus:border-accent" />
             {(searchResults.length > 0 || searchTextResults.length > 0) && (
-              <button onClick={() => { setSearchResults([]); setSearchTextResults([]); setSearchQuery(""); }} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">×</button>
+              <button onClick={() => { setSearchResults([]); setSearchTextResults([]); setSearchQuery(""); }} className="px-1.5 py-0.5 bg-control hover:bg-control-hover text-fg rounded cursor-pointer text-xs">×</button>
             )}
           </div>
         )}
 
         {/* Search results */}
         {searchResults.length > 0 && (
-          <div className="mt-1 max-h-24 overflow-y-auto bg-[#333] border border-gray-700 rounded text-xs">
+          <div className="mt-1 max-h-24 overflow-y-auto bg-surface-3 border border-edge rounded text-xs">
             {searchResults.slice(0, 20).map((r) => (
-              <div key={r.id} onClick={() => handleSearchSelect(r)} className="flex items-center gap-2 px-2 py-0.5 cursor-pointer hover:bg-[#094771]">
+              <div key={r.id} onClick={() => handleSearchSelect(r)} className="flex items-center gap-2 px-2 py-0.5 cursor-pointer hover:bg-info">
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ background: NODE_COLORS[nodeKindToGroup(r.kind)] }} />
-                <span style={{ color: "#86efac" }} className="truncate">{r.kind === "file" ? "" : r.name}</span>
-                <span className="text-purple-300 shrink-0">{r.kind}</span>
-                <span style={{ color: "#86efac" }} className="ml-auto shrink-0 truncate">{r.file_path}</span>
-                <span style={{ color: "#93c5fd" }} className="shrink-0 font-medium">{r.start_line}</span>
+                <span style={{ color: "var(--ok)" }} className="truncate">{r.kind === "file" ? "" : r.name}</span>
+                <span className="text-accent-2 shrink-0">{r.kind}</span>
+                <span style={{ color: "var(--ok)" }} className="ml-auto shrink-0 truncate">{r.file_path}</span>
+                <span style={{ color: "var(--accent-2)" }} className="shrink-0 font-medium">{r.start_line}</span>
               </div>
             ))}
           </div>
@@ -452,9 +452,9 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
 
         {/* Text search results */}
         {searchTextResults.length > 0 && (
-          <div className="mt-1 max-h-24 overflow-y-auto bg-[#333] border border-gray-700 rounded text-xs">
+          <div className="mt-1 max-h-24 overflow-y-auto bg-surface-3 border border-edge rounded text-xs">
             {searchTextResults.slice(0, 20).map((r, i) => (
-              <div key={i} className="px-2 py-0.5 text-gray-300 truncate">{r.file_path}:{r.line_number} — {r.line_content}</div>
+              <div key={i} className="px-2 py-0.5 text-fg truncate">{r.file_path}:{r.line_number} — {r.line_content}</div>
             ))}
           </div>
         )}
@@ -463,10 +463,10 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
       {/* Canvas container */}
       <div ref={containerRef} className="flex-1 relative">
         {graphMode === "code" && (<>
-        {loading && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">Loading graph…</div>}
-        {error && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm px-4 text-center"><p className="text-yellow-400 mb-1">No graph data</p><p className="text-xs">{error}</p></div>}
-        {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length > 0 && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">Layout… ({filteredData.nodes.length} nodes)</div>}
-        {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">No nodes to display</div>}
+        {loading && <div className="absolute inset-0 flex items-center justify-center text-fg-3 text-sm">Loading graph…</div>}
+        {error && <div className="absolute inset-0 flex items-center justify-center text-fg-3 text-sm px-4 text-center"><p className="text-warn mb-1">No graph data</p><p className="text-xs">{error}</p></div>}
+        {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length > 0 && <div className="absolute inset-0 flex items-center justify-center text-fg-3 text-sm">Layout… ({filteredData.nodes.length} nodes)</div>}
+        {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-fg-3 text-sm">No nodes to display</div>}
         {hasWorker && (
           <CanvasGraph simNodes={simNodes} simEdges={simEdges}
             selectedNodeId={selectedNodeId} hoveredNodeId={hoveredNodeId}
@@ -478,12 +478,12 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
         {graphMode === "docs" && docSimRender && filteredDocSim && (
           <>
             <div className="relative">
-              <div className="px-3 py-1.5 text-xs border-b border-gray-700 bg-[#252526] flex items-center gap-2">
+              <div className="px-3 py-1.5 text-xs border-b border-edge bg-surface-2 flex items-center gap-2">
                 <input type="text" value={docSearchQuery} onChange={(e) => setDocSearchQuery(e.target.value)}
                   placeholder="Search docs by title..."
-                  className="flex-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 border border-gray-600 rounded text-xs outline-none focus:border-[#007acc]" />
-                {docSearchQuery && <button onClick={() => setDocSearchQuery("")} className="px-1.5 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded cursor-pointer text-xs">✕</button>}
-                <span className="text-gray-500 text-[10px] shrink-0">{filteredDocSim.nodes.length}/{docSimRender.nodes.length}</span>
+                  className="flex-1 px-2 py-0.5 bg-control text-fg border border-edge rounded text-xs outline-none focus:border-accent" />
+                {docSearchQuery && <button onClick={() => setDocSearchQuery("")} className="px-1.5 py-0.5 bg-control hover:bg-control-hover text-fg rounded cursor-pointer text-xs">✕</button>}
+                <span className="text-fg-3 text-[10px] shrink-0">{filteredDocSim.nodes.length}/{docSimRender.nodes.length}</span>
               </div>
               {/* Search dropdown: match titles */}
               {docSearchQuery.trim().length > 0 && docSimRender && (() => {
@@ -493,7 +493,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
                 ).slice(0, 8);
                 if (matches.length === 0) return null;
                 return (
-                  <div className="absolute left-3 right-3 top-full z-20 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl mt-0.5 max-h-48 overflow-y-auto">
+                  <div className="absolute left-3 right-3 top-full z-20 bg-surface-3 border border-edge rounded shadow-xl mt-0.5 max-h-48 overflow-y-auto">
                     {matches.map((n) => {
                       const node = n as unknown as { path?: string; label?: string };
                       return (
@@ -504,10 +504,10 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
                               openFile(node.path).then((f) => useEditorStore.getState().openFileOrSwitch(f));
                             }
                           }}
-                          className="px-3 py-1.5 text-xs cursor-pointer hover:bg-[#094771] text-gray-200 border-b border-gray-800 last:border-0 flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: NODE_COLORS[n.group] ?? "#808080" }} />
+                          className="px-3 py-1.5 text-xs cursor-pointer hover:bg-info text-fg border-b border-edge last:border-0 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: NODE_COLORS[n.group] ?? "var(--fg-3)" }} />
                           <span className="truncate">{node.label ?? n.id}</span>
-                          <span className="text-gray-500 text-[10px] shrink-0 ml-auto">{n.id}</span>
+                          <span className="text-fg-3 text-[10px] shrink-0 ml-auto">{n.id}</span>
                         </div>
                       );
                     })}
@@ -536,22 +536,22 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
       {contextMenu && (
         <>
           <div className="absolute inset-0 z-10" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
-          <div className="absolute z-20 bg-[#2d2d2d] border border-gray-600 rounded shadow-xl py-1 text-xs min-w-[140px]" style={{ left: contextMenu.x, top: contextMenu.y }}>
-            <div className="px-3 py-1 text-gray-500 border-b border-gray-700 truncate max-w-[200px]">{filteredData?.nodes.find((x) => x.id === contextMenu.nodeId)?.name ?? contextMenu.nodeId}</div>
-            <button onClick={handleContextJumpToCode} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>📄</span><span>Jump to Code</span></button>
-            <button onClick={handleContextAskAgent} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>💬</span><span>在 chat 中询问</span></button>
-            <button onClick={handleContextExpand} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>🔍</span><span>Expand as Center</span></button>
-            <button onClick={handleContextCopyName} className="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-[#094771] flex items-center gap-2 cursor-pointer"><span>📋</span><span>Copy Name</span></button>
+          <div className="absolute z-20 bg-surface-3 border border-edge rounded shadow-xl py-1 text-xs min-w-[140px]" style={{ left: contextMenu.x, top: contextMenu.y }}>
+            <div className="px-3 py-1 text-fg-3 border-b border-edge truncate max-w-[200px]">{filteredData?.nodes.find((x) => x.id === contextMenu.nodeId)?.name ?? contextMenu.nodeId}</div>
+            <button onClick={handleContextJumpToCode} className="w-full text-left px-3 py-1.5 text-fg hover:bg-info flex items-center gap-2 cursor-pointer"><span>📄</span><span>Jump to Code</span></button>
+            <button onClick={handleContextAskAgent} className="w-full text-left px-3 py-1.5 text-fg hover:bg-info flex items-center gap-2 cursor-pointer"><span>💬</span><span>在 chat 中询问</span></button>
+            <button onClick={handleContextExpand} className="w-full text-left px-3 py-1.5 text-fg hover:bg-info flex items-center gap-2 cursor-pointer"><span>🔍</span><span>Expand as Center</span></button>
+            <button onClick={handleContextCopyName} className="w-full text-left px-3 py-1.5 text-fg hover:bg-info flex items-center gap-2 cursor-pointer"><span>📋</span><span>Copy Name</span></button>
           </div>
         </>
       )}
 
       {/* Bottom bar */}
-      <div className="px-3 py-1.5 text-xs text-gray-500 border-t border-gray-700 bg-[#252526] flex flex-wrap gap-3 items-center">
+      <div className="px-3 py-1.5 text-xs text-fg-3 border-t border-edge bg-surface-2 flex flex-wrap gap-3 items-center">
         {displayMode === "full" && <><span><span className="w-2 h-2 rounded-full inline-block" style={{ background: "#cc7832" }} /> File</span><span style={{ background: "#6a8759" }}> Function</span><span style={{ background: "#6897bb" }}> Class/Struct</span><span style={{ background: "#c586c0" }}> Import</span></>}
-        {displayMode === "main" && <span className="text-gray-400">{totalStats.communities > 1 ? `${totalStats.communities} communities · ${displayLabel}` : displayLabel}</span>}
-        {displayMode === "focus" && focusMeta && <span className="text-gray-400">{focusMeta.callers} callers · {focusMeta.callees} callees{focusMeta.truncated && <span className="text-yellow-500 ml-1">(truncated from {focusMeta.total})</span>}</span>}
-        <span className="text-gray-600 ml-auto">{nodeCount}n / {edgeCount}e</span>
+        {displayMode === "main" && <span className="text-fg-2">{totalStats.communities > 1 ? `${totalStats.communities} communities · ${displayLabel}` : displayLabel}</span>}
+        {displayMode === "focus" && focusMeta && <span className="text-fg-2">{focusMeta.callers} callers · {focusMeta.callees} callees{focusMeta.truncated && <span className="text-warn ml-1">(truncated from {focusMeta.total})</span>}</span>}
+        <span className="text-fg-3 ml-auto">{nodeCount}n / {edgeCount}e</span>
       </div>
     </div>
   );
@@ -623,7 +623,7 @@ function DocGraphView({
 
   if (!folderRoot) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+      <div className="flex items-center justify-center h-full text-fg-3 text-sm">
         Open a workspace first to see docs.
       </div>
     );
@@ -631,11 +631,11 @@ function DocGraphView({
 
   return (
     <div className="flex-1 overflow-y-auto p-3 text-xs">
-      {loading && <div className="mb-3 p-2 bg-[#094771] text-blue-200 rounded">Building doc graph...</div>}
+      {loading && <div className="mb-3 p-2 bg-info text-accent-2 rounded">Building doc graph...</div>}
       <div className="flex items-center justify-between mb-3">
         <div>
-          <div className="text-gray-300 font-medium">Document Graph</div>
-          <div className="text-gray-500 text-[10px]">From {docsInputDir} · {groups.reduce((s, g) => s + g.entries.length, 0)} files</div>
+          <div className="text-fg font-medium">Document Graph</div>
+          <div className="text-fg-3 text-[10px]">From {docsInputDir} · {groups.reduce((s, g) => s + g.entries.length, 0)} files</div>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -657,28 +657,28 @@ function DocGraphView({
                 }).catch((e) => setError(String(e)));
               });
             }}
-            className="px-2 py-0.5 bg-[#007acc] hover:bg-[#005a9e] text-white rounded text-[10px]"
+            className="px-2 py-0.5 bg-accent hover:bg-accent text-white rounded text-[10px]"
           >🔍 Scan</button>
-          <button onClick={refresh} className="px-2 py-0.5 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded text-[10px]">↻</button>
+          <button onClick={refresh} className="px-2 py-0.5 bg-control hover:bg-control-hover text-fg rounded text-[10px]">↻</button>
         </div>
       </div>
-      {loading && <div className="text-gray-500 text-center py-4">Loading…</div>}
-      {error && <div className="text-yellow-400 text-center py-4">⚠ {error}</div>}
+      {loading && <div className="text-fg-3 text-center py-4">Loading…</div>}
+      {error && <div className="text-warn text-center py-4">⚠ {error}</div>}
       {!loading && !error && groups.length === 0 && (
-        <div className="text-gray-500 text-center py-8">No docs found in {docsInputDir}</div>
+        <div className="text-fg-3 text-center py-8">No docs found in {docsInputDir}</div>
       )}
       {groups.map((g) => (
         <div key={g.type} className="mb-3">
-          <div className="text-[10px] uppercase text-gray-500 font-semibold tracking-wider mb-1 sticky top-0 bg-[#1e1e1e] py-1">{g.type}</div>
+          <div className="text-[10px] uppercase text-fg-3 font-semibold tracking-wider mb-1 sticky top-0 bg-surface py-1">{g.type}</div>
           <div className="grid grid-cols-2 gap-1">
             {g.entries.map((e) => (
               <div
                 key={e.path}
                 onClick={() => !e.is_dir && onOpen(e.path)}
-                className={`p-2 bg-[#2a2a2a] hover:bg-[#333] rounded border border-gray-700 ${e.is_dir ? "opacity-50 cursor-default" : "cursor-pointer"}`}
+                className={`p-2 bg-surface-3 hover:bg-control rounded border border-edge ${e.is_dir ? "opacity-50 cursor-default" : "cursor-pointer"}`}
               >
-                <div className="text-gray-300 truncate">{e.is_dir ? "📁" : "📄"} {e.name}</div>
-                <div className="text-[10px] text-gray-500 truncate">{e.path.split("/").slice(-2).join("/")}</div>
+                <div className="text-fg truncate">{e.is_dir ? "📁" : "📄"} {e.name}</div>
+                <div className="text-[10px] text-fg-3 truncate">{e.path.split("/").slice(-2).join("/")}</div>
               </div>
             ))}
           </div>

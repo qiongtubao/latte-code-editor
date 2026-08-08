@@ -74,12 +74,12 @@ export function DebugEventInjectModal({ onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="bg-white text-black rounded-lg p-5 w-[520px] shadow-2xl"
+        className="bg-surface-2 text-fg rounded-lg p-5 w-[520px] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="font-bold mb-3">📨 事件注入</h3>
         {events.length === 0 ? (
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-fg-3">
             No debug events have been registered yet.
           </p>
         ) : (
@@ -110,7 +110,7 @@ export function DebugEventInjectModal({ onClose }: Props) {
               }}
               className="w-full h-32 border rounded p-2 font-mono text-xs"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-fg-3 mt-1">
               Cmd/Ctrl+Enter 触发。⚠ 事件会弹二次确认。
             </p>
           </>
@@ -118,14 +118,14 @@ export function DebugEventInjectModal({ onClose }: Props) {
         <div className="flex justify-end gap-2 mt-3">
           <button
             onClick={onClose}
-            className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300"
+            className="px-3 py-1 bg-control rounded hover:bg-control"
           >
             取消
           </button>
           <button
             onClick={submit}
             disabled={!event}
-            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            className="px-3 py-1 bg-accent text-white rounded hover:bg-accent disabled:opacity-50"
           >
             触发
           </button>

@@ -166,12 +166,12 @@ export function ChatAgentPanel({ onClose, onShowGraph }: Props) {
   }, [workspaceRoot]);
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e1e]">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-gray-700 select-none">
-        <span className="text-xs text-gray-300">Agent</span>
+    <div className="flex flex-col h-full bg-surface">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-surface-2 border-b border-edge select-none">
+        <span className="text-xs text-fg">Agent</span>
         <button
           onClick={onClose}
-          className="px-1 text-xs text-gray-400 cursor-pointer transition-colors hover:text-gray-200"
+          className="px-1 text-xs text-fg-2 cursor-pointer transition-colors hover:text-fg"
           title="Close Chat (Ctrl+Shift+L)"
         >
           ✕

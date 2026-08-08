@@ -80,7 +80,7 @@ export function DefinitionPopup({ word, callerFile, position, onClose }: Definit
       constant: 5,
       variable: 5,
     };
-    return NODE_COLORS[groupMap[kind] ?? 7] || "#808080";
+    return NODE_COLORS[groupMap[kind] ?? 7] || "var(--fg-3)";
   };
 
   const kindLabel = (kind: string): string => {
@@ -107,7 +107,7 @@ export function DefinitionPopup({ word, callerFile, position, onClose }: Definit
     zIndex: 1000,
     width: "360px",
     maxHeight: "280px",
-    background: "#2d2d2d",
+    background: "var(--surface-3)",
     border: "1px solid #454545",
     borderRadius: "6px",
     boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
@@ -119,8 +119,8 @@ export function DefinitionPopup({ word, callerFile, position, onClose }: Definit
   return (
     <div ref={popupRef} style={style}>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-1.5 text-xs border-b border-gray-700 bg-[#333] select-none">
-        <span className="text-white font-medium">
+      <div className="flex items-center justify-between px-3 py-1.5 text-xs border-b border-edge bg-surface-3 select-none">
+        <span className="text-fg font-medium">
           {loading
             ? "Searching..."
             : results.length >= 200
@@ -129,7 +129,7 @@ export function DefinitionPopup({ word, callerFile, position, onClose }: Definit
         </span>
         <button
           onClick={onClose}
-          className="text-gray-500 hover:text-white cursor-pointer text-sm leading-none px-1"
+          className="text-fg-3 hover:text-fg cursor-pointer text-sm leading-none px-1"
         >
           ×
         </button>
@@ -138,13 +138,13 @@ export function DefinitionPopup({ word, callerFile, position, onClose }: Definit
       {/* Results */}
       <div className="flex-1 overflow-y-auto text-xs">
         {loading && (
-          <div className="px-3 py-4 text-gray-500 text-center">Searching graph...</div>
+          <div className="px-3 py-4 text-fg-3 text-center">Searching graph...</div>
         )}
         {error && (
-          <div className="px-3 py-4 text-yellow-400 text-center">{error}</div>
+          <div className="px-3 py-4 text-warn text-center">{error}</div>
         )}
         {!loading && !error && results.length === 0 && (
-          <div className="px-3 py-4 text-gray-500 text-center">
+          <div className="px-3 py-4 text-fg-3 text-center">
             No definitions found for "{word}"
           </div>
         )}
@@ -156,7 +156,7 @@ export function DefinitionPopup({ word, callerFile, position, onClose }: Definit
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => handleJump(node)}
               onDoubleClick={() => handleJump(node)}
-              className={`flex items-start gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-800 last:border-0 ${callerFile && node.file_path === callerFile ? "bg-[#1a3a1a] hover:bg-[#1e4a1e]" : "hover:bg-[#3a3a3a]"}`}
+              className={`flex items-start gap-2 px-3 py-1.5 cursor-pointer border-b border-edge last:border-0 ${callerFile && node.file_path === callerFile ? "bg-ok-bg hover:bg-ok-bg" : "hover:bg-control"}`}
             >
               <span
                 className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1"
@@ -164,21 +164,21 @@ export function DefinitionPopup({ word, callerFile, position, onClose }: Definit
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-white font-medium truncate">
+                  <span className="text-fg font-medium truncate">
                     {node.name}
                   </span>
-                  <span className="text-gray-300 flex-shrink-0">
+                  <span className="text-fg flex-shrink-0">
                     {kindLabel(node.kind)}
                   </span>
                 </div>
-                <div className="flex items-center gap-1 text-gray-300 truncate mt-0.5">
+                <div className="flex items-center gap-1 text-fg truncate mt-0.5">
                   <span>{node.file_path}:{node.start_line}</span>
                   {callerFile && node.file_path === callerFile && (
-                    <span className="text-green-400 text-[9px] border border-green-600 rounded px-1 leading-tight">current</span>
+                    <span className="text-ok text-[9px] border border-ok rounded px-1 leading-tight">current</span>
                   )}
                 </div>
                 {node.signature && (
-                  <div className="text-gray-400 font-mono truncate mt-0.5">
+                  <div className="text-fg-2 font-mono truncate mt-0.5">
                     {node.signature}
                   </div>
                 )}

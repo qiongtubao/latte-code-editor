@@ -73,7 +73,7 @@ export function WorkspaceTabs() {
 
   return (
     <div
-      className="flex items-center text-xs bg-[#252526] border-b border-gray-700 select-none"
+      className="flex items-center text-xs bg-surface-2 border-b border-edge select-none"
       style={{ height: "32px" }}
     >
       {items.map((it) => {
@@ -86,24 +86,24 @@ export function WorkspaceTabs() {
               e.preventDefault();
               setMenu({ x: e.clientX, y: e.clientY, workspaceId: it.id });
             }}
-            className={`flex items-center gap-1.5 px-3 h-full cursor-pointer border-r border-gray-700 whitespace-nowrap max-w-48 ${
+            className={`flex items-center gap-1.5 px-3 h-full cursor-pointer border-r border-edge whitespace-nowrap max-w-48 ${
               isActive
-                ? "bg-[#1e1e1e] text-white border-t-2 border-t-[#007acc]"
-                : "bg-[#2d2d2d] text-gray-400 hover:text-gray-200"
+                ? "bg-surface text-fg border-t-2 border-t-accent"
+                : "bg-surface-3 text-fg-2 hover:text-fg"
             }`}
             title={it.name}
           >
             <span>📁</span>
             <span className="truncate">{it.name}</span>
             {it.tabCount > 0 && (
-              <span className="text-gray-500 text-2xs">{it.tabCount}</span>
+              <span className="text-fg-3 text-2xs">{it.tabCount}</span>
             )}
           </div>
         );
       })}
       <button
         onClick={handleAdd}
-        className="px-3 h-full text-gray-500 hover:text-gray-200 hover:bg-[#2d2d2d] cursor-pointer border-r border-gray-700"
+        className="px-3 h-full text-fg-3 hover:text-fg hover:bg-surface-3 cursor-pointer border-r border-edge"
         title="Open Folder (Ctrl+K Ctrl+O)"
       >
         +

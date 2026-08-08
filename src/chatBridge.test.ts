@@ -4,12 +4,18 @@ import {
   unregister,
   insertContext,
   focus,
+  setSkin,
   toWorkspaceRel,
   _resetForTests,
 } from "./chatBridge";
 
 function mockWin() {
-  return { postMessage: vi.fn() } as unknown as Window;
+  const style = { setProperty: vi.fn() };
+  return {
+    postMessage: vi.fn(),
+    document: { documentElement: { style } },
+    _style: style,
+  } as unknown as Window & { _style: { setProperty: ReturnType<typeof vi.fn> } };
 }
 
 const ORIGIN = "http://127.0.0.1:12345";
@@ -84,6 +90,42 @@ describe("chatBridge 缓冲/flush", () => {
       { type: "latte:ui-call", method: "insertContext", args: [{ path: "f10.ts" }] },
       ORIGIN,
     );
+  });
+});
+
+describe("setSkin 皮肤联动", () => {
+  const VARS = { "--bg": "#ffffff", "--fg": "#1f2328" };
+
+  it("register 后 setSkin 直写 iframe :root 变量", () => {
+    const win = mockWin();
+    register(win, ORIGIN);
+    setSkin(VARS);
+    expect(win._style.setProperty).toHaveBeenCalledWith("--bg", "#ffffff");
+    expect(win._style.setProperty).toHaveBeenCalledWith("--fg", "#1f2328");
+  });
+
+  it("未 register 时缓存，register 时补应用", () => {
+    setSkin(VARS);
+    const win = mockWin();
+    register(win, ORIGIN);
+    expect(win._style.setProperty).toHaveBeenCalledWith("--bg", "#ffffff");
+    expect(win._style.setProperty).toHaveBeenCalledWith("--fg", "#1f2328");
+  });
+
+  it("换肤后切工作区重挂 iframe（新通道 register）应用最新皮肤", () => {
+    const win1 = mockWin();
+    register(win1, ORIGIN);
+    setSkin(VARS);
+    unregister(ORIGIN);
+    const win2 = mockWin();
+    register(win2, ORIGIN);
+    expect(win2._style.setProperty).toHaveBeenCalledWith("--bg", "#ffffff");
+  });
+
+  it("iframe document 不可得（重载途中）不抛异常", () => {
+    const win = { postMessage: vi.fn(), document: null } as unknown as Window;
+    register(win, ORIGIN);
+    expect(() => setSkin(VARS)).not.toThrow();
   });
 });
 

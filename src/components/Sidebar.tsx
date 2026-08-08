@@ -119,28 +119,28 @@ export function Sidebar({ folderRoot, onFileOpen }: SidebarProps) {
     return (
       <div
         className="flex flex-col h-full items-center justify-center text-xs"
-        style={{ background: "#252526" }}
+        style={{ background: "var(--surface-2)" }}
       >
         <button
           onClick={handleOpenFolder}
-          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs cursor-pointer transition-colors"
+          className="px-3 py-1.5 bg-accent hover:bg-accent text-white rounded text-xs cursor-pointer transition-colors"
         >
           Open Folder
         </button>
-        <p className="text-gray-500 mt-2">Ctrl+K Ctrl+O</p>
+        <p className="text-fg-3 mt-2">Ctrl+K Ctrl+O</p>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex text-xs border-b border-gray-700 bg-[#2d2d2d]">
+      <div className="flex text-xs border-b border-edge bg-surface-3">
         <button
           onClick={() => setPanel("explorer")}
           className={`flex items-center gap-1 px-3 py-1.5 cursor-pointer border-b-[2px] transition-colors ${
             panel === "explorer"
-              ? "border-[#007acc] text-gray-200"
-              : "border-transparent text-gray-500 hover:text-gray-300"
+              ? "border-accent text-fg"
+              : "border-transparent text-fg-3 hover:text-fg"
           }`}
         >
           📁 Explorer
@@ -149,8 +149,8 @@ export function Sidebar({ folderRoot, onFileOpen }: SidebarProps) {
           onClick={() => setPanel("search")}
           className={`flex items-center gap-1 px-3 py-1.5 cursor-pointer border-b-[2px] transition-colors ${
             panel === "search"
-              ? "border-[#007acc] text-gray-200"
-              : "border-transparent text-gray-500 hover:text-gray-300"
+              ? "border-accent text-fg"
+              : "border-transparent text-fg-3 hover:text-fg"
           }`}
         >
           🔍 Search
@@ -159,16 +159,16 @@ export function Sidebar({ folderRoot, onFileOpen }: SidebarProps) {
           onClick={() => setPanel("docs")}
           className={`flex items-center gap-1 px-3 py-1.5 cursor-pointer border-b-[2px] transition-colors ${
             panel === "docs"
-              ? "border-[#007acc] text-gray-200"
-              : "border-transparent text-gray-500 hover:text-gray-300"
+              ? "border-accent text-fg"
+              : "border-transparent text-fg-3 hover:text-fg"
           }`}
         >
           📄 Docs
         </button>
       </div>
       {building && (
-        <div className="px-3 py-1.5 text-xs text-yellow-400 border-b border-gray-700 bg-[#1e1e1e] flex items-center gap-2">
-          <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
+        <div className="px-3 py-1.5 text-xs text-warn border-b border-edge bg-surface flex items-center gap-2">
+          <span className="inline-block w-2 h-2 bg-warn rounded-full animate-pulse" />
           Building code graph…
         </div>
       )}

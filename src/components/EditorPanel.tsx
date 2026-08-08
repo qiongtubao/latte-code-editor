@@ -130,16 +130,16 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
       case "markdown":
         return (
           <div className="h-full flex flex-col">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-gray-700 text-xs">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-2 border-b border-edge text-xs">
               <button
                 onClick={() => setMarkdownMode("preview")}
-                className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "preview" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-300 hover:bg-[#4a4a4a]"}`}
+                className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "preview" ? "bg-accent text-white" : "bg-control text-fg hover:bg-control-hover"}`}
               >Preview</button>
               <button
                 onClick={() => setMarkdownMode("source")}
-                className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "source" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-300 hover:bg-[#4a4a4a]"}`}
+                className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "source" ? "bg-accent text-white" : "bg-control text-fg hover:bg-control-hover"}`}
               >Source</button>
-              <span className="text-gray-500 ml-auto">{filePath?.split("/").pop()}</span>
+              <span className="text-fg-3 ml-auto">{filePath?.split("/").pop()}</span>
             </div>
             <div className="flex-1 overflow-hidden">
               {markdownMode === "preview" ? (

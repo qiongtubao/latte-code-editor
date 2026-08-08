@@ -124,7 +124,7 @@ export function renderFlowSvg(diagram: FlowDiagram): string {
   const h = Math.max(60, positions.size * 56);
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" style="max-width:640px;font:12px sans-serif;">`;
-  const arrow = `<marker id="ar-${diagram.id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#9ca3af"/></marker>`;
+  const arrow = `<marker id="ar-${diagram.id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="var(--fg-2)"/></marker>`;
   svg += `<defs>${arrow}</defs>`;
 
   for (const e of edges) {
@@ -133,24 +133,24 @@ export function renderFlowSvg(diagram: FlowDiagram): string {
     if (!from || !to) continue;
     const x1 = from.x + 60, y1 = from.y + 24;
     const x2 = to.x, y2 = to.y + 24;
-    svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar-${diagram.id})"/>`;
+    svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--fg-3)" stroke-width="1.5" marker-end="url(#ar-${diagram.id})"/>`;
     if (e.label) {
-      svg += `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 4}" text-anchor="middle" fill="#9ca3af" font-size="10">${esc(e.label)}</text>`;
+      svg += `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 4}" text-anchor="middle" fill="var(--fg-2)" font-size="10">${esc(e.label)}</text>`;
     }
   }
 
-  const colors: Record<string, string> = { process: "#3b82f6", decision: "#eab308", endpoint: "#22c55e" };
+  const colors: Record<string, string> = { process: "var(--accent)", decision: "var(--warn)", endpoint: "var(--ok)" };
   for (const n of nodes) {
     const pos = positions.get(n.id);
     if (!pos) continue;
-    const fill = colors[n.type] ?? "#6b7280";
+    const fill = colors[n.type] ?? "var(--fg-3)";
     let shape: string;
     if (n.type === "decision") {
-      shape = `<polygon points="${pos.x + 30},${pos.y} ${pos.x + 60},${pos.y + 24} ${pos.x + 30},${pos.y + 48} ${pos.x},${pos.y + 24}" fill="${fill}" stroke="#d1d5db" stroke-width="1"/>`;
+      shape = `<polygon points="${pos.x + 30},${pos.y} ${pos.x + 60},${pos.y + 24} ${pos.x + 30},${pos.y + 48} ${pos.x},${pos.y + 24}" fill="${fill}" stroke="var(--fg)" stroke-width="1"/>`;
     } else if (n.type === "endpoint") {
-      shape = `<ellipse cx="${pos.x + 30}" cy="${pos.y + 24}" rx="40" ry="20" fill="${fill}" stroke="#d1d5db" stroke-width="1"/>`;
+      shape = `<ellipse cx="${pos.x + 30}" cy="${pos.y + 24}" rx="40" ry="20" fill="${fill}" stroke="var(--fg)" stroke-width="1"/>`;
     } else {
-      shape = `<rect x="${pos.x}" y="${pos.y}" width="60" height="48" rx="6" fill="${fill}" stroke="#d1d5db" stroke-width="1"/>`;
+      shape = `<rect x="${pos.x}" y="${pos.y}" width="60" height="48" rx="6" fill="${fill}" stroke="var(--fg)" stroke-width="1"/>`;
     }
     const labelEl = `<text x="${pos.x + 30}" y="${pos.y + 24}" fill="white" text-anchor="middle" dominant-baseline="central" font-size="11">${esc(n.label)}</text>`;
     if (n.codeRef) {

@@ -34,11 +34,11 @@ function renderContentWithFileLinks(
             <button
               key={i}
               onClick={() => onFileClick(f.path)}
-              className="flex items-center gap-2 text-xs px-2 py-1 bg-[#094771] hover:bg-[#0d5a8a] text-blue-100 rounded text-left"
+              className="flex items-center gap-2 text-xs px-2 py-1 bg-info hover:bg-accent text-accent-2 rounded text-left"
             >
               <span>📝</span>
               <span className="font-mono">{f.path}</span>
-              {f.desc && <span className="text-blue-200 opacity-80 truncate">— {f.desc}</span>}
+              {f.desc && <span className="text-accent-2 opacity-80 truncate">— {f.desc}</span>}
             </button>
           ))}
         </div>
@@ -54,10 +54,10 @@ function renderContentWithFileLinks(
 function Avatar({ emoji, tone }: { emoji: string; tone: "user" | "agent" | "error" }) {
   const toneClass =
     tone === "user"
-      ? "bg-[#094771] text-blue-100"
+      ? "bg-info text-accent-2"
       : tone === "error"
-        ? "bg-red-900/60 text-red-100"
-        : "bg-[#2a2a2a] text-gray-200";
+        ? "bg-err/60 text-err"
+        : "bg-surface-3 text-fg";
   return (
     <div
       className={
@@ -84,15 +84,15 @@ function isErrorMessage(m: ChatMessage): boolean {
 
 function activityTone(kind: ChatActivityEvent["kind"]): string {
   if (kind === "tool_error" || kind === "error") {
-    return "border-red-700/70 bg-red-950/20 text-red-200";
+    return "border-err/70 bg-err/20 text-err";
   }
   if (kind.startsWith("tool")) {
-    return "border-amber-700/60 bg-amber-950/10 text-amber-100";
+    return "border-warn/60 bg-warn/10 text-warn";
   }
   if (kind.startsWith("delegate")) {
-    return "border-purple-700/60 bg-purple-950/10 text-purple-100";
+    return "border-accent-2/60 bg-accent-2/10 text-accent-2";
   }
-  return "border-gray-700 bg-[#1f1f1f] text-gray-300";
+  return "border-edge bg-surface text-fg";
 }
 
 function ActivityItem({ event }: { event: ChatActivityEvent }) {
@@ -107,7 +107,7 @@ function ActivityItem({ event }: { event: ChatActivityEvent }) {
         </span>
       )}
       {isTool && (
-        <span className="shrink-0 rounded bg-amber-900/30 px-1.5 py-0.5 text-[10px] text-amber-200">
+        <span className="shrink-0 rounded bg-warn/30 px-1.5 py-0.5 text-[10px] text-warn">
           tool
         </span>
       )}
@@ -129,7 +129,7 @@ function ActivityItem({ event }: { event: ChatActivityEvent }) {
         <span className="shrink-0 text-[10px] opacity-60 group-open:hidden">展开</span>
         <span className="hidden shrink-0 text-[10px] opacity-60 group-open:inline">收起</span>
       </summary>
-      <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 font-mono text-[10px] leading-4 text-gray-300">
+      <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 font-mono text-[10px] leading-4 text-fg">
         {event.detail}
       </pre>
     </details>
@@ -155,7 +155,7 @@ export function MessageList({ messages, status, onFileClick }: Props) {
   return (
     <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
       {list.length === 0 && (
-        <div className="text-gray-500 text-sm italic mt-8 text-center">
+        <div className="text-fg-3 text-sm italic mt-8 text-center">
           Start a discussion by typing a topic below.
         </div>
       )}
@@ -164,7 +164,7 @@ export function MessageList({ messages, status, onFileClick }: Props) {
           return (
             <div key={m.id} className="flex justify-start gap-2 items-start">
               <Avatar emoji="👤" tone="user" />
-              <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#094771] px-3 py-2 text-sm text-blue-100 shadow-sm whitespace-pre-wrap">
+              <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-info px-3 py-2 text-sm text-accent-2 shadow-sm whitespace-pre-wrap">
                 {m.content}
               </div>
             </div>
@@ -178,14 +178,14 @@ export function MessageList({ messages, status, onFileClick }: Props) {
               <div
                 className={
                   "mb-1 flex items-center justify-end gap-2 text-xs " +
-                  (error ? "text-red-300" : "text-gray-400")
+                  (error ? "text-err" : "text-fg-2")
                 }
               >
                 <span className="font-semibold">
                   {m.agentName ?? "agent"}
                 </span>
                 {error && (
-                  <span className="px-1.5 py-0.5 rounded bg-red-900/50 text-[10px] uppercase tracking-wide">
+                  <span className="px-1.5 py-0.5 rounded bg-err/50 text-[10px] uppercase tracking-wide">
                     错误
                   </span>
                 )}
@@ -194,8 +194,8 @@ export function MessageList({ messages, status, onFileClick }: Props) {
                 className={
                   "rounded-2xl rounded-tr-sm border p-3 text-left text-sm leading-6 shadow-sm whitespace-pre-wrap " +
                   (error
-                    ? "bg-red-950/40 border border-red-800/60 text-red-100"
-                    : "border-[#3a3a3a] bg-[#242424] text-gray-100")
+                    ? "bg-err/40 border border-err/60 text-err"
+                    : "border-control bg-surface text-fg")
                 }
               >
                 {error ? (
@@ -212,24 +212,24 @@ export function MessageList({ messages, status, onFileClick }: Props) {
         );
       })}
       {(activeRoleList.length > 0 || visibleActivity.length > 0) && (
-        <div className="ml-11 mr-2 rounded-xl border border-[#333] bg-[#181818] px-3 py-2 space-y-2">
+        <div className="ml-11 mr-2 rounded-xl border border-edge bg-surface px-3 py-2 space-y-2">
           {activeRoleList.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {activeRoleList.map((role) => (
                 <span
                   key={role.roleId}
-                  className="inline-flex items-center gap-1 rounded bg-[#0b3a55] px-2 py-0.5 text-[11px] text-blue-100"
+                  className="inline-flex items-center gap-1 rounded bg-info px-2 py-0.5 text-[11px] text-accent-2"
                 >
-                  <span className="inline-block w-1.5 h-1.5 bg-blue-300 rounded-full animate-pulse" />
+                  <span className="inline-block w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
                   {role.roleId}
-                  <span className="text-blue-200/80">{role.detail}</span>
+                  <span className="text-accent-2/80">{role.detail}</span>
                 </span>
               ))}
             </div>
           )}
           {visibleActivity.length > 0 && (
             <div className="space-y-1.5">
-              <div className="text-[10px] uppercase tracking-wide text-gray-500">
+              <div className="text-[10px] uppercase tracking-wide text-fg-3">
                 activity
               </div>
               {visibleActivity.map((event) => (
@@ -240,13 +240,13 @@ export function MessageList({ messages, status, onFileClick }: Props) {
         </div>
       )}
       {status === "running" && activeRoleList.length === 0 && (
-        <div className="flex items-center gap-2 text-xs text-gray-400 italic pl-10">
-          <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+        <div className="flex items-center gap-2 text-xs text-fg-2 italic pl-10">
+          <span className="inline-block w-2 h-2 bg-accent rounded-full animate-pulse" />
           Agents are responding...
         </div>
       )}
       {status === "error" && errorMessage && (
-        <div className="mx-10 px-3 py-2 bg-red-900/40 text-red-200 text-xs rounded">
+        <div className="mx-10 px-3 py-2 bg-err/40 text-err text-xs rounded">
           Error: {errorMessage}
         </div>
       )}
@@ -255,11 +255,11 @@ export function MessageList({ messages, status, onFileClick }: Props) {
           <button
             type="button"
             onClick={() => void retryLastDiscussion()}
-            className="px-3 py-1 bg-[#007acc] hover:bg-[#1f8ad2] text-white text-xs rounded"
+            className="px-3 py-1 bg-accent hover:bg-accent-2 text-white text-xs rounded"
           >
             🔁 重试上一个话题
           </button>
-          <span className="text-[10px] text-gray-500">
+          <span className="text-[10px] text-fg-3">
             设置好 ~/.latte/models.yaml 后再试
           </span>
         </div>

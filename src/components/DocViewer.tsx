@@ -42,7 +42,7 @@ export function DocViewer({ content, filePath }: Props) {
   return (
     <div className="flex-1 overflow-y-auto p-4 text-sm" onClick={handleSvgClick}>
       {filePath && (
-        <div className="text-xs text-gray-500 mb-2 font-mono truncate flex items-center justify-between">
+        <div className="text-xs text-fg-3 mb-2 font-mono truncate flex items-center justify-between">
           <span>{filePath.split("/").pop()}</span>
           <button
             onClick={async () => {
@@ -53,12 +53,12 @@ export function DocViewer({ content, filePath }: Props) {
               setAiLoading(false);
             }}
             disabled={aiLoading}
-            className="px-2 py-0.5 bg-[#007acc] text-white rounded text-[10px] hover:bg-[#005a9e] disabled:opacity-50"
+            className="px-2 py-0.5 bg-accent text-white rounded text-[10px] hover:bg-accent disabled:opacity-50"
           >{aiLoading ? "..." : "AI Review"}</button>
         </div>
       )}
       {aiResult && (
-        <div className="mb-3 p-2 bg-[#1a3a1a] border border-green-800 rounded text-xs text-gray-300 whitespace-pre-wrap">
+        <div className="mb-3 p-2 bg-ok-bg border border-ok rounded text-xs text-fg whitespace-pre-wrap">
           {aiResult}
         </div>
       )}
@@ -91,8 +91,8 @@ function splitContent(
     if (di < diagrams.length) {
       const svg = renderFlowSvg(diagrams[di]);
       parts.push(
-        <div key={`svg${di}`} className="my-3 border border-gray-700 rounded p-2 bg-[#1a1a1a]">
-          <div className="text-xs text-gray-500 mb-1 font-medium">{diagrams[di].title}</div>
+        <div key={`svg${di}`} className="my-3 border border-edge rounded p-2 bg-surface">
+          <div className="text-xs text-fg-3 mb-1 font-medium">{diagrams[di].title}</div>
           <div dangerouslySetInnerHTML={{ __html: svg }} />
         </div>,
       );
@@ -100,7 +100,7 @@ function splitContent(
     } else {
       // Fallback: show raw text
       parts.push(
-        <pre key={`raw${di}`} className="text-xs text-gray-400 bg-[#111] p-2 rounded overflow-x-auto">
+        <pre key={`raw${di}`} className="text-xs text-fg-2 bg-surface p-2 rounded overflow-x-auto">
           {m[0]}
         </pre>,
       );
@@ -115,7 +115,7 @@ function splitContent(
   }
 
   if (parts.length === 0 && !raw.trim()) {
-    parts.push(<div key="empty" className="text-gray-500 text-center italic mt-8">(empty document)</div>);
+    parts.push(<div key="empty" className="text-fg-3 text-center italic mt-8">(empty document)</div>);
   }
   return parts;
 }

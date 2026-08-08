@@ -89,15 +89,15 @@ export function ChatPanel({ onClose }: Props) {
     managerWorkflows.length > 0 ? managerWorkflows : availableWorkflows;
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e1e] border-l border-gray-700">
+    <div className="flex flex-col h-full bg-surface border-l border-edge">
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-[#252526] border-b border-gray-700">
+      <div className="flex items-center gap-2 px-3 py-2 bg-surface-2 border-b border-edge">
         <span className="text-base">💬</span>
-        <span className="font-semibold text-sm text-gray-200">Chat</span>
+        <span className="font-semibold text-sm text-fg">Chat</span>
         <select
           value={selectedWorkflow}
           onChange={(e) => setWorkflow(e.target.value)}
-          className="ml-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600"
+          className="ml-1 px-2 py-0.5 bg-control text-fg text-xs rounded border border-edge"
         >
           {workflowsForDropdown.map((w) => (
             <option key={w.id} value={w.id}>
@@ -109,14 +109,14 @@ export function ChatPanel({ onClose }: Props) {
           <button
             onClick={toggleConfigPanel}
             title="Configuration"
-            className="text-gray-400 hover:text-gray-200 text-xs px-1"
+            className="text-fg-2 hover:text-fg text-xs px-1"
           >
             ⚙️
           </button>
           <button
             onClick={onClose}
             title="Close chat"
-            className="text-gray-400 hover:text-gray-200 text-xs px-1"
+            className="text-fg-2 hover:text-fg text-xs px-1"
           >
             ✕
           </button>
@@ -124,11 +124,11 @@ export function ChatPanel({ onClose }: Props) {
       </div>
 
       {/* Topic controls */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-[#252526] border-b border-gray-700">
+      <div className="flex items-center gap-2 px-3 py-2 bg-surface-2 border-b border-edge">
         <button
           onClick={createNewTopic}
           disabled={status === "running"}
-          className="text-gray-400 hover:text-white text-xs px-2 py-1 disabled:opacity-50 border border-gray-700 rounded"
+          className="text-fg-2 hover:text-fg text-xs px-2 py-1 disabled:opacity-50 border border-edge rounded"
           title="Create a new topic"
         >
           + 新建话题
@@ -137,7 +137,7 @@ export function ChatPanel({ onClose }: Props) {
           value={activeTopicId}
           onChange={(e) => selectTopic(e.target.value)}
           disabled={visibleTopics.length === 0 || status === "running"}
-          className="flex-1 px-2 py-1 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600 disabled:opacity-50"
+          className="flex-1 px-2 py-1 bg-control text-fg text-xs rounded border border-edge disabled:opacity-50"
           title="History (filtered by current workflow)"
         >
           {visibleTopics.length === 0 ? (
@@ -154,12 +154,12 @@ export function ChatPanel({ onClose }: Props) {
 
       {/* Role strip */}
       {availableRoles.length > 0 && (
-        <div className="px-3 py-1.5 bg-[#252526] border-b border-gray-800 text-[10px] text-gray-400 flex flex-wrap gap-1">
+        <div className="px-3 py-1.5 bg-surface-2 border-b border-edge text-[10px] text-fg-2 flex flex-wrap gap-1">
           {availableRoles.map((r) => (
             <span
               key={r.id}
               title={r.name}
-              className="px-1.5 py-0.5 bg-[#2a2a2a] rounded cursor-default"
+              className="px-1.5 py-0.5 bg-surface-3 rounded cursor-default"
             >
               {r.icon} {r.id}
             </span>
@@ -168,10 +168,10 @@ export function ChatPanel({ onClose }: Props) {
       )}
       <div className="flex flex-col flex-1 min-w-0">
           <span className="text-base">{wfIcon}</span>
-          <span className="font-semibold text-sm text-gray-200">
+          <span className="font-semibold text-sm text-fg">
             {wfLabel}
             {mode === "single" && lastResolvedModel && (
-              <span className="font-normal text-[10px] text-gray-400 ml-1.5">
+              <span className="font-normal text-[10px] text-fg-2 ml-1.5">
                 · {lastResolvedModel}
                 {singleTier ? ` · ${singleTier}` : ""}
               </span>
@@ -182,7 +182,7 @@ export function ChatPanel({ onClose }: Props) {
             <select
               value={selectedWorkflow}
               onChange={(e) => setWorkflow(e.target.value)}
-              className="ml-1 px-2 py-0.5 bg-[#3a3a3a] text-gray-200 text-xs rounded border border-gray-600 max-w-[140px]"
+              className="ml-1 px-2 py-0.5 bg-control text-fg text-xs rounded border border-edge max-w-[140px]"
               disabled={canStop}
             >
               <option value="discuss">💬 discuss (default)</option>
@@ -194,26 +194,26 @@ export function ChatPanel({ onClose }: Props) {
             </select>
           )}
 
-          <span className="text-[10px] text-gray-500 ml-1">
+          <span className="text-[10px] text-fg-3 ml-1">
             {mode === "manager" ? "交互式" : mode === "swarm" ? "蜂群" : mode === "controller" ? "Controller" : mode === "single" ? "直聊" : "讨论"}
           </span>
 
           <div className="flex items-center gap-1 ml-1">
             <button
               onClick={() => useChatStore.getState().setMode("single")}
-              className={`px-1.5 py-0.5 text-[10px] rounded ${mode === "single" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}
+              className={`px-1.5 py-0.5 text-[10px] rounded ${mode === "single" ? "bg-accent text-white" : "bg-control text-fg-2 hover:text-fg"}`}
               title="单角色直聊"
             >直聊</button>
             <button
               onClick={() => useChatStore.getState().setMode("controller")}
-              className={`px-1.5 py-0.5 text-[10px] rounded ${mode === "controller" ? "bg-[#007acc] text-white" : "bg-[#3a3a3a] text-gray-400 hover:text-gray-200"}`}
+              className={`px-1.5 py-0.5 text-[10px] rounded ${mode === "controller" ? "bg-accent text-white" : "bg-control text-fg-2 hover:text-fg"}`}
               title="Controller 事件驱动"
             >Ctrl</button>
             {mode === "single" && (
               <select
                 value={singleRoleId}
                 onChange={(e) => setSingleRoleId(e.target.value)}
-                className="px-1.5 py-0.5 text-[10px] rounded bg-[#3a3a3a] text-gray-200 border border-gray-600"
+                className="px-1.5 py-0.5 text-[10px] rounded bg-control text-fg border border-edge"
                 title="选择角色"
               >
                 {availableRoles.map((r) => (
@@ -235,7 +235,7 @@ export function ChatPanel({ onClose }: Props) {
                   clearChat();
                 }
               }}
-              className="px-1.5 py-0.5 text-[10px] rounded bg-[#3a3a3a] text-gray-200 border border-gray-600 ml-1"
+              className="px-1.5 py-0.5 text-[10px] rounded bg-control text-fg border border-edge ml-1"
               title="加载/切换历史 session"
             >
               <option value="">+ 新话题</option>
@@ -251,27 +251,27 @@ export function ChatPanel({ onClose }: Props) {
 
           <div className="ml-auto flex items-center gap-1">
             {mode === "controller" && status === "running" && controllerSessionId && (
-              <button onClick={handlePause} title="暂停" className="text-yellow-400 hover:text-yellow-300 text-xs px-1">⏸</button>
+              <button onClick={handlePause} title="暂停" className="text-warn hover:text-warn text-xs px-1">⏸</button>
             )}
             {mode === "controller" && status !== "running" && controllerSessionId && (
-              <button onClick={handleResume} title="继续" className="text-green-400 hover:text-green-300 text-xs px-1">▶</button>
+              <button onClick={handleResume} title="继续" className="text-ok hover:text-ok text-xs px-1">▶</button>
             )}
             {((mode === "controller" && controllerSessionId) || canStop) && (
-              <button onClick={handleAbort} title="终止" className="text-red-400 hover:text-red-300 text-xs px-1">⏹</button>
+              <button onClick={handleAbort} title="终止" className="text-err hover:text-err text-xs px-1">⏹</button>
             )}
             {messages.length > 0 && !canStop && (
-              <button onClick={clearChat} title="清空" className="text-gray-400 hover:text-gray-200 text-xs px-1">🗑</button>
+              <button onClick={clearChat} title="清空" className="text-fg-2 hover:text-fg text-xs px-1">🗑</button>
             )}
             {mode === "single" && messages.length > 0 && (
-              <button onClick={clearChat} title="新话题" className="text-green-400 hover:text-green-300 text-xs px-1">📄</button>
+              <button onClick={clearChat} title="新话题" className="text-ok hover:text-ok text-xs px-1">📄</button>
             )}
             <button
               onClick={() => setShowSessions(!showSessions)}
-              className={`text-xs px-1 ${showSessions ? "text-[#007acc]" : "text-gray-400 hover:text-gray-200"}`}
+              className={`text-xs px-1 ${showSessions ? "text-accent" : "text-fg-2 hover:text-fg"}`}
               title="会话历史"
             >📋</button>
-            <button onClick={() => openConfigFile("roles")} title="配置" className="text-gray-400 hover:text-gray-200 text-xs px-1">⚙</button>
-            <button onClick={onClose} title="关闭" className="text-gray-400 hover:text-gray-200 text-xs px-1">✕</button>
+            <button onClick={() => openConfigFile("roles")} title="配置" className="text-fg-2 hover:text-fg text-xs px-1">⚙</button>
+            <button onClick={onClose} title="关闭" className="text-fg-2 hover:text-fg text-xs px-1">✕</button>
           </div>
         </div>
 
@@ -284,32 +284,32 @@ export function ChatPanel({ onClose }: Props) {
                 <button
                   key={opt.id}
                   onClick={() => useChatStore.getState().submitManagerDecision(opt.id)}
-                  className="block w-full text-left px-3 py-2 bg-[#2d2d2d] hover:bg-[#3a3a3a] border border-gray-600 rounded text-sm text-gray-200 transition-colors"
+                  className="block w-full text-left px-3 py-2 bg-surface-3 hover:bg-control border border-edge rounded text-sm text-fg transition-colors"
                 >
                   <span className="font-medium">{opt.label}</span>
-                  {opt.description && <span className="block text-[11px] text-gray-400 mt-0.5">{opt.description}</span>}
+                  {opt.description && <span className="block text-[11px] text-fg-2 mt-0.5">{opt.description}</span>}
                 </button>
               ))}
             </div>
           )}
 
           {/* ── Workflow settings ───────────────────────────── */}
-          <div className="mt-3 pt-3 border-t border-gray-700">
+          <div className="mt-3 pt-3 border-t border-edge">
             <div className="flex items-center mb-2">
-              <div className="font-semibold text-gray-200 flex-1">
+              <div className="font-semibold text-fg flex-1">
                 🪄 工作流流程
               </div>
               <button
                 onClick={() => openNewWorkflowEditor()}
-                className="px-2 py-0.5 bg-[#007acc] hover:bg-[#1f8ad2] text-white text-[10px] rounded"
+                className="px-2 py-0.5 bg-accent hover:bg-accent-2 text-white text-[10px] rounded"
                 type="button"
               >
                 ＋ 新建
               </button>
             </div>
-            <div className="text-[10px] text-gray-500 mb-1">
+            <div className="text-[10px] text-fg-3 mb-1">
               选定一个流程，点 ✏️ 编辑 ——
-              <span className="text-gray-400">
+              <span className="text-fg-2">
                 改名称、步骤顺序、每步角色后点保存。
               </span>
             </div>
@@ -317,11 +317,11 @@ export function ChatPanel({ onClose }: Props) {
               {availableWorkflows.map((w) => (
                 <div
                   key={w.id}
-                  className="flex items-center gap-1 px-2 py-1 bg-[#2a2a2a] rounded"
+                  className="flex items-center gap-1 px-2 py-1 bg-surface-3 rounded"
                 >
                   <button
                     onClick={() => handleEditExistingWorkflow(w.id)}
-                    className="flex-1 text-left text-[11px] text-gray-200 hover:text-white truncate"
+                    className="flex-1 text-left text-[11px] text-fg hover:text-fg-2 truncate"
                     title={`点击编辑 ${w.name}`}
                     type="button"
                   >
@@ -329,11 +329,11 @@ export function ChatPanel({ onClose }: Props) {
                       {w.kind === "swarm" ? "🪄" : "💬"}
                     </span>
                     {w.name}{" "}
-                    <span className="text-gray-500 text-[10px]">({w.id})</span>
+                    <span className="text-fg-3 text-[10px]">({w.id})</span>
                   </button>
                   <button
                     onClick={() => openConfigFile(`workflow:${w.id}`)}
-                    className="px-1 text-gray-400 hover:text-white text-[11px]"
+                    className="px-1 text-fg-2 hover:text-fg text-[11px]"
                     title={`打开 workflows/${w.id}.yaml`}
                     type="button"
                   >
@@ -347,21 +347,21 @@ export function ChatPanel({ onClose }: Props) {
           <div className="flex gap-2 text-[10px] mt-3">
             <button
               onClick={() => openConfigFile("models")}
-              className="px-2 py-1 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded"
+              className="px-2 py-1 bg-control hover:bg-control-hover text-fg rounded"
               type="button"
             >
               📄 models.yaml
             </button>
             <button
               onClick={() => openConfigFile("roles")}
-              className="px-2 py-1 bg-[#3a3a3a] hover:bg-[#4a4a4a] text-gray-300 rounded"
+              className="px-2 py-1 bg-control hover:bg-control-hover text-fg rounded"
               type="button"
             >
               📄 roles.yaml
             </button>
           </div>
 
-          <div className="mt-2 text-[10px] text-gray-500">
+          <div className="mt-2 text-[10px] text-fg-3">
             配置文件:
             <br />
             {modelsPath}
@@ -374,7 +374,7 @@ export function ChatPanel({ onClose }: Props) {
       <MessageList messages={messages} status={status} onFileClick={handleFileClick} />
       {/* Error display */}
       {errorMessage && (
-        <div className="mx-3 mb-2 p-3 bg-red-900/30 border border-red-700 rounded text-sm text-red-200">
+        <div className="mx-3 mb-2 p-3 bg-err/30 border border-err rounded text-sm text-err">
           <div className="font-semibold mb-1">⚠️ 错误</div>
           <div className="whitespace-pre-wrap text-xs mb-2">{errorMessage}</div>
           {errorMessage.includes("配置文件") && (
@@ -391,7 +391,7 @@ export function ChatPanel({ onClose }: Props) {
                   }
                 }
               }}
-              className="px-2 py-1 bg-red-700 hover:bg-red-600 text-white text-xs rounded"
+              className="px-2 py-1 bg-err hover:bg-err text-white text-xs rounded"
             >
               📄 打开配置文件
             </button>
@@ -399,7 +399,7 @@ export function ChatPanel({ onClose }: Props) {
         </div>
         )}
 
-      <div className="px-3 py-2 bg-[#252526] border-t border-gray-700">
+      <div className="px-3 py-2 bg-surface-2 border-t border-edge">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -411,15 +411,15 @@ export function ChatPanel({ onClose }: Props) {
             }
             disabled={status === "running"}
             rows={2}
-            className="w-full px-2 py-1.5 bg-[#3a3a3a] text-gray-200 text-sm rounded border border-gray-600 outline-none focus:border-[#007acc] resize-none disabled:opacity-50"
+            className="w-full px-2 py-1.5 bg-control text-fg text-sm rounded border border-edge outline-none focus:border-accent resize-none disabled:opacity-50"
           />
           <div className="flex items-center gap-2 mt-2">
             <button
               onClick={handleSend}
               disabled={!input.trim() || canStop}
-              className="px-3 py-1 bg-[#007acc] hover:bg-[#1f8ad2] text-white text-xs rounded disabled:opacity-50"
+              className="px-3 py-1 bg-accent hover:bg-accent-2 text-white text-xs rounded disabled:opacity-50"
             >Send</button>
-            <span className="text-[10px] text-gray-500 ml-auto">Enter 发送 · Shift+Enter 换行</span>
+            <span className="text-[10px] text-fg-3 ml-auto">Enter 发送 · Shift+Enter 换行</span>
           </div>
       </div>
 

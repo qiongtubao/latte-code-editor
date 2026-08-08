@@ -41,8 +41,7 @@ export function ResizeDivider({ size, onResize, minSize = 50, maxSize = 800, dir
   return (
     <div
       onMouseDown={handleMouseDown}
-      className={`flex-shrink-0 z-10 transition-colors hover:bg-[#007acc] ${direction === "horizontal" ? "w-[3px] cursor-col-resize" : "h-[3px] cursor-row-resize"}`}
-      style={{ background: "#333" }}
+      className={`flex-shrink-0 z-10 transition-colors bg-edge hover:bg-accent ${direction === "horizontal" ? "w-[3px] cursor-col-resize" : "h-[3px] cursor-row-resize"}`}
     />
   );
 }

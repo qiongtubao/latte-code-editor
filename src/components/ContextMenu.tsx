@@ -45,7 +45,7 @@ export function ContextMenu({ items, x, y, onClose }: ContextMenuProps) {
     top: Math.min(y, window.innerHeight - items.length * 32 - 10),
     zIndex: 2000,
     minWidth: "160px",
-    background: "#2d2d2d",
+    background: "var(--surface-3)",
     border: "1px solid #454545",
     borderRadius: "6px",
     boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
@@ -58,7 +58,7 @@ export function ContextMenu({ items, x, y, onClose }: ContextMenuProps) {
       {items.map((item, i) => {
         if (item.separator) {
           return (
-            <div key={i} className="border-t border-gray-700 my-1" />
+            <div key={i} className="border-t border-edge my-1" />
           );
         }
         return (
@@ -72,13 +72,13 @@ export function ContextMenu({ items, x, y, onClose }: ContextMenuProps) {
             }}
             className={`flex items-center justify-between px-3 py-1.5 cursor-pointer select-none ${
               item.disabled
-                ? "text-gray-600 cursor-default"
-                : "text-gray-200 hover:bg-[#094771]"
+                ? "text-fg-3 cursor-default"
+                : "text-fg hover:bg-info"
             }`}
           >
             <span>{item.label}</span>
             {item.shortcut && (
-              <span className="text-gray-500 text-2xs ml-4">{item.shortcut}</span>
+              <span className="text-fg-3 text-2xs ml-4">{item.shortcut}</span>
             )}
           </div>
         );
