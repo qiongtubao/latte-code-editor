@@ -17,7 +17,7 @@
 // - 工作区切换：root 变化 → iframe key 变化 → React 重挂 iframe →
 //   onLoad 重新注入（sessionKey/workspaceRoot 按当前工作区取值）；
 //   后端按 workspaceRoot 各自 get-or-spawn UiBackend，chat 状态隔离。
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { openFile } from "../api/commands";
 import { graphGetData } from "../api/graphCommands";
 import { createUiTransport } from "../api/uiTransport";
@@ -87,6 +87,9 @@ interface Props {
 
 export function ChatAgentPanel({ onClose, onShowGraph }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // 浅色皮肤下 iframe 首帧会先按静态 skin.css（深色）渲染，register 时才被
+  // 缓存的皮肤覆盖——先隐藏，load 握手（含皮肤应用）完成后再显示，消除闪帧。
+  const [loaded, setLoaded] = useState(false);
   // 跟随活动工作区（无工作区 → null → 后端 default 容器）。
   // root 是 iframe 的 key：变了 React 重挂 iframe → onLoad 重新注入。
   const workspaceRoot = useWorkspaceStore((s) =>
@@ -156,12 +159,16 @@ export function ChatAgentPanel({ onClose, onShowGraph }: Props) {
       },
     };
     win.dispatchEvent(new Event("latte-host-ready"));
-    // 反向调用通道（editor → chat，阶段 3b）：同源 origin。
+    // 反向调用通道（editor → chat，阶段 3b）：同源 origin。register 会
+    // 顺带把缓存的皮肤写进 iframe :root，此后显示不再有首帧色差。
     chatBridge.register(win, window.location.origin);
+    setLoaded(true);
   }, [openLocation, revealInGraph]);
 
   // iframe 重载（切工作区）/组件卸载时注销反向通道，回到缓冲态。
+  // 重挂的新 iframe 回到隐藏态，等它自己的 onLoad 再显示。
   useEffect(() => {
+    setLoaded(false);
     return () => chatBridge.unregister(window.location.origin);
   }, [workspaceRoot]);
 
@@ -182,7 +189,7 @@ export function ChatAgentPanel({ onClose, onShowGraph }: Props) {
         key={workspaceRoot ?? "default"}
         src="/chat-ui/index.html"
         onLoad={handleLoad}
-        className="flex-1 w-full border-0"
+        className={`flex-1 w-full border-0${loaded ? "" : " invisible"}`}
         title="Latte Agent"
       />
     </div>

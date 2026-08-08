@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { EditorView, keymap } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorView, keymap, Decoration, type DecorationSet } from "@codemirror/view";
+import { EditorState, StateEffect, StateField } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { basicSetup } from "codemirror";
@@ -10,6 +10,27 @@ import { useEditorStore } from "../hooks/useEditorStore";
 import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
 import { cmThemes, getHighlightStyle } from "../hooks/themes";
 import { toWorkspaceRel } from "../chatBridge";
+
+/** 跳转目标行的一次性高亮（chat 跳转而来自动示意）。 */
+const flashLineEffect = StateEffect.define<number>();
+const clearFlashEffect = StateEffect.define<null>();
+const flashLineField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(flashLineEffect)) {
+        const line = tr.state.doc.lineAt(e.value);
+        deco = Decoration.set([Decoration.line({ class: "cm-jump-flash" }).range(line.from)]);
+      } else if (e.is(clearFlashEffect)) {
+        deco = Decoration.none;
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+const FLASH_MS = 1600;
 interface CodeMirrorProps {
   content: string;
   filePath: string | null;
@@ -51,6 +72,7 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
         }),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         langExt,
+        flashLineField,
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current?.(u.state.doc.toString());
         }),
@@ -76,8 +98,15 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
     const lineObj = view.state.doc.line(safeLine);
     view.dispatch({
       selection: { anchor: lineObj.from, head: lineObj.from },
-      effects: EditorView.scrollIntoView(lineObj.from, { y: "center" }),
+      effects: [
+        EditorView.scrollIntoView(lineObj.from, { y: "center" }),
+        flashLineEffect.of(lineObj.from),
+      ],
     });
+    // 高亮动画播完即清除（装饰随文档变更自动 map，不会残留错位）
+    setTimeout(() => {
+      viewRef.current?.dispatch({ effects: clearFlashEffect.of(null) });
+    }, FLASH_MS);
     // 用完清掉，避免下次 effect 重触发
     useEditorStore.getState().setTargetLine(null);
   }, [targetLine]);

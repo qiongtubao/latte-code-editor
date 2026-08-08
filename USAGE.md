@@ -187,25 +187,18 @@ latte-graph build    # 生成 .codegraph/codegraph.db
 
 ### 配置
 
-编辑器当前没有图形化设置面板。配置文件存储在项目目录下：
+设置通过图形化设置面板修改（工具栏 Settings），持久化在 localStorage `latte-settings`：
 
-```
-.editor/
-  state.json     # 编辑状态（打开的文件、光标位置）
-  config.json    # 用户配置（字体、字号、主题）
-```
+| 设置项 | 说明 |
+|--------|------|
+| Skin | 皮肤（VS Code Dark / Monokai / Dracula / GitHub Light / Solarized Light），作用于整个界面、联动切换代码主题、嵌入的 chat 面板同步跟随；定义见 `src/skins.ts` |
+| Theme | CodeMirror 代码区主题（选皮肤时会联动切换，可再单独改） |
+| Font Size / Tab Size | 编辑器字号 / 缩进宽度 |
+| Line Numbers / Word Wrap / Auto Save | 行号 / 自动换行 / 自动保存 |
+| Graph Renderer | 图谱渲染器（Auto / WebGPU / Canvas 2D） |
+| Docs Input/Output Dir | 文档图谱的输入目录与分析输出目录（相对项目根） |
 
-默认配置：
-
-| 配置项 | 默认值 |
-|--------|--------|
-| 字体 | `JetBrains Mono`, `Fira Code`, `Cascadia Code` |
-| 字号 | 14px |
-| 主题 | 暗色 (`#1e1e1e`) |
-
-注：设置面板（Settings）中可切换皮肤（VS Code Dark / Monokai / Dracula / GitHub Light / Solarized Light），
-皮肤同时作用于编辑器 chrome、代码区主题（联动切换，可再单改）和嵌入的 chat 面板，
-定义见 `src/skins.ts`，设置持久化在 localStorage `latte-settings`。
+字体栈固定为 `JetBrains Mono`, `Fira Code`, `Cascadia Code`, monospace。
 
 ---
 

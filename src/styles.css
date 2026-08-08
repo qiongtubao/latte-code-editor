@@ -90,3 +90,13 @@ body {
   font-size: 14px;
   line-height: 1.6;
 }
+
+/* 跳转目标行的一次性高亮（chat 引用跳转 / quick open），颜色跟随皮肤。 */
+.cm-editor .cm-line.cm-jump-flash {
+  animation: latte-jump-flash 1.6s ease-out;
+}
+
+@keyframes latte-jump-flash {
+  0% { background: var(--selection, #264f78); }
+  100% { background: transparent; }
+}
