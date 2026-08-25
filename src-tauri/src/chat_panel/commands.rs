@@ -48,7 +48,7 @@ pub async fn chat_list_models() -> Result<Vec<ModelInfo>, String> {
         .models
         .iter()
         .map(|m| ModelInfo {
-            id: m.id.clone(),
+            id: m.name.clone(),
             name: m.name.clone(),
             provider: m.provider.clone(),
             max_tokens: m.max_tokens,
@@ -189,7 +189,7 @@ pub async fn chat_set_role_model_chain(
     let merged = config_loader::load_merged();
     let unknown: Vec<&String> = chain
         .iter()
-        .filter(|m| !merged.models.models.iter().any(|def| &def.id == *m))
+        .filter(|m| !merged.models.models.iter().any(|def| &def.name == *m))
         .collect();
     if !unknown.is_empty() {
         return Err(format!(
@@ -746,9 +746,11 @@ pub async fn chat_controller_spawn(
     let mut config = AgentConfig {
         models: merged.models,
         roles: merged.roles,
+        // advisor（core 后加）：编辑器侧不暴露该开关，取 core 缺省（开）。
+        ..Default::default()
     };
     let global = GlobalConfig::load_default().unwrap_or_default();
-    let global_ids: Vec<String> = global.models.iter().map(|m| m.id.clone()).collect();
+    let global_ids: Vec<String> = global.models.iter().map(|m| m.name.clone()).collect();
     for tmpl in config.roles.values_mut() {
         for id in &global_ids {
             if !tmpl.model_chain.contains(id) {
@@ -799,6 +801,12 @@ pub async fn chat_controller_spawn(
         // 在 ui-server 的 create_session_handle 里），仅补齐配置。
         advisor_monitor:
             latte_agent_core::advisor_monitor::AdvisorMonitorConfig::default(),
+        // core 新增字段：UI session id（用于 subsession_store 落盘 key）；
+        // 流式模式开关（默认关，UI 可运行时切换）；单 session 内 delegate
+        // 工具调用上限（默认 12）。
+        session_id: request.session_id.clone(),
+        stream_mode: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        max_delegates_per_session: 12,
     };
     // Use persistent session spawn.
     super::session_controller::spawn_persistent(

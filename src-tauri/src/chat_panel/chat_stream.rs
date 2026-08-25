@@ -164,8 +164,8 @@ fn iso_now() -> String {
 
 fn stored_to_msg(sm: &StoredMessage) -> Option<Message> {
     match sm {
-        StoredMessage::User { content, .. } => Some(Message { role: Role::User, content: vec![ContentPart::text(content.clone())] }),
-        StoredMessage::Assistant { content, .. } => Some(Message { role: Role::Assistant, content: vec![ContentPart::text(content.clone())] }),
+        StoredMessage::User { content, .. } => Some(Message { role: Role::User, content: vec![ContentPart::text(content.clone())], tool_call_id: None, tool_calls: None }),
+        StoredMessage::Assistant { content, .. } => Some(Message { role: Role::Assistant, content: vec![ContentPart::text(content.clone())], tool_call_id: None, tool_calls: None }),
         _ => None,
     }
 }
@@ -236,10 +236,12 @@ pub async fn chat_stream(app: AppHandle, request: StreamRequest) -> Result<Strea
             messages.push(Message {
                 role: if entry.role == "assistant" { Role::Assistant } else { Role::User },
                 content: vec![ContentPart::text(entry.content.clone())],
+                tool_call_id: None,
+                tool_calls: None,
             });
         }
     }
-    messages.push(Message { role: Role::User, content: vec![ContentPart::text(request.content.clone())] });
+    messages.push(Message { role: Role::User, content: vec![ContentPart::text(request.content.clone())], tool_call_id: None, tool_calls: None });
 
     let response = runner.run_turn(&messages, None).await
         .map_err(|e| format!("model call failed for '{role_id}': {e}"))?;

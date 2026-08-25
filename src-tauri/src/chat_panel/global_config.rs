@@ -281,7 +281,8 @@ impl GlobalModelConfig {
 /// - upstream has `Option<f64>` costs, crate has `f64` (None → 0.0)
 fn convert_def_to_project(upstream: &latte_agent_core::config::ModelDef) -> ModelDef {
     ModelDef {
-        id: upstream.id.clone(),
+        // 修复:upstream 是 latte_agent_core::config::ModelDef,该类型没有 id 字段,改用 name 作为来源
+        id: upstream.name.clone(),
         name: upstream.name.clone(),
         api: upstream.api.clone(),
         provider: upstream.provider.clone(),

@@ -74,6 +74,11 @@ pub async fn start(
             // 在 ui-server 的 create_session_handle 里），仅补齐配置。
             advisor_monitor:
                 latte_agent_core::advisor_monitor::AdvisorMonitorConfig::default(),
+            // core 新增字段：会话级联标识、流式开关、最大并行委派数。
+            // 本路径用默认值，UI 侧 ui-server 会另行覆盖以对接真实 session。
+            session_id: String::new(),
+            stream_mode: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            max_delegates_per_session: 12,
         })
         .await;
 
@@ -203,12 +208,12 @@ pub(super) fn load_cli_like_agent_config(
         .models
         .models
         .iter()
-        .map(|m| m.id.as_str())
+        .map(|m| m.name.as_str())
         .collect();
     let extra_ids: Vec<String> = global
         .models
         .iter()
-        .map(|m| m.id.as_str())
+        .map(|m| m.name.as_str())
         .filter(|id| !project_ids.contains(id))
         .map(str::to_string)
         .collect();
@@ -275,6 +280,7 @@ mod tests {
                 icon: "M".to_string(),
                 // latte-agent-core 后加的字段；本测试不关心，给空表。
                 skills: vec![],
+                code_paths: vec![],
             },
         );
         let req = StartDiscussionRequest {
@@ -315,10 +321,12 @@ icon = "M"
         .unwrap();
         std::fs::write(
             global.join("models.yaml"),
+            // core 的 ModelDef 已移除 `id`，`name` 既是标识符也是 API 的
+            // model 字段（旧 `model_name` 走 serde alias）。router 风格文档
+            // 里的 `id:` 现在被忽略，所以 fixture 直接用 name 作 id。
             r#"
 models:
-  - id: deepseek-chat
-    name: DeepSeek Chat
+  - name: deepseek-chat
     api: openai
     provider: deepseek
     base_url: https://api.deepseek.com
@@ -358,8 +366,9 @@ models:
         let mut dst = AgentConfig::default();
         let mut src = AgentConfig::default();
         src.models.models.push(latte_agent_core::config::ModelDef {
-            id: "deepseek-chat".to_string(),
-            name: "DeepSeek".to_string(),
+            // core 已移除 `id`：`name` 现在既是 API 的 model 字段也是标识符
+            // （旧 `model_name` 走 serde alias），所以这里填模型 id。
+            name: "deepseek-chat".to_string(),
             api: "openai".to_string(),
             provider: "deepseek".to_string(),
             base_url: "https://api.deepseek.com".to_string(),
@@ -368,6 +377,7 @@ models:
             max_tokens: 8192,
             supports_thinking: false,
             supports_vision: false,
+            supports_image_generation: false,
             cost_per_million_input: None,
             cost_per_million_output: None,
             tier: Some("standard".to_string()),
@@ -376,6 +386,6 @@ models:
 
         merge_agent_config(&mut dst, &src);
 
-        assert_eq!(dst.models.models[0].id, "deepseek-chat");
+        assert_eq!(dst.models.models[0].name, "deepseek-chat");
     }
 }

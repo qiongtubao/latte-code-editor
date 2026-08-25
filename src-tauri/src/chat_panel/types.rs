@@ -653,10 +653,20 @@ impl From<&latte_agent_core::controller::ChatEvent> for ControllerEventKind {
             | ChatEvent::WorkflowFinished { .. } => Self::Status,
             // core 新增的用户消息事件（UI 回放恢复用户气泡用）：旧控制面
             // 不区分，同样折叠为 Status。
+
             ChatEvent::UserMessage { .. } => Self::Status,
-        }
-    }
-}
+            // HIL v1.4 per-role 暂停 / 恢复：旧控制面不区分，折叠为 Status。
+            ChatEvent::RolePaused { .. } | ChatEvent::RoleResumed { .. } => Self::Status,
+            // 多模态 + 计划/选择题：旧控制面无对应 kind，统一折叠为 Status。
+            ChatEvent::ImageGenerated { .. }
+            | ChatEvent::PlanProposed { .. }
+            | ChatEvent::ChoiceRequested { .. }
+            | ChatEvent::TaskReport { .. } => Self::Status,
+            // Advisor / 超时告警：旧控制面不区分，折叠为 Status。
+            ChatEvent::TimeoutWarning { .. } | ChatEvent::AdvisorTerminated { .. } => Self::Status,
+         }
+     }
+ }
 /// NOTE: Instead of `#[serde(flatten)]` over the enum (which produces a
 /// nested `{Error: {message}}` shape), we implement a custom serializer
 /// that extracts the variant's fields into the parent object.
@@ -746,41 +756,68 @@ impl serde::Serialize for ControllerEventPayload {
                 map.serialize_entry("turn", turn)?;
                 map.serialize_entry("roles", roles)?;
             }
-            ChatEvent::ToolUse { role_id, tool_name, args } => {
+            // sub_id（core 后加）标识事件所属的 delegate/workflow subsession，
+            // 主 session 的 turn 为 None。与 RoleTurn/Error 一致：只有 Some
+            // 才写 subId，保持旧 consumer 看到的 JSON 形状不变。
+            ChatEvent::ToolUse { role_id, tool_name, args, sub_id } => {
                 map.serialize_entry("roleId", role_id)?;
                 map.serialize_entry("toolName", tool_name)?;
                 map.serialize_entry("args", args)?;
+                if let Some(sub_id) = sub_id {
+                    map.serialize_entry("subId", sub_id)?;
+                }
             }
-            ChatEvent::ToolResult { role_id, tool_name, result } => {
+            ChatEvent::ToolResult { role_id, tool_name, result, sub_id } => {
                 map.serialize_entry("roleId", role_id)?;
                 map.serialize_entry("toolName", tool_name)?;
                 map.serialize_entry("result", result)?;
+                if let Some(sub_id) = sub_id {
+                    map.serialize_entry("subId", sub_id)?;
+                }
             }
-            ChatEvent::ToolError { role_id, tool_name, error } => {
+            ChatEvent::ToolError { role_id, tool_name, error, sub_id } => {
                 map.serialize_entry("roleId", role_id)?;
                 map.serialize_entry("toolName", tool_name)?;
                 map.serialize_entry("error", error)?;
+                if let Some(sub_id) = sub_id {
+                    map.serialize_entry("subId", sub_id)?;
+                }
             }
-            ChatEvent::RoleStarted { role_id, detail } => {
+            ChatEvent::RoleStarted { role_id, detail, sub_id } => {
                 map.serialize_entry("roleId", role_id)?;
                 map.serialize_entry("detail", detail)?;
+                if let Some(sub_id) = sub_id {
+                    map.serialize_entry("subId", sub_id)?;
+                }
             }
-            ChatEvent::RoleFinished { role_id, detail } => {
+            ChatEvent::RoleFinished { role_id, detail, sub_id } => {
                 map.serialize_entry("roleId", role_id)?;
                 map.serialize_entry("detail", detail)?;
+                if let Some(sub_id) = sub_id {
+                    map.serialize_entry("subId", sub_id)?;
+                }
             }
-            ChatEvent::DelegateStarted { from_role, to_role, task, sub_id } => {
+            // wf_id（core 后加）：普通 manager 委派为 None，workflow 派生的
+            // 委派带 workflow run id。工作流事件本身折叠为 Status 不展开，
+            // 但这里带上 wfId 让 consumer 能把委派归属到某次 workflow。
+            ChatEvent::DelegateStarted { from_role, to_role, task, sub_id, wf_id } => {
                 map.serialize_entry("fromRole", from_role)?;
                 map.serialize_entry("toRole", to_role)?;
                 map.serialize_entry("task", task)?;
                 map.serialize_entry("subId", sub_id)?;
+                if let Some(wf_id) = wf_id {
+                    map.serialize_entry("wfId", wf_id)?;
+                }
             }
-            ChatEvent::DelegateFinished { from_role, to_role, status, summary, sub_id } => {
+            ChatEvent::DelegateFinished { from_role, to_role, status, summary, sub_id, wf_id } => {
                 map.serialize_entry("fromRole", from_role)?;
                 map.serialize_entry("toRole", to_role)?;
                 map.serialize_entry("status", status)?;
                 map.serialize_entry("summary", summary)?;
                 map.serialize_entry("subId", sub_id)?;
+                if let Some(wf_id) = wf_id {
+                    map.serialize_entry("wfId", wf_id)?;
+                }
             }
             // workflow 事件折叠为 Status kind（见 ControllerEventKind），
             // 字段不展开——旧控制面前端已退役，无人消费。
@@ -792,10 +829,19 @@ impl serde::Serialize for ControllerEventPayload {
             // kind 且不展开；新 UI 走 ui:chat_event 的前端 JSON，里面有
             // 完整 text。
             ChatEvent::UserMessage { .. } => {}
-        }
-        map.end()
-    }
-}
+            // HIL v1.4 per-role 暂停 / 恢复：旧控制面无对应字段展开。
+            ChatEvent::RolePaused { .. } | ChatEvent::RoleResumed { .. } => {}
+            // 多模态 + 计划/选择题 + 任务回报：旧控制面无字段展开。
+            ChatEvent::ImageGenerated { .. }
+            | ChatEvent::PlanProposed { .. }
+            | ChatEvent::ChoiceRequested { .. }
+            | ChatEvent::TaskReport { .. } => {}
+            // Advisor / 超时告警：旧控制面无字段展开。
+            ChatEvent::TimeoutWarning { .. } | ChatEvent::AdvisorTerminated { .. } => {}
+         }
+         map.end()
+     }
+ }
 
 
 #[cfg(test)]

@@ -140,9 +140,13 @@ pub fn send_message(
     } else {
         latte_ai::models::Role::Assistant
     };
+    // 修复:Message 缺少 tool_call_id / tool_calls 字段,普通文本消息设为 None
     let msg = latte_ai::models::Message {
         role: role_enum,
         content: vec![latte_ai::models::ContentPart::text(req.content.clone())],
+        // 函数调用相关字段:用户输入文本消息时无 tool_call,置 None
+        tool_call_id: None,
+        tool_calls: None,
     };
     entry
         .manager
@@ -232,9 +236,13 @@ pub fn inject_message(
     let entry = load_into(&mut cache, &req.task_id, req.cwd.as_deref())?;
     ensure_role(&mut entry.manager, &req.role_id)?;
     let now = iso8601_utc_now();
+    // 修复:Message 缺少 tool_call_id / tool_calls 字段,普通文本消息设为 None
     let msg = latte_ai::models::Message {
         role: latte_ai::models::Role::User,
         content: vec![latte_ai::models::ContentPart::text(format!("[HUMAN @ {}]\n{}", now, req.message))],
+        // 函数调用相关字段:HIL 注入消息为纯文本,无 tool_call
+        tool_call_id: None,
+        tool_calls: None,
     };
     entry
         .manager
@@ -441,10 +449,15 @@ fn ensure_role(mgr: &mut SessionManager, role_id: &str) -> Result<(), String> {
         return Ok(());
     }
     let mut record = mgr.record().clone();
+    // 修复:RoleHistory 新增 paused / pause_reason / paused_at 字段,新建 role 默认为未暂停
     record.roles.push(RoleHistory {
         role_id: role_id.to_string(),
         messages: Vec::new(),
         last_turn: 0,
+        // 新建 role 时 paused 置 false,无暂停原因和暂停时间
+        paused: false,
+        pause_reason: None,
+        paused_at: None,
     });
     let new_mgr =
         SessionManager::from_record(record, mgr.worktree_root().to_path_buf());

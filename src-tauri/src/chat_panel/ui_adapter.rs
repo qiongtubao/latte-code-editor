@@ -399,7 +399,8 @@ pub async fn ui_subsessions_get(
     sub_id: String,
 ) -> Result<Vec<serde_json::Value>, String> {
     let b = get_or_spawn(&app, &state, workspace_root.as_deref()).await?;
-    Ok(api::get_subsession(&b, &sub_id))
+    // limit=0 = 读全部（见 api.rs:1368 文档），caller 没暴露分页参数，保持原行为。
+    Ok(api::get_subsession(&b, &sub_id, 0))
 }
 
 #[tauri::command]

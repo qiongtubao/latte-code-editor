@@ -31,7 +31,7 @@ pub struct MergedConfig {
 pub fn load_merged() -> MergedConfig {
     // ── Layer 3: Global config (~/.latte/models.* + ~/.latte/models.d/*) ──
     let global = GlobalConfig::load_default().unwrap_or_default();
-    let global_pending_ids: Vec<String> = global.models.iter().map(|m| m.id.clone()).collect();
+    let global_pending_ids: Vec<String> = global.models.iter().map(|m| m.name.clone()).collect();
 
     let agents_dir = ConfigLayer::Project.agents_dir();
 
@@ -69,8 +69,8 @@ pub fn load_merged() -> MergedConfig {
         .tiers
         .as_ref()
         .and_then(|t| t.get("standard"))
-        .or_else(|| merged.models.models.first().map(|m| &m.id))
-        .or_else(|| global.models.first().map(|m| &m.id))
+        .or_else(|| merged.models.models.first().map(|m| &m.name))
+        .or_else(|| global.models.first().map(|m| &m.name))
         .cloned()
         .unwrap_or_else(|| "deepseek-chat".to_string());
 
@@ -224,6 +224,8 @@ pub fn build_resolver(config: &MergedConfig) -> Option<latte_agent_core::model_r
     let agent_cfg = AgentConfig {
         models: config.models.clone(),
         roles: config.roles.clone(),
+        // advisor 与 model 解析无关，取 core 缺省。
+        ..Default::default()
     };
     latte_agent_core::model_resolver::ModelResolver::from_config(&agent_cfg).ok()
 }

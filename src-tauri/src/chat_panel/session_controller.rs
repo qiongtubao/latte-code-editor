@@ -129,7 +129,9 @@ pub async fn persist_event(session_id: &str, event: &ChatEvent) {
                 timestamp: ts,
             })
         }
-        ChatEvent::ToolUse { role_id, tool_name, args } => {
+        // sub_id（core 后加）不落盘：StoredMessage 是会话回放格式，
+        // 没有 subsession 维度，忽略即可。
+        ChatEvent::ToolUse { role_id, tool_name, args, .. } => {
             Some(StoredMessage::ToolCall {
                 role_id: role_id.clone(),
                 tool_name: tool_name.clone(),
@@ -137,7 +139,7 @@ pub async fn persist_event(session_id: &str, event: &ChatEvent) {
                 timestamp: ts,
             })
         }
-        ChatEvent::ToolResult { role_id, tool_name, result } => {
+        ChatEvent::ToolResult { role_id, tool_name, result, .. } => {
             Some(StoredMessage::ToolResult {
                 role_id: role_id.clone(),
                 tool_name: tool_name.clone(),
