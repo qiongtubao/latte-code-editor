@@ -16,6 +16,9 @@ pub enum Language {
     Cpp,
     Json,
     Markdown,
+    /// TCL 脚本语言（Tcl/Tk）。
+    /// 当前未配置社区级稳定 LSP（`tclserv`、`naga` 等均不通用），故仅做语法识别而不启动 LSP。
+    Tcl,
     Unknown,
 }
 
@@ -35,7 +38,7 @@ pub struct LspConfig {
 /// 根据文件路径检测语言
 pub fn detect_language(path: &Path) -> Language {
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-    
+
     match ext {
         "ts" | "tsx" => Language::TypeScript,
         "js" | "jsx" | "mjs" | "cjs" => Language::JavaScript,
@@ -46,6 +49,7 @@ pub fn detect_language(path: &Path) -> Language {
         "cpp" | "cc" | "cxx" | "h" | "hpp" => Language::Cpp,
         "json" | "jsonc" => Language::Json,
         "md" | "mdx" => Language::Markdown,
+        "tcl" => Language::Tcl,
         _ => Language::Unknown,
     }
 }
@@ -83,7 +87,8 @@ pub fn get_lsp_config(language: &Language) -> Option<LspConfig> {
             initialization_options: None,
             supports_hibernation: true,
         }),
-        Language::Json | Language::Markdown | Language::Unknown => None,
+        // JSON/Markdown/TCL 目前没有接入 LSP；保留识别但不出 LSP 进程
+        Language::Json | Language::Markdown | Language::Tcl | Language::Unknown => None,
     }
 }
 
@@ -99,6 +104,7 @@ pub fn language_display_name(language: &Language) -> &'static str {
         Language::Cpp => "C++",
         Language::Json => "JSON",
         Language::Markdown => "Markdown",
+        Language::Tcl => "TCL",
         Language::Unknown => "Unknown",
     }
 }
@@ -114,6 +120,7 @@ mod tests {
         assert_eq!(detect_language(Path::new("test.rs")), Language::Rust);
         assert_eq!(detect_language(Path::new("test.py")), Language::Python);
         assert_eq!(detect_language(Path::new("test.unknown")), Language::Unknown);
+        assert_eq!(detect_language(Path::new("script.tcl")), Language::Tcl);
     }
 
     #[test]
@@ -122,10 +129,17 @@ mod tests {
         assert!(ts_config.is_some());
         let config = ts_config.unwrap();
         assert_eq!(config.command[0], "typescript-language-server");
-        
+
         let rust_config = get_lsp_config(&Language::Rust);
         assert!(rust_config.is_some());
         let config = rust_config.unwrap();
         assert_eq!(config.command[0], "rust-analyzer");
+    }
+
+    /// 验证 tcl 显示名与无 LSP 配置
+    #[test]
+    fn test_tcl_language_metadata() {
+        assert_eq!(language_display_name(&Language::Tcl), "TCL");
+        assert!(get_lsp_config(&Language::Tcl).is_none());
     }
 }
