@@ -112,6 +112,8 @@ pub fn run() {
             crate::debug::commands::debug_purge_now,
             // ai
             crate::ai::commands::ai_review,
+            // screenshot（StatusBar 的 📷 / Ctrl+Shift+S）
+            crate::screenshot::screenshot_window,
             // doc_gen
             crate::doc_gen::commands::scan_project_for_docs,
             crate::doc_gen::commands::write_doc_stub,

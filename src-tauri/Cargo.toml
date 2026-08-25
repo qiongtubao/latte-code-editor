@@ -17,7 +17,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 glob = "0.3"
-tauri = { version = "2", features = [] }
+# image-png：clipboard 插件的 write_image 收到路径/字节时，tauri 的
+# JsImage::into_img 需要该 feature 才能解码 PNG，否则只接受裸 RGBA
+# 并直接返回 "expected RGBA image data" 错误（见 src/screenshot.rs）。
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -46,7 +49,6 @@ aho-corasick = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "fmt"] }
 tracing-appender = "0.2"
-base64 = "0.22"
 tauri-plugin-clipboard-manager = "2.3.2"
 serde_yaml = "0.9"
 dirs = "6"
