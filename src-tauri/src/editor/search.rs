@@ -199,39 +199,29 @@ pub fn replace_text(
 // Quick Open: fuzzy filename search (子序列匹配)
 // =============================================================================
 
-/// 模糊匹配得分：
-/// - query 的每个字符必须按顺序出现在 path 中（子序列约束，大小写不敏感）
-/// - 越靠前匹配 + 连续匹配 + camelCase 边界 + 文件名前缀，得分越高
-/// - 得分 <= 0 表示不匹配
+/// 在单个 haystack 内做贪心子序列匹配，返回位置/连续性/边界 bonus 之和。
+/// `None` 表示 query 不是 haystack 的子序列。
 ///
-/// 实现细节：lower-case 用于大小写不敏感匹配，**但用原 path 字符判断 camelCase 边界**，
-/// 否则 `UserLogin.ts` 压成 `userlogin.ts` 后丢失大写信息。
-pub fn fuzzy_score(query: &str, path: &str) -> i32 {
-    let q = query.to_lowercase();
-    let p = path.to_lowercase();
-    let q_bytes = q.as_bytes();
-    let p_lower = p.as_bytes();
-    let path_bytes = path.as_bytes();
-    if q_bytes.is_empty() { return 0; }
-
+/// `lower` 用于大小写不敏感比较，`orig` 用于判断 camelCase 边界
+/// （否则 `UserLogin.ts` 压成 `userlogin.ts` 后丢失大写信息）。
+/// 注意 `orig` 用 `.get()` 索引：非 ASCII 字符 lowercase 后字节长度可能变化，
+/// 两个 slice 的下标不保证对齐，直接索引会 panic。
+fn subsequence_score(q_bytes: &[u8], lower: &[u8], orig: &[u8]) -> Option<i32> {
     let mut score: i32 = 0;
-    let mut qi = 0;
+    let mut qi = 0usize;
     let mut prev_match_idx: Option<usize> = None;
-    let basename_start = p.rfind('/').map(|i| i + 1).unwrap_or(0);
-    let basename = &p[basename_start..];
 
-    for (pi, &pb) in p_lower.iter().enumerate() {
+    for (pi, &pb) in lower.iter().enumerate() {
         if qi >= q_bytes.len() { break; }
         if pb == q_bytes[qi] {
             // 连续匹配 +5
             if let Some(prev) = prev_match_idx {
                 if pi == prev + 1 { score += 5; }
             }
-            // 位置 / 边界 bonus（用原 path 大小写判断 camelCase）
+            // 位置 / 边界 bonus
             if pi == 0 {
-                score += 8; // path 起点
-            } else {
-                let prev_ch = path_bytes[pi - 1];
+                score += 8; // haystack 起点
+            } else if let Some(&prev_ch) = orig.get(pi - 1) {
                 if matches!(prev_ch, b'_' | b'-' | b'/' | b'.' | b' ') {
                     score += 3;
                 } else if prev_ch.is_ascii_uppercase() && pb.is_ascii_lowercase() {
@@ -243,18 +233,56 @@ pub fn fuzzy_score(query: &str, path: &str) -> i32 {
             qi += 1;
         }
     }
-    if qi < q_bytes.len() {
-        return 0; // query 没匹配完
+    if qi < q_bytes.len() { return None; }
+    Some(score)
+}
+
+/// 模糊匹配 query 到 path，`Some(score)` 表示匹配成功，`None` 表示不匹配。
+///
+/// **调用方不要用 `score > 0` 判断是否匹配**：低质量但合法的匹配分数可以是 0 甚至负数，
+/// 那是排序信号，不是「不匹配」。是否匹配只看 `Option`。
+///
+/// 匹配策略：优先只在 basename 内找子序列（Quick Open 的主要语义），
+/// 失败才退化到整条 path。这样祖先目录里的字符不会把 query 字符吃掉——
+/// 例如 query `hdr` 配 `/home/dave/src/header.ts`，贪心扫整条路径时
+/// `h` 会绑到 `home`、`d` 绑到 `dave`，basename 里干净的 `h..d..r` 反而永远匹配不到。
+///
+/// 长度惩罚只看 basename 长度与目录深度，**不看绝对路径长度**：
+/// 否则同一个文件换个父目录前缀分数就会变（`/tmp/.tmpAbCef/...` 与
+/// `/tmp/.tmpH9k2xd/...` 得分不同），排序结果依赖不相关的上下文。
+pub fn fuzzy_match(query: &str, path: &str) -> Option<i32> {
+    let q = query.to_lowercase();
+    if q.is_empty() { return None; }
+    let p = path.to_lowercase();
+
+    // orig / lower 各自算 basename 起点：非 ASCII 字符 lowercase 后字节数可能变，
+    // 用同一个下标切两个 slice 会切到 char 边界中间。
+    let bn_lower = p.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let bn_orig = path.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let basename_lower = &p[bn_lower..];
+    let basename_orig = &path[bn_orig..];
+
+    let len_penalty = basename_lower.len() as i32 / 10;
+    let depth_penalty = p[..bn_lower].matches('/').count() as i32;
+
+    // 1) basename 内命中
+    if let Some(mut score) = subsequence_score(
+        q.as_bytes(),
+        basename_lower.as_bytes(),
+        basename_orig.as_bytes(),
+    ) {
+        score += 30; // basename 命中优于跨目录命中
+        if basename_lower.starts_with(&q) {
+            score += 20;
+        } else if basename_lower.contains(&q) {
+            score += 10;
+        }
+        return Some(score - len_penalty - depth_penalty);
     }
-    // basename 命中前缀额外加分
-    if basename.starts_with(&q) {
-        score += 20;
-    } else if basename.contains(&q) {
-        score += 10;
-    }
-    // 越短的路径得分越高
-    score -= (p.len() as i32) / 10;
-    score
+
+    // 2) 退化：允许跨「目录 + 文件名」命中，分数明显低
+    let score = subsequence_score(q.as_bytes(), p.as_bytes(), path.as_bytes())?;
+    Some(score - len_penalty - depth_penalty)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -286,8 +314,14 @@ pub fn find_files(root: &Path, query: &str, max_results: usize, exclude_dirs: &[
         let entry = match entry { Ok(e) => e, Err(_) => continue };
         if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
         let path_str = entry.path().to_string_lossy().to_string();
-        let s = fuzzy_score(query, &path_str);
-        if s > 0 {
+        // 打分用 root 相对路径：绝对路径前缀（用户 home、tempdir 名等）与匹配质量无关，
+        // 让它参与打分会使同一份文件的得分随 root 位置漂移。
+        // 返回给前端的仍是绝对路径。
+        let rel = entry.path().strip_prefix(root).unwrap_or(entry.path());
+        let rel_str = rel.to_string_lossy();
+        // 用 Option 判断是否匹配，不能用 `score > 0`：
+        // 合法匹配经长度/深度惩罚后可能是 0 或负数，那样会被静默丢掉。
+        if let Some(s) = fuzzy_match(query, &rel_str) {
             scored.push(FileMatch { path: path_str, score: s });
         }
     }
@@ -344,48 +378,86 @@ mod tests {
         ]
     }
 
-    // ---- fuzzy_score ----
+    // ---- fuzzy_match ----
 
     #[test]
-    fn empty_query_returns_zero() {
-        assert_eq!(fuzzy_score("", "/a/foo.ts"), 0);
+    fn empty_query_does_not_match() {
+        assert_eq!(fuzzy_match("", "/a/foo.ts"), None);
     }
 
     #[test]
     fn perfect_basename_prefix_scores_high() {
-        let s = fuzzy_score("foo", "/a/foo.ts");
+        let s = fuzzy_match("foo", "/a/foo.ts").unwrap();
         assert!(s > 20, "expected >20 got {}", s);
     }
 
     #[test]
     fn subsequence_in_basename_scores_positive() {
-        let s = fuzzy_score("usap", "/a/user_apply.ts");
+        let s = fuzzy_match("usap", "/a/user_apply.ts").unwrap();
         assert!(s > 0);
     }
 
     #[test]
-    fn non_subsequence_returns_zero() {
-        assert_eq!(fuzzy_score("z", "/a/foo.ts"), 0);
+    fn non_subsequence_does_not_match() {
+        assert_eq!(fuzzy_match("z", "/a/foo.ts"), None);
     }
 
     #[test]
     fn case_insensitive_match() {
-        let s = fuzzy_score("FOO", "/a/Foo.ts");
-        assert!(s > 0);
+        assert!(fuzzy_match("FOO", "/a/Foo.ts").is_some());
     }
 
     #[test]
     fn camel_case_boundary_gives_bonus() {
-        let s_camel = fuzzy_score("o", "/a/UserLogin.ts");
-        let s_mid = fuzzy_score("o", "/a/userlogin.ts");
+        let s_camel = fuzzy_match("o", "/a/UserLogin.ts").unwrap();
+        let s_mid = fuzzy_match("o", "/a/userlogin.ts").unwrap();
         assert!(s_camel > s_mid, "camel {} should beat mid {}", s_camel, s_mid);
     }
 
     #[test]
     fn word_boundary_gives_bonus() {
-        let s_boundary = fuzzy_score("a", "user_apply.ts");
-        let s_mid = fuzzy_score("a", "userxapply.ts");
+        let s_boundary = fuzzy_match("a", "user_apply.ts").unwrap();
+        let s_mid = fuzzy_match("a", "userxapply.ts").unwrap();
         assert!(s_boundary > s_mid, "boundary {} should beat mid {}", s_boundary, s_mid);
+    }
+
+    /// 非 ASCII 路径：lowercase 后字节长度可能变化，边界判断不得越界 panic。
+    #[test]
+    fn non_ascii_path_does_not_panic() {
+        let _ = fuzzy_match("h", "/İstanbul/İİİ/header.ts");
+        let _ = fuzzy_match("i", "/İstanbul/ß/İ.ts");
+    }
+
+    // ---- 回归：Quick Open 漏结果 ----
+
+    /// 复现原 bug：只改父目录前缀，同一个文件同一个 query 得分就变
+    /// （1 / -2 / 1），负分的那个被 find_files 的 `if s > 0` 静默丢掉。
+    #[test]
+    fn score_is_independent_of_parent_dir_prefix() {
+        let a = fuzzy_match("hdr", "/tmp/.tmpAbCef/src/header.ts").unwrap();
+        let b = fuzzy_match("hdr", "/tmp/.tmpH9k2xd/src/header.ts").unwrap();
+        let c = fuzzy_match("hdr", "/tmp/.tmpxyz/src/header.ts").unwrap();
+        assert_eq!(a, b, "prefix .tmpAbCef vs .tmpH9k2xd changed score");
+        assert_eq!(b, c, "prefix .tmpH9k2xd vs .tmpxyz changed score");
+        assert!(a > 0, "basename hit should not be penalized into oblivion: {}", a);
+    }
+
+    /// 祖先目录里的字符不能把 query 字符吃掉：`h` 绑到 home、`d` 绑到 dave 之后
+    /// basename 里干净的 h..d..r 就再也匹配不到了。
+    #[test]
+    fn basename_match_not_stolen_by_ancestor_dirs() {
+        let s = fuzzy_match("hdr", "/home/dave/src/header.ts")
+            .expect("hdr should match header.ts regardless of ancestor dirs");
+        assert!(s > 0, "expected positive score, got {}", s);
+    }
+
+    /// `None`（不匹配）必须和 `Some(低分)`（匹配但排名靠后）区分开。
+    #[test]
+    fn fuzzy_match_distinguishes_no_match_from_low_score() {
+        assert_eq!(fuzzy_match("zzz", "/a/header.ts"), None);
+        assert_eq!(fuzzy_match("", "/a/header.ts"), None);
+        // 极深路径 + 弱匹配：分数可以很低，但仍然是命中
+        assert!(fuzzy_match("hdr", "/a/b/c/d/e/f/g/h/i/j/k/header.ts").is_some());
     }
 
     // ---- find_files ----

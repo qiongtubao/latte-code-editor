@@ -2601,7 +2601,6 @@ dependencies = [
  "latte-agent-core",
  "latte-ai",
  "latte-rs-agent-tools",
- "latte-rs-graph",
  "parking_lot",
  "reqwest 0.12.28",
  "serde",
