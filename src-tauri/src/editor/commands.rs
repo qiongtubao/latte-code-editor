@@ -438,6 +438,24 @@ pub struct ReplaceFileResult {
     pub count: usize,
 }
 
+/// 匹配到但写盘失败的文件。
+#[derive(serde::Serialize)]
+pub struct ReplaceFailure {
+    pub file_path: String,
+    pub error: String,
+}
+
+/// 批量替换的完整结果。
+///
+/// 必须把失败项一并回给前端：批量替换直接写盘且无撤销，若只回报成功项，
+/// 磁盘满 / 只读文件 / 权限不足时用户会以为全部替换成功，而工作区实际处于
+/// 半改状态。
+#[derive(serde::Serialize)]
+pub struct ReplaceOutcome {
+    pub replaced: Vec<ReplaceFileResult>,
+    pub failed: Vec<ReplaceFailure>,
+}
+
 #[tauri::command]
 pub async fn replace_in_files(
     query: String,
@@ -446,7 +464,7 @@ pub async fn replace_in_files(
     exclude_glob: Option<String>,
     window: Window,
     registry: State<'_, Arc<WorkspaceRegistry>>,
-) -> Result<Vec<ReplaceFileResult>, String> {
+) -> Result<ReplaceOutcome, String> {
     let ws_id = resolve_workspace_id(&window, &registry).await?;
     let project_root: PathBuf = registry
         .project_root(&ws_id)
@@ -462,7 +480,7 @@ pub async fn replace_in_files(
         ".venv".into(),
         ".latte".into(),
     ];
-    let results = tokio::task::spawn_blocking(move || {
+    let outcome = tokio::task::spawn_blocking(move || {
         super::search::replace_text(
             &project_root,
             &query,
@@ -474,13 +492,18 @@ pub async fn replace_in_files(
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?;
-    Ok(results
-        .into_iter()
-        .map(|(fp, c)| ReplaceFileResult {
-            file_path: fp,
-            count: c,
-        })
-        .collect())
+    Ok(ReplaceOutcome {
+        replaced: outcome
+            .replaced
+            .into_iter()
+            .map(|(file_path, count)| ReplaceFileResult { file_path, count })
+            .collect(),
+        failed: outcome
+            .failed
+            .into_iter()
+            .map(|(file_path, error)| ReplaceFailure { file_path, error })
+            .collect(),
+    })
 }
 
 /// 刷新文件缓存（从磁盘重新加载）

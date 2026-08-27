@@ -1,11 +1,11 @@
 import { useState, useCallback, useEffect } from "react";
 import { openFile } from "../api/commands";
 import { useEditorStore } from "../hooks/useEditorStore";
-import type { SearchMatch } from "../api/commands";
+import type { SearchMatch, ReplaceOutcome } from "../api/commands";
 
 interface Props {
   onSearch: (query: string, includeGlob?: string, excludeGlob?: string) => Promise<SearchMatch[]>;
-  onReplace?: (query: string, replacement: string, includeGlob?: string, excludeGlob?: string) => Promise<{ file_path: string; count: number }[]>;
+  onReplace?: (query: string, replacement: string, includeGlob?: string, excludeGlob?: string) => Promise<ReplaceOutcome>;
 }
 
 export function WorkspaceSearch({ onSearch, onReplace }: Props) {
@@ -21,6 +21,11 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
   const [pendingReplace, setPendingReplace] = useState<{
     files: number;
     matches: number;
+  } | null>(null);
+  /** 替换执行后的结果回报（成功 / 部分失败 / 整体失败）。 */
+  const [replaceReport, setReplaceReport] = useState<{
+    kind: "ok" | "partial" | "error";
+    text: string;
   } | null>(null);
 
   const handleSearch = useCallback(async () => {
@@ -76,14 +81,29 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
   const confirmReplaceAll = useCallback(async () => {
     if (!onReplace || !query.trim()) return;
     setPendingReplace(null);
+    setReplaceReport(null);
     setLoading(true);
     try {
       const i = includeGlob.trim() || undefined;
       const e = excludeGlob.trim() || undefined;
-      await onReplace(query, replacement, i, e);
+      const outcome = await onReplace(query, replacement, i, e);
+      const files = outcome.replaced.length;
+      const count = outcome.replaced.reduce((n, r) => n + r.count, 0);
+      setReplaceReport({
+        kind: outcome.failed.length > 0 ? "partial" : "ok",
+        text:
+          outcome.failed.length > 0
+            ? `已替换 ${files} 个文件共 ${count} 处；${outcome.failed.length} 个文件写入失败：` +
+              outcome.failed.map((f) => `${f.file_path}（${f.error}）`).join("；")
+            : `已替换 ${files} 个文件共 ${count} 处`,
+      });
       const matches = await onSearch(query, i, e);
       setResults(matches);
-    } catch { /* ignore */ } finally {
+    } catch (err) {
+      // 不能静默吞掉：替换整体失败时若无反馈，面板一关、loading 一停，
+      // 用户会以为替换成功了。
+      setReplaceReport({ kind: "error", text: `替换失败：${String(err)}` });
+    } finally {
       setLoading(false);
     }
   }, [query, replacement, includeGlob, excludeGlob, onReplace, onSearch]);
@@ -92,6 +112,7 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
   // 避免用户看着旧数字点下「确认替换」。
   useEffect(() => {
     setPendingReplace(null);
+    setReplaceReport(null);
   }, [query, replacement, includeGlob, excludeGlob]);
 
   // Group results by file
@@ -156,6 +177,22 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
                 data-testid="replace-confirm-cancel"
                 className="px-2 py-1 bg-control hover:bg-control-hover text-fg border border-edge rounded text-xs cursor-pointer">取消</button>
             </div>
+          </div>
+        )}
+
+        {/* 替换结果回报：成功计数、部分失败的文件与原因、或整体失败 */}
+        {showReplace && replaceReport && (
+          <div
+            data-testid="replace-report"
+            data-kind={replaceReport.kind}
+            className="p-2 rounded border text-[10px] leading-snug break-words"
+            style={
+              replaceReport.kind === "ok"
+                ? { background: "var(--surface-3)", borderColor: "var(--edge)", color: "var(--fg-2)" }
+                : { background: "var(--warn-bg)", borderColor: "var(--warn)", color: "var(--fg)" }
+            }
+          >
+            {replaceReport.text}
           </div>
         )}
 

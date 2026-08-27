@@ -153,11 +153,25 @@ fn file_matches(path: &Path, pattern: &Option<String>) -> bool {
 /// Replace all occurrences across all source files using ripgrep engine.
 /// 流程：流式扫描每个文件，对匹配的行用 `str::replace` 做大小写不敏感替换。
 /// 为了保留原文件大小写，使用 `eq_ignore_ascii_case` 做匹配检测。
+/// `replace_text` 的结果。
+///
+/// 成功与失败必须分开回报：此前写盘失败只是 `continue`，既不计入结果也不报错，
+/// 于是「第 5 个文件写失败」时前 4 个已被改写，用户看到的却是一份只列出成功项
+/// 的清单，无从得知工作区已处于半改状态——而批量替换没有撤销。
+#[derive(Debug, Default)]
+pub struct ReplaceOutcome {
+    /// 已成功改写：(相对 root 的路径, 替换次数)
+    pub replaced: Vec<(String, usize)>,
+    /// 匹配到但写盘失败：(相对 root 的路径, 错误信息)
+    pub failed: Vec<(String, String)>,
+}
+
 pub fn replace_text(
     root: &Path, query: &str, replacement: &str,
     exclude_dirs: &[String], include_glob: &Option<String>, exclude_glob: &Option<String>,
-) -> Vec<(String, usize)> {
-    if query.is_empty() { return Vec::new(); }
+) -> ReplaceOutcome {
+    let mut outcome = ReplaceOutcome::default();
+    if query.is_empty() { return outcome; }
     let opts = SearchOptions {
         query: query.to_string(),
         max_results: usize::MAX,
@@ -167,7 +181,6 @@ pub fn replace_text(
     };
     let q_bytes = query.to_lowercase().into_bytes();
     let q_len = q_bytes.len();
-    let mut results = Vec::new();
     let walker = build_walker(root, &opts);
     let inc = include_glob.clone();
     let exc = exclude_glob.clone();
@@ -201,12 +214,14 @@ pub fn replace_text(
         }
         new_content.push_str(&content[i..]);
         if count == 0 { continue; }
-        if std::fs::write(path, &new_content).is_ok() {
-            let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy().to_string();
-            results.push((relative, count));
+        let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy().to_string();
+        match std::fs::write(path, &new_content) {
+            Ok(()) => outcome.replaced.push((relative, count)),
+            // 不再静默跳过：记下来交给调用方回报，让用户知道哪些文件没改成
+            Err(e) => outcome.failed.push((relative, e.to_string())),
         }
     }
-    results
+    outcome
 }
 // =============================================================================
 // Quick Open: fuzzy filename search (子序列匹配)
@@ -796,8 +811,8 @@ mod tests {
             &None,
             &None,
         );
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].1, 3, "expected 3 replacements");
+        assert_eq!(r.replaced.len(), 1);
+        assert_eq!(r.replaced[0].1, 3, "expected 3 replacements");
         let after = fs::read_to_string(&p).unwrap();
         assert_eq!(after, "FOO bar FOO baz FOO\n");
     }
@@ -818,8 +833,8 @@ mod tests {
             &None,
             &None,
         );
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].1, 4, "expected 4 case-insensitive replacements");
+        assert_eq!(r.replaced.len(), 1);
+        assert_eq!(r.replaced[0].1, 4, "expected 4 case-insensitive replacements");
         let after = fs::read_to_string(&p).unwrap();
         assert_eq!(after, "BAR BAR BAR BAR\n", "original casing should be preserved around the match, but here the whole match is replaced");
     }
@@ -839,8 +854,8 @@ mod tests {
             &None,
             &None,
         );
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].1, 3);
+        assert_eq!(r.replaced.len(), 1);
+        assert_eq!(r.replaced[0].1, 3);
         let after = fs::read_to_string(&p).unwrap();
         assert_eq!(after, "xBARY xBARY xBARy\n");
     }
@@ -859,7 +874,7 @@ mod tests {
             &None,
             &None,
         );
-        assert!(r.is_empty());
+        assert!(r.replaced.is_empty());
         assert_eq!(fs::read_to_string(&p).unwrap(), original);
     }
 
@@ -879,7 +894,7 @@ mod tests {
             &None,
             &None,
         );
-        assert!(r.is_empty());
+        assert!(r.replaced.is_empty());
         assert_eq!(fs::read_to_string(&p).unwrap(), original);
     }
 
@@ -897,8 +912,8 @@ mod tests {
             &None,
             &None,
         );
-        assert_eq!(r.len(), 1);
-        assert!(r[0].0.ends_with("hit.ts"));
+        assert_eq!(r.replaced.len(), 1);
+        assert!(r.replaced[0].0.ends_with("hit.ts"));
         assert_eq!(fs::read_to_string(dir.path().join("skip.ts")).unwrap(), untouched);
     }
 
@@ -917,8 +932,8 @@ mod tests {
             &None,
             &None,
         );
-        assert_eq!(r.len(), 1, "node_modules must be skipped: {:?}", r);
-        assert!(r[0].0.ends_with("a.ts"));
+        assert_eq!(r.replaced.len(), 1, "node_modules must be skipped: {:?}", r);
+        assert!(r.replaced[0].0.ends_with("a.ts"));
         assert_eq!(
             fs::read_to_string(dir.path().join("node_modules/pkg/x.ts")).unwrap(),
             "foo\n"
@@ -956,8 +971,8 @@ mod tests {
             &None,
         );
         // 修复前：用绝对路径匹配 `src/**/*.ts`，一个都不中 → r 为空
-        assert_eq!(r.len(), 1, "include glob 应命中 src/ 下的文件，实得 {:?}", r);
-        assert!(r[0].0.ends_with("a.ts"));
+        assert_eq!(r.replaced.len(), 1, "include glob 应命中 src/ 下的文件，实得 {:?}", r);
+        assert!(r.replaced[0].0.ends_with("a.ts"));
         assert_eq!(fs::read_to_string(&inside).unwrap(), "thread\n");
         // glob 之外的文件不应被改动
         assert_eq!(fs::read_to_string(&outside).unwrap(), "needle\n");
@@ -974,8 +989,8 @@ mod tests {
             &None,
             &Some("src/**".to_string()),
         );
-        assert_eq!(r.len(), 1, "exclude glob 应排除 src/ 下的文件，实得 {:?}", r);
-        assert!(r[0].0.ends_with("other.ts"));
+        assert_eq!(r.replaced.len(), 1, "exclude glob 应排除 src/ 下的文件，实得 {:?}", r);
+        assert!(r.replaced[0].0.ends_with("other.ts"));
         assert_eq!(fs::read_to_string(&inside).unwrap(), "needle\n");
         assert_eq!(fs::read_to_string(&outside).unwrap(), "thread\n");
     }
@@ -993,7 +1008,7 @@ mod tests {
             &Some(String::new()),
             &Some(String::new()),
         );
-        assert_eq!(r.len(), 2, "空 glob 不应过滤掉任何文件，实得 {:?}", r);
+        assert_eq!(r.replaced.len(), 2, "空 glob 不应过滤掉任何文件，实得 {:?}", r);
         assert_eq!(fs::read_to_string(&inside).unwrap(), "thread\n");
         assert_eq!(fs::read_to_string(&outside).unwrap(), "thread\n");
     }
@@ -1028,9 +1043,44 @@ mod tests {
             &None,
         );
         let replaced: std::collections::BTreeSet<String> =
-            replaced_raw.iter().map(|(f, _)| f.clone()).collect();
+            replaced_raw.replaced.iter().map(|(f, _)| f.clone()).collect();
 
         assert!(!searched.is_empty(), "搜索应至少命中一个文件");
         assert_eq!(searched, replaced, "搜索与替换的作用范围必须一致");
+    }
+
+    /// 写盘失败必须被回报，而不是静默跳过。
+    /// 此前 `if fs::write(..).is_ok()` 会让失败的文件从结果里凭空消失，
+    /// 用户以为全部替换成功，实际工作区处于半改状态且无法撤销。
+    #[cfg(unix)]
+    #[test]
+    fn replace_text_reports_write_failures() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let ok_file = dir.path().join("ok.ts");
+        let ro_file = dir.path().join("readonly.ts");
+        fs::write(&ok_file, "needle\n").unwrap();
+        fs::write(&ro_file, "needle\n").unwrap();
+        // 只读：内容匹配得到，但写不进去
+        fs::set_permissions(&ro_file, fs::Permissions::from_mode(0o444)).unwrap();
+
+        let r = replace_text(
+            dir.path(),
+            "needle",
+            "thread",
+            &default_excludes(),
+            &None,
+            &None,
+        );
+
+        assert_eq!(r.replaced.len(), 1, "可写文件应替换成功，实得 {:?}", r.replaced);
+        assert!(r.replaced[0].0.ends_with("ok.ts"));
+        assert_eq!(r.failed.len(), 1, "只读文件应被回报为失败，实得 {:?}", r.failed);
+        assert!(r.failed[0].0.ends_with("readonly.ts"));
+        assert!(!r.failed[0].1.is_empty(), "失败项应带错误信息");
+
+        // 成功的改了，失败的原样
+        assert_eq!(fs::read_to_string(&ok_file).unwrap(), "thread\n");
+        assert_eq!(fs::read_to_string(&ro_file).unwrap(), "needle\n");
     }
 }

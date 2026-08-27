@@ -71,13 +71,28 @@ export interface ReplaceFileResult {
   count: number;
 }
 
+/** 匹配到但写盘失败的文件（磁盘满 / 只读 / 权限不足）。 */
+export interface ReplaceFailure {
+  file_path: string;
+  error: string;
+}
+
+/**
+ * 批量替换结果。失败项必须一并回报——替换直接写盘且无撤销，
+ * 只看成功列表会让用户误以为全部替换成功，而工作区可能已半改。
+ */
+export interface ReplaceOutcome {
+  replaced: ReplaceFileResult[];
+  failed: ReplaceFailure[];
+}
+
 export async function replaceInFiles(
   query: string,
   replacement: string,
   includeGlob?: string,
   excludeGlob?: string,
-): Promise<ReplaceFileResult[]> {
-  return invoke<ReplaceFileResult[]>("replace_in_files", {
+): Promise<ReplaceOutcome> {
+  return invoke<ReplaceOutcome>("replace_in_files", {
     query,
     replacement,
     includeGlob,

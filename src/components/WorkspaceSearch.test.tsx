@@ -26,7 +26,9 @@ const matches: SearchMatch[] = [
 ];
 
 /** 展开 replace 区、填入检索词与替换词 */
-function setup(onReplace = vi.fn().mockResolvedValue([])) {
+function setup(
+  onReplace = vi.fn().mockResolvedValue({ replaced: [], failed: [] }),
+) {
   const onSearch = vi.fn().mockResolvedValue(matches);
   render(<WorkspaceSearch onSearch={onSearch} onReplace={onReplace} />);
   fireEvent.click(screen.getByTitle("Toggle replace"));
@@ -136,5 +138,68 @@ describe("批量替换确认闸门", () => {
     await waitFor(() => expect(onSearch).toHaveBeenCalled());
     expect(screen.queryByTestId("replace-confirm")).toBeNull();
     expect(onReplace).not.toHaveBeenCalled();
+  });
+});
+
+describe("批量替换结果回报", () => {
+  /** 走完 dry-run + 确认两步 */
+  async function runReplace(onReplace: Parameters<typeof setup>[0]) {
+    setup(onReplace);
+    fireEvent.click(screen.getByTestId("replace-all"));
+    await waitFor(() => screen.getByTestId("replace-confirm"));
+    fireEvent.click(screen.getByTestId("replace-confirm-ok"));
+  }
+
+  it("全部成功时报告替换的文件数与处数", async () => {
+    await runReplace(
+      vi.fn().mockResolvedValue({
+        replaced: [
+          { file_path: "a.ts", count: 2 },
+          { file_path: "b.ts", count: 1 },
+        ],
+        failed: [],
+      }),
+    );
+    const report = await waitFor(() => screen.getByTestId("replace-report"));
+    expect(report.getAttribute("data-kind")).toBe("ok");
+    expect(report.textContent).toContain("2 个文件");
+    expect(report.textContent).toContain("3 处");
+  });
+
+  it("部分文件写入失败时列出文件与原因", async () => {
+    // 后端此前会把失败文件静默丢弃，用户以为全部成功、工作区实际半改
+    await runReplace(
+      vi.fn().mockResolvedValue({
+        replaced: [{ file_path: "ok.ts", count: 1 }],
+        failed: [{ file_path: "readonly.ts", error: "Permission denied" }],
+      }),
+    );
+    const report = await waitFor(() => screen.getByTestId("replace-report"));
+    expect(report.getAttribute("data-kind")).toBe("partial");
+    expect(report.textContent).toContain("readonly.ts");
+    expect(report.textContent).toContain("Permission denied");
+  });
+
+  it("整体失败时不再静默吞掉错误", async () => {
+    // 修复前是 catch { /* ignore */ }：面板一关、loading 一停，
+    // 用户会以为替换成功了
+    await runReplace(vi.fn().mockRejectedValue(new Error("workspace not found")));
+    const report = await waitFor(() => screen.getByTestId("replace-report"));
+    expect(report.getAttribute("data-kind")).toBe("error");
+    expect(report.textContent).toContain("workspace not found");
+  });
+
+  it("改动检索条件会清掉上一次的结果回报", async () => {
+    await runReplace(
+      vi.fn().mockResolvedValue({
+        replaced: [{ file_path: "a.ts", count: 1 }],
+        failed: [],
+      }),
+    );
+    await waitFor(() => screen.getByTestId("replace-report"));
+    fireEvent.change(screen.getByPlaceholderText("Search"), {
+      target: { value: "changed" },
+    });
+    await waitFor(() => expect(screen.queryByTestId("replace-report")).toBeNull());
   });
 });
