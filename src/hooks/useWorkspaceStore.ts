@@ -124,6 +124,18 @@ const DEFAULT_UI_STATE: UiState = {
   sidebar_panel: "explorer",
 };
 
+/**
+ * IPC 边界的数组防御。
+ *
+ * `invoke<T>()` 的返回类型只是断言，运行时不保证。若后端返回非数组
+ * （命令未注册、序列化失败、返回 null），`.length` 与 for-of 都会抛
+ * TypeError，把整个 hydrate 打进 catch —— 结果是工作区列表静默为空，
+ * 且错误信息指向 `list is not iterable` 而非真正的根因。
+ * 一律归一成空列表，让上层的「空列表」分支正常处理。
+ */
+const asWorkspaceList = (v: unknown): WorkspaceInfo[] =>
+  Array.isArray(v) ? (v as WorkspaceInfo[]) : [];
+
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   workspaces: {},
   activeWorkspaceId: null,
@@ -132,14 +144,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   hydrate: async () => {
     try {
-      let list = await invoke<WorkspaceInfo[]>("list_workspaces");
+      let list = asWorkspaceList(await invoke<WorkspaceInfo[]>("list_workspaces"));
       // init_workspaces (backend async spawn) might not have finished yet;
       // retry once if we got an empty list on first call.
       if (list.length === 0) {
         const { promise, resolve } = Promise.withResolvers<void>();
         setTimeout(resolve, 500);
         await promise;
-        list = await invoke<WorkspaceInfo[]>("list_workspaces");
+        list = asWorkspaceList(await invoke<WorkspaceInfo[]>("list_workspaces"));
       }
       const workspaces: Record<string, WorkspaceMeta> = {};
       for (const w of list) workspaces[w.id] = w.meta;

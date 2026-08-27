@@ -210,7 +210,9 @@ pub async fn chat_stream(app: AppHandle, request: StreamRequest) -> Result<Strea
     let agent = Agent::new_with_chain(role_id.clone(), role, resolved_models, latte_ai::params::GenerateParams::default())
         .map_err(|e| format!("build agent '{role_id}': {e}"))?;
     let mut runner: AgentRunner = if !allowed_tools.is_empty() {
-        AgentRunner::new_with_tools(agent, build_tool_manager(&allowed_tools)?, 0)
+        // 上游 deadline-only 重构移除了第三个参数 max_tool_rounds
+        // （纯死参数，只写不读），这里同步跟上。
+        AgentRunner::new_with_tools(agent, build_tool_manager(&allowed_tools)?)
     } else {
         AgentRunner::new(agent)
     };

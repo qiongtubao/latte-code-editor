@@ -220,8 +220,19 @@ mod tests {
     /// Sanity: the default config that ships with the binary has 6
     /// workflows. Confirms `create_default_roles` still produces them
     /// (and they'll be written to files on first load).
+    ///
+    /// 必须隔离环境：`create_default_roles` → `load_from_merged` 会先读
+    /// `LATTE_WORKFLOWS_DIR` 下的工作流文件，只有读到空集才回落到
+    /// `builtin_workflows()` 的 6 个内置项。此前本测试是全文件里唯一既没
+    /// `#[serial]` 也没 `fresh_workspace()` 的，于是读到了开发机上的真实
+    /// 用户配置，断言结果随机器而变（本机为 3，故长期失败）。
+    /// 指向空的临时目录后，测的才是它声称的「fresh install」回落路径。
     #[test]
+    #[serial]
     fn create_default_roles_has_six_workflows() {
+        let _guard = ENV_LOCK.lock();
+        let (_tmp, _roles_path, _workflows_path) = fresh_workspace("defaults");
+
         let cfg = create_default_roles();
         assert_eq!(cfg.workflows.len(), 6);
         assert!(cfg.workflows.contains_key("default"));
@@ -230,6 +241,9 @@ mod tests {
         assert!(cfg.workflows.contains_key("debug"));
         assert!(cfg.workflows.contains_key("quick_task"));
         assert!(cfg.workflows.contains_key("manager_default"));
+
+        env::remove_var("LATTE_ROLES_PATH");
+        env::remove_var("LATTE_WORKFLOWS_DIR");
     }
 #[test]
 #[serial]

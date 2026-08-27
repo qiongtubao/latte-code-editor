@@ -56,12 +56,51 @@ describe("useWorkspaceStore", () => {
     expect(s.activeWorkspaceId).toBe("ws-b");
   });
 
-  it("hydrate handles empty list", async () => {
-    invokeMock.mockResolvedValueOnce([]);
-    await useWorkspaceStore.getState().hydrate();
+  // 原用例名为 "hydrate handles empty list"，但只用 mockResolvedValueOnce
+  // 铺了一次返回值：重试那次拿到 undefined，`for...of` 抛 TypeError 被
+  // catch 兜住，而 catch 里设了 hydrated:true、activeWorkspaceId 保持 null，
+  // 两个断言恰好都成立 —— 它验的是异常路径，不是空列表路径（假绿）。
+  // 这里改成两次都返回空数组，并断言重试确实发生。
+  it("hydrate handles empty list and retries exactly once", async () => {
+    vi.useFakeTimers();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    invokeMock.mockResolvedValue([]);
+    try {
+      const pending = useWorkspaceStore.getState().hydrate();
+      // 跳过 hydrate 内部那 500ms 的真实等待（原用例每跑一次就慢 500ms）
+      await vi.runAllTimersAsync();
+      await pending;
+    } finally {
+      vi.useRealTimers();
+    }
     const s = useWorkspaceStore.getState();
     expect(s.activeWorkspaceId).toBeNull();
     expect(s.hydrated).toBe(true);
+    expect(Object.keys(s.workspaces)).toEqual([]);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    // 空列表是正常分支，不该走进错误处理
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("hydrate tolerates a non-array response without throwing", async () => {
+    vi.useFakeTimers();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // 后端命令未注册 / 序列化失败时 invoke 可能给出 undefined。
+    // 修复前这里会抛 "list is not iterable" 并被 catch 吞掉。
+    invokeMock.mockResolvedValue(undefined);
+    try {
+      const pending = useWorkspaceStore.getState().hydrate();
+      await vi.runAllTimersAsync();
+      await pending;
+    } finally {
+      vi.useRealTimers();
+    }
+    const s = useWorkspaceStore.getState();
+    expect(s.hydrated).toBe(true);
+    expect(s.activeWorkspaceId).toBeNull();
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 
   it("openFolder writes store and invokes backend", async () => {

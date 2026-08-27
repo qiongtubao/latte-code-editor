@@ -184,13 +184,84 @@ pub async fn create_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 把前端传入的路径解析成工作区内的绝对路径，并确保它没有逃出 `project_root`。
+///
+/// 校验的是**条目自身所在的位置**，而不是它指向的位置：这里 canonicalize 的是
+/// 父目录、再把最后一段文件名拼回去，而非直接 canonicalize 目标本身。原因是
+///
+/// - 项目内的符号链接指向外部 → 应当放行。删除操作作用于链接自身
+///   （`remove_file` 删链接不删目标），它确实位于工作区内。
+/// - `../../etc/passwd` 这类穿越 → 父目录 canonicalize 后落在根之外 → 拒绝。
+///
+/// 若直接 canonicalize 目标，上面两种情况会被混为一谈：既误杀了合法的项目内
+/// 链接，语义上也不对（把「链接指向哪」当成了「链接在哪」）。
+///
+/// 另外 `Path::starts_with` 是按路径分量比较而非字符串前缀，所以
+/// `/a/proj-evil` 不会被误判为位于 `/a/proj` 之内。
+fn resolve_within_workspace(project_root: &Path, raw: &str) -> Result<PathBuf, String> {
+    let raw_path = Path::new(raw);
+    // 与 open_file / save_file 保持一致：相对路径按 project_root 解析
+    let joined = if raw_path.is_relative() {
+        project_root.join(raw_path)
+    } else {
+        raw_path.to_path_buf()
+    };
+
+    let parent = joined
+        .parent()
+        .ok_or_else(|| format!("Refusing to operate on filesystem root: {}", joined.display()))?;
+    let file_name = joined
+        .file_name()
+        .ok_or_else(|| format!("Path has no final component: {}", joined.display()))?;
+
+    let real_parent = parent
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve parent of '{}': {}", joined.display(), e))?;
+    let root = project_root.canonicalize().map_err(|e| {
+        format!(
+            "Cannot resolve workspace root '{}': {}",
+            project_root.display(),
+            e
+        )
+    })?;
+
+    // 注意：workspace 根目录自身也会被这一条拦下（其父目录在根之外），
+    // 这正是期望行为——不允许把整个工作区删掉。
+    if !real_parent.starts_with(&root) {
+        return Err(format!(
+            "Refusing to operate outside the workspace: '{}' is not inside '{}'",
+            joined.display(),
+            root.display()
+        ));
+    }
+
+    Ok(real_parent.join(file_name))
+}
+
 #[tauri::command]
-pub async fn delete_entry(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
-    if p.is_dir() {
-        std::fs::remove_dir_all(p).map_err(|e| format!("Cannot delete folder: {}", e))?;
-    } else if p.exists() {
-        std::fs::remove_file(p).map_err(|e| format!("Cannot delete file: {}", e))?;
+pub async fn delete_entry(
+    path: String,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
+) -> Result<(), String> {
+    let ws_id = resolve_workspace_id(&window, &registry).await?;
+    let project_root = registry
+        .project_root(&ws_id)
+        .await
+        .ok_or_else(|| format!("Workspace not found: {}", ws_id))?;
+    let target = resolve_within_workspace(&project_root, &path)?;
+
+    // 用 symlink_metadata 而非 is_dir()：后者会跟随符号链接，导致指向目录的
+    // 链接走进 remove_dir_all 分支。链接一律按文件删除，只摘掉链接本身。
+    let meta = match std::fs::symlink_metadata(&target) {
+        Ok(m) => m,
+        // 目标不存在时保持原有的幂等语义，不报错
+        Err(_) => return Ok(()),
+    };
+    if meta.is_dir() {
+        std::fs::remove_dir_all(&target).map_err(|e| format!("Cannot delete folder: {}", e))?;
+    } else {
+        std::fs::remove_file(&target).map_err(|e| format!("Cannot delete file: {}", e))?;
     }
     Ok(())
 }
@@ -492,4 +563,142 @@ pub async fn find_files(
     .await
     .map_err(|e| format!("Task join error: {}", e))?;
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_within_workspace;
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// 建一个临时工作区，返回 (tempdir, project_root)。
+    /// tempdir 必须由调用方持有，drop 即清理。
+    fn workspace() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let root = tmp.path().join("proj");
+        fs::create_dir_all(root.join("src")).expect("create project tree");
+        fs::write(root.join("src/main.rs"), "fn main() {}").expect("write file");
+        (tmp, root)
+    }
+
+    #[test]
+    fn allows_file_directly_inside_root() {
+        let (_tmp, root) = workspace();
+        let target = root.join("src/main.rs");
+        let got = resolve_within_workspace(&root, target.to_str().unwrap())
+            .expect("file inside root must be allowed");
+        assert!(got.ends_with("src/main.rs"));
+    }
+
+    #[test]
+    fn resolves_relative_path_against_root() {
+        let (_tmp, root) = workspace();
+        // 与 open_file / save_file 一致：相对路径按 project_root 解析
+        let got = resolve_within_workspace(&root, "src/main.rs")
+            .expect("relative path inside root must be allowed");
+        assert!(got.ends_with("src/main.rs"));
+        assert!(got.is_absolute(), "结果应当是绝对路径");
+    }
+
+    #[test]
+    fn rejects_parent_traversal_escaping_root() {
+        let (tmp, root) = workspace();
+        let outside = tmp.path().join("secret.txt");
+        fs::write(&outside, "sensitive").expect("write outside file");
+
+        let err = resolve_within_workspace(&root, "../secret.txt")
+            .expect_err("../ 穿越必须被拒绝");
+        assert!(err.contains("outside the workspace"), "err was: {err}");
+        assert!(outside.exists(), "被拒绝的路径不应受影响");
+    }
+
+    #[test]
+    fn rejects_absolute_path_outside_root() {
+        let (tmp, root) = workspace();
+        let outside = tmp.path().join("secret.txt");
+        fs::write(&outside, "sensitive").expect("write outside file");
+
+        let err = resolve_within_workspace(&root, outside.to_str().unwrap())
+            .expect_err("工作区外的绝对路径必须被拒绝");
+        assert!(err.contains("outside the workspace"), "err was: {err}");
+    }
+
+    #[test]
+    fn rejects_the_workspace_root_itself() {
+        let (_tmp, root) = workspace();
+        // 根目录的父目录在根之外，因此会被同一条规则拦下——
+        // 不允许把整个工作区删掉。
+        let err = resolve_within_workspace(&root, root.to_str().unwrap())
+            .expect_err("删除工作区根目录必须被拒绝");
+        assert!(err.contains("outside the workspace"), "err was: {err}");
+    }
+
+    #[test]
+    fn rejects_sibling_dir_sharing_a_string_prefix() {
+        let (tmp, root) = workspace();
+        // `proj-evil` 与 `proj` 有相同的字符串前缀，但不在其内部。
+        // Path::starts_with 按分量比较，所以这里应当被拒绝。
+        let evil = tmp.path().join("proj-evil");
+        fs::create_dir_all(&evil).expect("create sibling dir");
+        let target = evil.join("loot.txt");
+        fs::write(&target, "x").expect("write sibling file");
+
+        let err = resolve_within_workspace(&root, target.to_str().unwrap())
+            .expect_err("同前缀的兄弟目录必须被拒绝");
+        assert!(err.contains("outside the workspace"), "err was: {err}");
+    }
+
+    #[test]
+    fn allows_nonexistent_file_when_parent_is_inside() {
+        let (_tmp, root) = workspace();
+        // 目标不存在但父目录合法：应放行，由调用方决定如何处理不存在的条目
+        // （delete_entry 对此保持幂等）。
+        let got = resolve_within_workspace(&root, "src/not_yet.rs")
+            .expect("父目录在工作区内即可放行");
+        assert!(got.ends_with("src/not_yet.rs"));
+    }
+
+    #[test]
+    fn errors_when_parent_does_not_exist() {
+        let (_tmp, root) = workspace();
+        let err = resolve_within_workspace(&root, "no/such/dir/file.rs")
+            .expect_err("父目录不存在应返回错误而非 panic");
+        assert!(err.contains("Cannot resolve parent"), "err was: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn allows_symlink_inside_root_even_if_it_points_outside() {
+        let (tmp, root) = workspace();
+        let outside = tmp.path().join("outside.txt");
+        fs::write(&outside, "sensitive").expect("write outside file");
+        let link = root.join("src/link.txt");
+        std::os::unix::fs::symlink(&outside, &link).expect("create symlink");
+
+        // 链接自身位于工作区内，删除它只会摘掉链接、不动目标，因此应放行。
+        // 若这里改成直接 canonicalize 目标，就会被误判成工作区外而拒绝。
+        let got = resolve_within_workspace(&root, link.to_str().unwrap())
+            .expect("项目内的符号链接应当放行");
+        assert!(got.ends_with("src/link.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_path_traversing_through_a_symlinked_dir_to_outside() {
+        let (tmp, root) = workspace();
+        let outside_dir = tmp.path().join("outside_dir");
+        fs::create_dir_all(&outside_dir).expect("create outside dir");
+        fs::write(outside_dir.join("loot.txt"), "sensitive").expect("write loot");
+        // 项目内放一个指向外部目录的链接，再试图穿过它访问内部文件。
+        // 此时父目录 canonicalize 后会落在工作区之外，必须拒绝。
+        std::os::unix::fs::symlink(&outside_dir, root.join("escape")).expect("create dir symlink");
+
+        let err = resolve_within_workspace(&root, "escape/loot.txt")
+            .expect_err("穿过目录链接抵达外部必须被拒绝");
+        assert!(err.contains("outside the workspace"), "err was: {err}");
+        assert!(
+            outside_dir.join("loot.txt").exists(),
+            "被拒绝的路径不应受影响"
+        );
+    }
 }

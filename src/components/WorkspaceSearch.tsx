@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { openFile } from "../api/commands";
 import { useEditorStore } from "../hooks/useEditorStore";
 import type { SearchMatch } from "../api/commands";
@@ -17,6 +17,11 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
   const [showFilters, setShowFilters] = useState(false);
   const [includeGlob, setIncludeGlob] = useState("");
   const [excludeGlob, setExcludeGlob] = useState("");
+  /** 批量替换的待确认范围；null 表示当前没有待确认的替换。 */
+  const [pendingReplace, setPendingReplace] = useState<{
+    files: number;
+    matches: number;
+  } | null>(null);
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return;
@@ -39,8 +44,38 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
       useEditorStore.getState().openFileOrSwitch(result, m.line_number);
     } catch { /* ignore */ }
   }, []);
-  const handleReplaceAll = useCallback(async () => {
+  /**
+   * 请求批量替换：先按当前条件跑一次搜索，拿到权威影响范围后交给用户确认。
+   *
+   * 刻意不复用 `results`——用户可能改了 query 却没重新搜索，那份范围已过期，
+   * 拿它去展示「将替换 N 处」会误导。批量替换写盘且无法撤销，范围必须准确。
+   */
+  const requestReplaceAll = useCallback(async () => {
     if (!onReplace || !query.trim()) return;
+    setLoading(true);
+    try {
+      const i = includeGlob.trim() || undefined;
+      const e = excludeGlob.trim() || undefined;
+      const matches = await onSearch(query, i, e);
+      setResults(matches);
+      if (matches.length === 0) {
+        setPendingReplace(null);
+        return;
+      }
+      setPendingReplace({
+        files: new Set(matches.map((m) => m.file_path)).size,
+        matches: matches.length,
+      });
+    } catch {
+      setPendingReplace(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [query, includeGlob, excludeGlob, onReplace, onSearch]);
+
+  const confirmReplaceAll = useCallback(async () => {
+    if (!onReplace || !query.trim()) return;
+    setPendingReplace(null);
     setLoading(true);
     try {
       const i = includeGlob.trim() || undefined;
@@ -51,7 +86,13 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
-  }, [query, replacement, includeGlob, excludeGlob, onReplace]);
+  }, [query, replacement, includeGlob, excludeGlob, onReplace, onSearch]);
+
+  // 任何检索条件或替换内容变动都会让已确认的范围失效，撤回待确认状态，
+  // 避免用户看着旧数字点下「确认替换」。
+  useEffect(() => {
+    setPendingReplace(null);
+  }, [query, replacement, includeGlob, excludeGlob]);
 
   // Group results by file
   const grouped = new Map<string, SearchMatch[]>();
@@ -83,8 +124,38 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
             <input type="text" value={replacement} onChange={(e) => setReplacement(e.target.value)}
               placeholder="Replace"
               className="flex-1 px-2 py-1 bg-control text-fg border border-edge rounded text-xs outline-none focus:border-accent placeholder-fg-3" />
-            <button onClick={handleReplaceAll} disabled={!query.trim() || loading}
+            <button onClick={requestReplaceAll} disabled={!query.trim() || loading}
+              data-testid="replace-all"
               className="px-2 py-1 bg-accent hover:bg-accent text-white rounded text-xs cursor-pointer disabled:opacity-50">Replace All</button>
+          </div>
+        )}
+
+        {/* 批量替换确认：写盘且不可撤销，必须先让用户看清影响范围 */}
+        {showReplace && pendingReplace && (
+          <div
+            data-testid="replace-confirm"
+            className="p-2 space-y-1.5 rounded border"
+            style={{ background: "var(--warn-bg)", borderColor: "var(--warn)" }}
+          >
+            <div className="text-fg text-[11px] leading-snug">
+              将在 <span className="font-semibold">{pendingReplace.files}</span> 个文件中替换{" "}
+              <span className="font-semibold">{pendingReplace.matches}</span> 处匹配
+            </div>
+            <div className="text-fg-2 text-[10px] font-mono break-all">
+              「{query}」→{" "}
+              {replacement ? `「${replacement}」` : "空字符串（将删除匹配内容）"}
+            </div>
+            <div className="text-[10px]" style={{ color: "var(--warn)" }}>
+              直接写入磁盘，无法撤销。
+            </div>
+            <div className="flex gap-1 pt-0.5">
+              <button onClick={confirmReplaceAll} disabled={loading}
+                data-testid="replace-confirm-ok"
+                className="px-2 py-1 bg-accent hover:bg-accent text-white rounded text-xs cursor-pointer disabled:opacity-50">确认替换</button>
+              <button onClick={() => setPendingReplace(null)}
+                data-testid="replace-confirm-cancel"
+                className="px-2 py-1 bg-control hover:bg-control-hover text-fg border border-edge rounded text-xs cursor-pointer">取消</button>
+            </div>
           </div>
         )}
 
