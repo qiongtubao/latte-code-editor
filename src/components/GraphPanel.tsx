@@ -127,7 +127,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
         const fbId = new Set(fb.map((n) => n.id));
         return { nodes: fb, edges: rawEdges.filter((e) => fbId.has(e.source) && fbId.has(e.target)) };
       }
-      if (sub.nodes.length > 0) setDisplayLabel(sub.label);
+      if (sub.nodes.length > 0) queueMicrotask(() => setDisplayLabel(sub.label));
       if (sub.centerId) queueMicrotask(() => setSelectedNode(sub.centerId!));
       return sub;
     }
@@ -135,8 +135,15 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
     if (displayMode === "focus" && focusedNodeId) {
       const focus = extractFocusSubgraph(rawNodes, rawEdges, focusedNodeId, 30);
       if (focus) {
-        setDisplayLabel(`focus: ${focus.center.name}`);
-        setFocusMeta({ total: focus.totalCallers + focus.totalCallees, callers: focus.callers.length, callees: focus.callees.length, truncated: focus.truncated });
+        // useMemo 是渲染阶段，这里直接 setState 会触发 React 的
+        // "Cannot update a component while rendering" 并多跑一轮渲染。
+        // 与上方 setSelectedNode 一致，用 queueMicrotask 推到渲染之后。
+        const label = `focus: ${focus.center.name}`;
+        const meta = { total: focus.totalCallers + focus.totalCallees, callers: focus.callers.length, callees: focus.callees.length, truncated: focus.truncated };
+        queueMicrotask(() => {
+          setDisplayLabel(label);
+          setFocusMeta(meta);
+        });
         const allNodes = [...focus.callers, focus.center, ...focus.callees];
         const ids = new Set(allNodes.map((n) => n.id));
         return { nodes: allNodes, edges: focus.edges.filter((e) => ids.has(e.source) && ids.has(e.target)) };
