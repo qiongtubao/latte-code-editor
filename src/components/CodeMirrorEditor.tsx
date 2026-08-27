@@ -111,12 +111,23 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
     useEditorStore.getState().setTargetLine(null);
   }, [targetLine]);
   // Rebuild on settings change
+  //
+  // buildEditor 闭包捕获了 filePath。此前这个 effect 是空依赖，订阅回调因此
+  // 永久持有首次渲染的那个 buildEditor：切换文件后再改字号/主题，编辑器会用
+  // **旧的 filePath** 重建，加载错误的语言扩展。
+  // 走 ref 取最新实现（与本文件 onChangeRef / onCtrlClickRef 同一套做法），
+  // 既保持订阅只注册一次，又不会读到过期闭包。
+  const buildEditorRef = useRef(buildEditor);
+  buildEditorRef.current = buildEditor;
+
   useEffect(() => {
     // Clean and rebuild when store fires
     const unsub = useSettingsStore.subscribe(() => {
       viewRef.current?.destroy();
-      containerRef.current!.innerHTML = "";
-      buildEditor();
+      viewRef.current = null;
+      // 卸载竞态下 container 可能已不存在，别用非空断言
+      if (containerRef.current) containerRef.current.innerHTML = "";
+      buildEditorRef.current();
     });
     return unsub;
   }, []);
