@@ -85,16 +85,8 @@ pub fn search_text(root: &Path, opts: &SearchOptions) -> Vec<SearchMatch> {
         let entry = match entry { Ok(e) => e, Err(_) => continue };
         if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
         let path = entry.path();
-        // 用相对路径匹配 glob（用户的 glob 是相对于 root 写的，不是绝对路径）
-        let rel = path.strip_prefix(root).unwrap_or(path);
-
-        // 应用 include / exclude glob（空 = 不限制）
-        if let Some(inc) = &include_glob {
-            if !inc.is_empty() && !glob_match(rel, inc) { continue; }
-        }
-        if let Some(exc) = &exclude_glob {
-            if !exc.is_empty() && glob_match(rel, exc) { continue; }
-        }
+        // 与 replace_text 共用同一套筛选口径（见 passes_glob_filters 注释）
+        if !passes_glob_filters(root, path, &include_glob, &exclude_glob) { continue; }
 
         // 流式搜索这个文件
         let path_str = path.to_string_lossy().to_string();
@@ -126,6 +118,30 @@ fn glob_match(path: &Path, pattern: &str) -> bool {
     glob::Pattern::new(pattern)
         .map(|p| p.matches_path(path))
         .unwrap_or(true)
+}
+
+/// 判断某个文件是否通过 include / exclude glob 过滤。
+///
+/// **必须用相对于 `root` 的路径匹配**：用户写的 glob（`src/**/*.ts`）是相对
+/// 项目根的，拿绝对路径（`/Users/me/proj/src/foo.ts`）去匹配一个都命中不了。
+///
+/// 抽成共用函数是因为 `search_text` 与 `replace_text` 各自实现过一遍，结果
+/// 后者漏了 `strip_prefix` 也漏了空串检查，导致「搜索能列出结果、替换却静默
+/// 替换 0 处」——搜索与替换的筛选口径必须由同一处代码决定。
+fn passes_glob_filters(
+    root: &Path,
+    path: &Path,
+    include_glob: &Option<String>,
+    exclude_glob: &Option<String>,
+) -> bool {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    if let Some(inc) = include_glob {
+        if !inc.is_empty() && !glob_match(rel, inc) { return false; }
+    }
+    if let Some(exc) = exclude_glob {
+        if !exc.is_empty() && glob_match(rel, exc) { return false; }
+    }
+    true
 }
 
 /// `file_matches` 别名（保留给旧测试用）
@@ -160,12 +176,9 @@ pub fn replace_text(
         let entry = match entry { Ok(e) => e, Err(_) => continue };
         if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) { continue; }
         let path = entry.path();
-        if let Some(i) = &inc {
-            if !glob_match(path, i) { continue; }
-        }
-        if let Some(e) = &exc {
-            if glob_match(path, e) { continue; }
-        }
+        // 与 search_text 共用同一套筛选口径：此前这里用绝对路径匹配 glob，
+        // 导致带 include glob 时搜索列得出结果、替换却一个文件都不处理。
+        if !passes_glob_filters(root, path, &inc, &exc) { continue; }
 
         // 读全文（替换必须，因为是逐行 replace）
         let content = match std::fs::read_to_string(path) { Ok(c) => c, Err(_) => continue };
@@ -910,5 +923,114 @@ mod tests {
             fs::read_to_string(dir.path().join("node_modules/pkg/x.ts")).unwrap(),
             "foo\n"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // search / replace 的 glob 筛选口径必须一致。
+    //
+    // 此前 replace_text 用**绝对路径**匹配 glob，而 search_text 用相对路径。
+    // 后果是带 include glob 时，搜索能列出结果、替换却静默处理 0 个文件——
+    // UI 上的确认框会承诺「将替换 N 处」，点下去什么也没发生。
+    // ---------------------------------------------------------------------
+
+    /// 在 root 下建一个 src/ 子目录结构，返回 (dir, src 内文件, root 下文件)
+    fn nested_fixture() -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        let inside = dir.path().join("src/a.ts");
+        let outside = dir.path().join("other.ts");
+        fs::write(&inside, "needle\n").unwrap();
+        fs::write(&outside, "needle\n").unwrap();
+        (dir, inside, outside)
+    }
+
+    #[test]
+    fn replace_text_honors_relative_include_glob() {
+        let (dir, inside, outside) = nested_fixture();
+        let r = replace_text(
+            dir.path(),
+            "needle",
+            "thread",
+            &default_excludes(),
+            &Some("src/**/*.ts".to_string()),
+            &None,
+        );
+        // 修复前：用绝对路径匹配 `src/**/*.ts`，一个都不中 → r 为空
+        assert_eq!(r.len(), 1, "include glob 应命中 src/ 下的文件，实得 {:?}", r);
+        assert!(r[0].0.ends_with("a.ts"));
+        assert_eq!(fs::read_to_string(&inside).unwrap(), "thread\n");
+        // glob 之外的文件不应被改动
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "needle\n");
+    }
+
+    #[test]
+    fn replace_text_honors_relative_exclude_glob() {
+        let (dir, inside, outside) = nested_fixture();
+        let r = replace_text(
+            dir.path(),
+            "needle",
+            "thread",
+            &default_excludes(),
+            &None,
+            &Some("src/**".to_string()),
+        );
+        assert_eq!(r.len(), 1, "exclude glob 应排除 src/ 下的文件，实得 {:?}", r);
+        assert!(r[0].0.ends_with("other.ts"));
+        assert_eq!(fs::read_to_string(&inside).unwrap(), "needle\n");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "thread\n");
+    }
+
+    #[test]
+    fn replace_text_treats_empty_glob_as_unrestricted() {
+        // 空串意味着「不限制」。replace_text 此前缺少 is_empty 检查，
+        // 仅靠 glob_match 内部防护兜住，这里把行为固定下来。
+        let (dir, inside, outside) = nested_fixture();
+        let r = replace_text(
+            dir.path(),
+            "needle",
+            "thread",
+            &default_excludes(),
+            &Some(String::new()),
+            &Some(String::new()),
+        );
+        assert_eq!(r.len(), 2, "空 glob 不应过滤掉任何文件，实得 {:?}", r);
+        assert_eq!(fs::read_to_string(&inside).unwrap(), "thread\n");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "thread\n");
+    }
+
+    /// 核心不变量：搜索列出的文件集合 == 替换实际处理的文件集合。
+    /// UI 的替换确认框拿 search 的结果展示影响范围，两者一旦分叉就是谎报。
+    #[test]
+    fn search_and_replace_agree_on_include_glob_scope() {
+        let (dir, _inside, _outside) = nested_fixture();
+
+        let found = search_text(
+            dir.path(),
+            &make_opts("needle", 100, Some("src/**/*.ts"), None),
+        );
+        let searched: std::collections::BTreeSet<String> = found
+            .iter()
+            .map(|m| {
+                let p = std::path::Path::new(&m.file_path);
+                p.strip_prefix(dir.path())
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+
+        let replaced_raw = replace_text(
+            dir.path(),
+            "needle",
+            "thread",
+            &default_excludes(),
+            &Some("src/**/*.ts".to_string()),
+            &None,
+        );
+        let replaced: std::collections::BTreeSet<String> =
+            replaced_raw.iter().map(|(f, _)| f.clone()).collect();
+
+        assert!(!searched.is_empty(), "搜索应至少命中一个文件");
+        assert_eq!(searched, replaced, "搜索与替换的作用范围必须一致");
     }
 }
