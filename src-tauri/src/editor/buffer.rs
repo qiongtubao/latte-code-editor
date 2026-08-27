@@ -19,6 +19,51 @@ pub struct Buffer {
 const LARGE_FILE_SIZE: u64 = 50 * 1024 * 1024;
 const LARGE_FILE_LINES: usize = 100_000;
 
+/// tmp 文件名去重计数器：同一文件的并发保存不应互相踩踏。
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 原子覆写文件：先写同目录临时文件，再 rename 顶掉目标。
+///
+/// 三个要点：
+/// - **tmp 必须与目标同目录**，rename 才落在同一文件系统上，才具备原子性；
+///   写到 /tmp 再 rename 跨设备会直接失败。
+/// - **rename 会换 inode**，因此要显式把原文件权限复制到 tmp，否则文件模式
+///   退化成新建文件的默认权限（可执行脚本会丢掉 +x）。
+/// - 任一步失败都清理 tmp，不留垃圾文件在用户仓库里。
+async fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
+    let dir = target
+        .parent()
+        .ok_or_else(|| format!("No parent directory for {}", target.display()))?;
+    let stem = target
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "buffer".to_string());
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".{}.latte-tmp-{}-{}", stem, std::process::id(), seq));
+
+    // 目标已存在时取其权限；不存在则交给系统默认。
+    let perms = tokio::fs::metadata(target)
+        .await
+        .ok()
+        .map(|m| m.permissions());
+
+    if let Err(e) = tokio::fs::write(&tmp, bytes).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(format!("Cannot write temp file: {}", e));
+    }
+    if let Some(p) = perms {
+        if let Err(e) = tokio::fs::set_permissions(&tmp, p).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(format!("Cannot preserve file permissions: {}", e));
+        }
+    }
+    if let Err(e) = tokio::fs::rename(&tmp, target).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(format!("Cannot replace file: {}", e));
+    }
+    Ok(())
+}
+
 /// Buffer 池管理器
 ///
 /// 内部所有数据用 `Arc<RwLock<...>>` 包装，因此 `BufferManager` 可以 Clone——
@@ -109,9 +154,12 @@ impl BufferManager {
             reader.content.clone()
         };
 
-        tokio::fs::write(&canonical, &content)
-            .await
-            .map_err(|e| format!("Cannot write file: {}", e))?;
+        // 原子写：绝不能直接 tokio::fs::write。它先截断再写入，进程被杀、
+        // 应用崩溃或磁盘写满时，用户的源文件会留在截断或半写状态——而这里
+        // 是 Ctrl+S 的路径，触发频率最高。项目内 persistence.rs 与
+        // settings.rs 早已用 tmp+rename 保护自身状态文件，这里对用户代码
+        // 却一直没做。
+        write_atomic(&canonical, content.as_bytes()).await?;
 
         {
             let mut writer = buf.write().await;
@@ -287,5 +335,51 @@ mod tests {
         }
         bm.save(&p).await.unwrap();
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "world");
+    }
+
+    /// 原子写不能留下临时文件在用户仓库里
+    #[tokio::test]
+    async fn save_leaves_no_temp_file_behind() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("foo.txt");
+        std::fs::write(&p, "hello").unwrap();
+        let bm = BufferManager::new();
+        let buf = bm.open(&p).await.unwrap();
+        {
+            let mut w = buf.write().await;
+            w.content = "world".to_string();
+        }
+        bm.save(&p).await.unwrap();
+
+        let leftovers: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains("latte-tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "残留临时文件: {:?}", leftovers);
+    }
+
+    /// rename 会换 inode，若不显式复制权限，可执行文件会丢掉 +x
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn save_preserves_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("script.sh");
+        std::fs::write(&p, "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let bm = BufferManager::new();
+        let buf = bm.open(&p).await.unwrap();
+        {
+            let mut w = buf.write().await;
+            w.content = "#!/bin/sh\necho bye\n".to_string();
+        }
+        bm.save(&p).await.unwrap();
+
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755, "保存后应保留 0o755，实得 {:o}", mode);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "#!/bin/sh\necho bye\n");
     }
 }
