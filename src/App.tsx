@@ -65,6 +65,11 @@ function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // 订阅后端 IncrementalHub 发出的 graph-updated:<ws_id> 事件。
+  // 此前这个 hook 被 import 了却从未调用，于是 Rust 侧的增量更新事件前端
+  // 根本没在听 —— 改文件后图谱不会自动刷新。
+  useGraphEvents();
+
   useEffect(() => {
     hydrateDebug();
   }, [hydrateDebug]);
