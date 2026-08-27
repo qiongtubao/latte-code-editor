@@ -163,25 +163,146 @@ pub async fn open_folder(
 }
 
 #[tauri::command]
-pub async fn list_directory(path: String) -> Result<Vec<FsEntry>, String> {
-    list_dir_inner(Path::new(&path))
+pub async fn list_directory(
+    path: String,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
+) -> Result<Vec<FsEntry>, String> {
+    let ws_id = resolve_workspace_id(&window, &registry).await?;
+    let project_root = registry
+        .project_root(&ws_id)
+        .await
+        .ok_or_else(|| format!("Workspace not found: {}", ws_id))?;
+    let dir = resolve_under_workspace(&project_root, &path)?;
+    list_dir_inner(&dir)
 }
 
 #[tauri::command]
-pub async fn create_file(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
+pub async fn create_file(
+    path: String,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
+) -> Result<(), String> {
+    let ws_id = resolve_workspace_id(&window, &registry).await?;
+    let project_root = registry
+        .project_root(&ws_id)
+        .await
+        .ok_or_else(|| format!("Workspace not found: {}", ws_id))?;
+    let p = resolve_under_workspace(&project_root, &path)?;
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create parent dir: {}", e))?;
     }
-    std::fs::write(p, "").map_err(|e| format!("Cannot create file: {}", e))?;
+    std::fs::write(&p, "").map_err(|e| format!("Cannot create file: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn create_folder(path: String) -> Result<(), String> {
-    std::fs::create_dir_all(&path).map_err(|e| format!("Cannot create folder: {}", e))?;
+pub async fn create_folder(
+    path: String,
+    window: Window,
+    registry: State<'_, Arc<WorkspaceRegistry>>,
+) -> Result<(), String> {
+    let ws_id = resolve_workspace_id(&window, &registry).await?;
+    let project_root = registry
+        .project_root(&ws_id)
+        .await
+        .ok_or_else(|| format!("Workspace not found: {}", ws_id))?;
+    let dir = resolve_under_workspace(&project_root, &path)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create folder: {}", e))?;
     Ok(())
+}
+
+/// 词法归一：消解 `.` 与 `..`，不触碰文件系统。
+///
+/// 归一必须在解析符号链接之前完成，否则路径不存在时 `..` 段会残留，
+/// 后续拼接就会把 `root/a/../../etc` 之类的穿越带过检查。
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// 把路径解析进工作区并校验包含性，**允许目标是工作区根、也允许目标尚不存在**。
+///
+/// 与 `resolve_within_workspace` 的分工：
+/// - 这个用于读取/创建（list_directory、create_file、create_folder、
+///   write_doc_stub）。`list_directory` 要能列根目录，`create_file` 会自行
+///   `create_dir_all(parent)`，所以既不能拒绝根、也不能要求父目录已存在。
+/// - `resolve_within_workspace` 用于删除单个条目：它拒绝根（不允许删掉整个
+///   工作区），并按父目录 canonicalize 以正确处理符号链接自身。
+///
+/// 做法是先词法归一消掉 `..`，再 canonicalize「最长的已存在祖先」并把余下
+/// 段落拼回。这样既解析了路径中间的符号链接，又不要求目标存在。
+fn resolve_under_workspace(project_root: &Path, raw: &str) -> Result<PathBuf, String> {
+    let raw_path = Path::new(raw);
+    let joined = if raw_path.is_relative() {
+        project_root.join(raw_path)
+    } else {
+        raw_path.to_path_buf()
+    };
+    let normalized = lexical_normalize(&joined);
+
+    // 找最长的已存在祖先，canonicalize 它，再拼回剩余段落
+    let mut existing = normalized.as_path();
+    let mut rest: Vec<&std::ffi::OsStr> = Vec::new();
+    while !existing.exists() {
+        match (existing.file_name(), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name);
+                existing = parent;
+            }
+            _ => return Err(format!("Cannot resolve path: {}", normalized.display())),
+        }
+    }
+    let mut resolved = existing
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve '{}': {}", existing.display(), e))?;
+    for seg in rest.iter().rev() {
+        resolved.push(seg);
+    }
+
+    let root = project_root.canonicalize().map_err(|e| {
+        format!(
+            "Cannot resolve workspace root '{}': {}",
+            project_root.display(),
+            e
+        )
+    })?;
+    // 允许等于根本身；`starts_with` 按路径分量比较，`/a/proj-evil` 不会被
+    // 误判为位于 `/a/proj` 之内。
+    if resolved != root && !resolved.starts_with(&root) {
+        return Err(format!(
+            "Refusing to operate outside the workspace: '{}' is not inside '{}'",
+            resolved.display(),
+            root.display()
+        ));
+    }
+    Ok(resolved)
+}
+
+/// 供其它模块（doc_gen 等）复用的封装：解析当前窗口的工作区，再校验
+/// `raw` 落在工作区内。让所有写盘命令共用同一套边界判定，避免各处重复实现。
+pub async fn resolve_workspace_subpath(
+    window: &Window,
+    registry: &Arc<WorkspaceRegistry>,
+    raw: &str,
+) -> Result<PathBuf, String> {
+    let ws_id = resolve_workspace_id(window, registry).await?;
+    let project_root = registry
+        .project_root(&ws_id)
+        .await
+        .ok_or_else(|| format!("Workspace not found: {}", ws_id))?;
+    resolve_under_workspace(&project_root, raw)
 }
 
 /// 把前端传入的路径解析成工作区内的绝对路径，并确保它没有逃出 `project_root`。
@@ -308,6 +429,8 @@ pub async fn open_file(
     } else {
         raw.to_path_buf()
     };
+    // project_root 此前只用于解析相对路径，绝对路径可以直接穿透到工作区外。
+    let resolved_path = resolve_under_workspace(&project_root, &resolved_path.to_string_lossy())?;
     let buffers = registry
         .with_workspace(&ws_id, |ws| ws.buffers.clone())
         .await?;
@@ -343,6 +466,8 @@ pub async fn save_file(
     } else {
         file_path.to_path_buf()
     };
+    // project_root 此前只用于解析相对路径；绝对路径可直接穿透到工作区外。
+    let resolved = resolve_under_workspace(&project_root, &resolved.to_string_lossy())?;
     let buffers = registry
         .with_workspace(&ws_id, |ws| ws.buffers.clone())
         .await?;
@@ -375,6 +500,8 @@ pub async fn get_file_content(
     } else {
         file_path.to_path_buf()
     };
+    // project_root 此前只用于解析相对路径；绝对路径可直接穿透到工作区外。
+    let resolved = resolve_under_workspace(&project_root, &resolved.to_string_lossy())?;
     let buffers = registry
         .with_workspace(&ws_id, |ws| ws.buffers.clone())
         .await?;
@@ -590,7 +717,7 @@ pub async fn find_files(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_within_workspace;
+    use super::{resolve_under_workspace, resolve_within_workspace};
     use std::fs;
     use std::path::PathBuf;
 
@@ -723,5 +850,69 @@ mod tests {
             outside_dir.join("loot.txt").exists(),
             "被拒绝的路径不应受影响"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // resolve_under_workspace：读取/创建用。与 resolve_within_workspace 的
+    // 区别是允许根自身、允许目标尚不存在。
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn under_allows_the_workspace_root_itself() {
+        let (_tmp, root) = workspace();
+        // list_directory(folderRoot) 必须能列根目录——这正是它与
+        // resolve_within_workspace（删除用，拒绝根）的关键差异
+        let got = resolve_under_workspace(&root, root.to_str().unwrap())
+            .expect("列工作区根目录必须放行");
+        assert_eq!(got, root.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn under_allows_target_whose_parent_does_not_exist_yet() {
+        let (_tmp, root) = workspace();
+        // create_file 会自行 create_dir_all(parent)，所以父目录可以还不存在
+        let got = resolve_under_workspace(&root, "brand/new/deep/file.ts")
+            .expect("尚不存在的嵌套路径应放行");
+        assert!(got.ends_with("brand/new/deep/file.ts"));
+        assert!(got.is_absolute());
+    }
+
+    #[test]
+    fn under_rejects_parent_traversal_even_when_path_does_not_exist() {
+        let (_tmp, root) = workspace();
+        // 这是 docsInputDir 被填成 ../.. 时的实际形态：路径不存在，
+        // 因此必须靠词法归一消解 ..，不能依赖 canonicalize
+        for raw in ["../escaped/x.md", "docs/../../escaped/x.md"] {
+            let err = resolve_under_workspace(&root, raw)
+                .expect_err(&format!("{raw} 必须被拒绝"));
+            assert!(err.contains("outside the workspace"), "err was: {err}");
+        }
+    }
+
+    #[test]
+    fn under_rejects_absolute_path_outside_root() {
+        let (tmp, root) = workspace();
+        let outside = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&outside).unwrap();
+        let err = resolve_under_workspace(&root, outside.to_str().unwrap())
+            .expect_err("工作区外的绝对路径必须被拒绝");
+        assert!(err.contains("outside the workspace"), "err was: {err}");
+    }
+
+    #[test]
+    fn under_rejects_sibling_dir_sharing_a_string_prefix() {
+        let (tmp, root) = workspace();
+        let evil = tmp.path().join("proj-evil");
+        std::fs::create_dir_all(&evil).unwrap();
+        let err = resolve_under_workspace(&root, evil.to_str().unwrap())
+            .expect_err("同前缀的兄弟目录必须被拒绝");
+        assert!(err.contains("outside the workspace"), "err was: {err}");
+    }
+
+    #[test]
+    fn under_allows_existing_nested_path() {
+        let (_tmp, root) = workspace();
+        let got = resolve_under_workspace(&root, "src/main.rs").expect("根内文件应放行");
+        assert!(got.ends_with("src/main.rs"));
     }
 }
