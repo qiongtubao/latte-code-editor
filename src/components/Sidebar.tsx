@@ -84,27 +84,18 @@ export function Sidebar({ folderRoot, onFileOpen }: SidebarProps) {
     return () => window.removeEventListener("open-folder", handler);
   }, [handleOpenFolder]);
 
-  // Listen for "focus-search" custom event (from App.tsx Ctrl+Shift+F)
+  // Listen for "focus-search" / "focus-explorer" custom events.
+  // 快捷键本身由 App.tsx 统一处理（Ctrl/Cmd+Shift+F / +E），因为切换面板
+  // 前需要先展开侧栏，否则面板切了也看不见。这里只负责响应。
   useEffect(() => {
-    const handler = () => setPanel("search");
-    window.addEventListener("focus-search", handler);
-    return () => window.removeEventListener("focus-search", handler);
-  }, []);
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === "f") {
-        e.preventDefault();
-        setPanel("search");
-      }
-      if (e.ctrlKey && e.shiftKey && e.key === "e") {
-        e.preventDefault();
-        setPanel("explorer");
-      }
+    const toSearch = () => setPanel("search");
+    const toExplorer = () => setPanel("explorer");
+    window.addEventListener("focus-search", toSearch);
+    window.addEventListener("focus-explorer", toExplorer);
+    return () => {
+      window.removeEventListener("focus-search", toSearch);
+      window.removeEventListener("focus-explorer", toExplorer);
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
   }, []);
 
   const handleSearch = useCallback(async (q: string, inc?: string, exc?: string) => {

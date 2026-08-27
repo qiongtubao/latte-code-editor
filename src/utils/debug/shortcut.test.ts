@@ -41,8 +41,8 @@ describe("debug mode shortcut regression", () => {
     for (const init of cases) {
       useDebugStore.getState().setOn(false);
       const ev = new KeyboardEvent("keydown", init);
-      // The handler's first branch is just `e.ctrlKey && e.key === "b"`.
-      // We mirror the D-handler's logic to make sure the toggle path runs.
+      // 修饰键匹配本身由 src/utils/keyboard.ts 的 isChord 负责，并在
+      // keyboard.test.ts 中回归覆盖。这里只验证 D 分支依赖的 store 副作用。
       const shouldToggle =
         (ev.ctrlKey || ev.metaKey) && ev.shiftKey && (ev.key === "D" || ev.key === "d");
       expect(shouldToggle).toBe(true);

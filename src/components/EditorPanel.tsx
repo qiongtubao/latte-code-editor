@@ -6,6 +6,7 @@ import { EmptyState } from "./EmptyState";
 import { DocViewer } from "./DocViewer";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { openFile, saveFile } from "../api/commands";
+import { isChord } from "../utils/keyboard";
 interface EditorPanelProps {
   onCtrlClick?: (word: string, x: number, y: number, filePath: string | null, line?: number) => void;
   onShowInGraph?: (word: string, filePath: string | null) => void;
@@ -49,33 +50,35 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // isChord 精确匹配修饰键：Ctrl+Alt+S 此前会同时命中「保存」和
+      // 「停止 LSP」两个分支（各分支是独立 if 且未排除 Alt）。
       // Ctrl/Cmd + S: 保存
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      if (isChord(e, "s")) {
         e.preventDefault();
         handleSave();
       }
       // Ctrl/Cmd + O: 打开文件
-      if ((e.ctrlKey || e.metaKey) && e.key === "o") {
+      else if (isChord(e, "o")) {
         e.preventDefault();
         handleOpenFile();
       }
       // Ctrl/Cmd + Shift + R: 刷新当前文件
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "R") {
+      else if (isChord(e, "r", { shift: true })) {
         e.preventDefault();
         useEditorStore.getState().refreshCurrentFile();
       }
       // Ctrl/Cmd + L: 手动触发当前文件 LSP
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "l") {
+      else if (isChord(e, "l")) {
         e.preventDefault();
         triggerLspForCurrentFile();
       }
       // Ctrl/Cmd + Alt + H: 休眠当前 LSP
-      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === "h") {
+      else if (isChord(e, "h", { alt: true })) {
         e.preventDefault();
         hibernateCurrentLsp();
       }
       // Ctrl/Cmd + Alt + S: 停止当前 LSP
-      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === "s") {
+      else if (isChord(e, "s", { alt: true })) {
         e.preventDefault();
         stopCurrentLsp();
       }

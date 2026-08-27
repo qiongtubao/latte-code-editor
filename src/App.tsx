@@ -26,6 +26,7 @@ import { DebugEventInjectModal } from "./components/DebugEventInjectModal";
 import { useDebugStore } from "./utils/debug/store";
 import { replayLastAction } from "./utils/debug/inject";
 import { invoke } from "./api/ipcDebug";
+import { isChord } from "./utils/keyboard";
 import * as chatBridge from "./chatBridge";
 import { applySkin, SKINS } from "./skins";
 import { useSettingsStore } from "./hooks/useSettingsStore";
@@ -154,17 +155,22 @@ function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === "b") {
+      // 所有分支用 isChord 精确匹配修饰键，因此顺序无关、互不抢占。
+      if (isChord(e, "b")) {
         e.preventDefault();
         setSidebarOpen((v) => !v);
-      } else if (e.ctrlKey && e.key === "p") {
+      } else if (isChord(e, "p")) {
         e.preventDefault();
         openQuickOpen();
-      } else if (e.ctrlKey && e.shiftKey && e.key === "f") {
+      } else if (isChord(e, "f", { shift: true })) {
         e.preventDefault();
         setSidebarOpen(true);
         window.dispatchEvent(new CustomEvent("focus-search"));
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "D" || e.key === "d")) {
+      } else if (isChord(e, "e", { shift: true })) {
+        e.preventDefault();
+        setSidebarOpen(true);
+        window.dispatchEvent(new CustomEvent("focus-explorer"));
+      } else if (isChord(e, "d", { shift: true })) {
         e.preventDefault();
         const next = !useDebugStore.getState().isOn;
         setDebugOn(next);
@@ -174,24 +180,17 @@ function App() {
           // call __latteDebug.getState().xxx without ESM scoping.
           (window as unknown as { __latteDebug?: unknown }).__latteDebug = useDebugStore;
         }
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "R" || e.key === "r")) {
+      } else if (isChord(e, "r", { shift: true })) {
         if (!useDebugStore.getState().isOn) return;
         e.preventDefault();
         const now = Date.now();
         if (now - lastRRef.current < 250) return;
         lastRRef.current = now;
         replayLastAction();
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) {
-        // Screenshot the main window to ~/Pictures/latte-screenshots/ + clipboard
-        e.preventDefault();
-        screenshotWindow()
-          .then(async (r) => {
-            const copied = await copyScreenshotToClipboard(r);
-            setToast(copied ? `Screenshot copied to clipboard! (${r.path})` : `Screenshot saved: ${r.path}`);
-          })
-          .catch((err) => setToast(`Screenshot failed: ${String(err)}`));
-      } else if ((e.ctrlKey || e.metaKey) && e.altKey && e.shiftKey && (e.key === "S" || e.key === "s")) {
-        // Debug snapshot (dumps store state to console) — moved to Ctrl+Alt+Shift+S
+      } else if (isChord(e, "s", { shift: true, alt: true })) {
+        // Debug snapshot (dumps store state to console) — Ctrl+Alt+Shift+S.
+        // 此前该分支排在 Ctrl+Shift+S 之后且没排除 Alt，被截图分支抢先
+        // 匹配，永远进不来。
         if (!useDebugStore.getState().isOn) return;
         e.preventDefault();
         const now = Date.now();
@@ -221,10 +220,16 @@ function App() {
             console.info("latte:debug-snapshot-backend", JSON.stringify(b, null, 2)),
           )
           .catch((e) => console.error("latte:debug-snapshot-backend-error", String(e)));
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "M" || e.key === "m")) {
-      } else if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === "P" || e.key === "p")) {
-        // Reserved for future
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "L" || e.key === "l")) {
+      } else if (isChord(e, "s", { shift: true })) {
+        // Screenshot the main window to ~/Pictures/latte-screenshots/ + clipboard
+        e.preventDefault();
+        screenshotWindow()
+          .then(async (r) => {
+            const copied = await copyScreenshotToClipboard(r);
+            setToast(copied ? `Screenshot copied to clipboard! (${r.path})` : `Screenshot saved: ${r.path}`);
+          })
+          .catch((err) => setToast(`Screenshot failed: ${String(err)}`));
+      } else if (isChord(e, "l", { shift: true })) {
         e.preventDefault();
         setChatOpen((v) => !v);
       }
