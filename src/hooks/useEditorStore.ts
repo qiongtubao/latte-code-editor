@@ -263,8 +263,11 @@ export const useEditorStore = create<EditorStore>((set) => {
         const result = await refreshFile(filePath);
         set((s) => {
           const ws = s.byWorkspace[wsId] ?? emptyEditor();
-          const newTabs = ws.tabs.map((t, i) =>
-            i === ws.activeIndex
+          // 按 filePath 匹配，不能按 activeIndex：await 期间用户可能切了 tab，
+          // 那时 ws.activeIndex 已指向别的文件，会把文件 A 的内容写进文件 B。
+          // 若该 tab 在等待期间被关掉，则没有任何 tab 匹配，自然成为 no-op。
+          const newTabs = ws.tabs.map((t) =>
+            t.result.path === filePath
               ? { result: { ...t.result, ...result, is_modified: false }, currentContent: result.content }
               : t
           );

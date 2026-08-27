@@ -14,6 +14,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
 }));
 
+const refreshFileMock = vi.fn();
+vi.mock("../api/fileRefresh", () => ({
+  refreshFile: (...args: unknown[]) => refreshFileMock(...args),
+  checkFileChanged: vi.fn().mockResolvedValue(false),
+}));
+
 const makeFile = (path: string, content = "hello") => ({
   path,
   content,
@@ -154,5 +160,40 @@ describe("useEditorStore", () => {
     f.is_large_file = true;
     useEditorStore.getState().openFileOrSwitch(f);
     expect(useEditorStore.getState().tabState).toBe("large-file");
+  });
+
+  it("refreshCurrentFile writes back to the file it read, not the tab that is active later", async () => {
+    // 竞态回归：此前 set 回调按 activeIndex 定位 tab，而 activeIndex 是 await
+    // 之后重新读到的新值。用户在刷新等待期间切了 tab，文件 A 的磁盘内容就会
+    // 被写进文件 B 的 tab。
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-a" });
+    const store = useEditorStore.getState();
+    store.openFileOrSwitch(makeFile("/a.rs", "A-old"));
+    store.openFileOrSwitch(makeFile("/b.rs", "B-content"));
+    // 切回 A，让 A 成为「当前文件」
+    useEditorStore.getState().switchTab(0);
+
+    // refreshFile 挂起，让我们能在等待期间切 tab
+    let release!: (v: unknown) => void;
+    refreshFileMock.mockImplementation(
+      () => new Promise((res) => { release = res; }),
+    );
+
+    const pending = useEditorStore.getState().refreshCurrentFile();
+
+    // 等待期间切到 B
+    useEditorStore.getState().switchTab(1);
+    expect(useEditorStore.getState().filePath).toBe("/b.rs"); // 确认真的切走了
+
+    // 磁盘返回的是 A 的新内容
+    release({ path: "/a.rs", content: "A-fresh", line_count: 1, byte_size: 7, is_large_file: false });
+    await pending;
+
+    const tabs = useEditorStore.getState().byWorkspace["ws-a"].tabs;
+    const tabA = tabs.find((t) => t.result.path === "/a.rs");
+    const tabB = tabs.find((t) => t.result.path === "/b.rs");
+    expect(tabA?.currentContent).toBe("A-fresh");
+    // 关键断言：B 不能被 A 的内容污染
+    expect(tabB?.currentContent).toBe("B-content");
   });
 });
