@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use lsp_types::{CompletionItem, Diagnostic, Hover, Location};
+use lsp_types::{CompletionItem, Hover, Location};
 
 use super::client::LspClient;
 use super::languages::{detect_language, get_lsp_config, Language};

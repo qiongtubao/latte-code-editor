@@ -13,16 +13,13 @@
 //! This module also provides session listing/deletion commands for the UI.
 
 use std::sync::Arc;
-use latte_agent_core::controller::{ChatController, ChatEvent, ControllerConfig};
+use latte_agent_core::controller::{ChatEvent, ControllerConfig};
 use latte_agent_core::session_store::{
     SessionStore, SessionStoreError, SessionState as SsState,
     StoredSession, StoredMessage, SessionSummary,
 };
-use latte_agent_core::session::SessionState;
-use parking_lot::Mutex as ParkingMutex;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
-use super::types::ControllerEventPayload;
 
 // Re-use the existing cache for active controller handles.
 use super::controller_adapter;

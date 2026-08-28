@@ -7,9 +7,7 @@
 
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
-use lsp_types::InitializeParams;
-use serde_json::Value;
+use tokio::sync::RwLock;
 
 use super::languages::LspConfig;
 

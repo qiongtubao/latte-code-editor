@@ -7,7 +7,7 @@
 mod tests {
     use crate::chat_panel::global_config::{
         create_default_roles, delete_workflow_file, load_roles_config, read_all_role_files,
-        read_all_workflow_files, read_role_file, read_workflow_file, roles_config_path,
+        read_all_workflow_files, read_role_file, read_workflow_file,
         workflows_dir, write_role_file, write_roles_config, write_workflow_file,
         RoleConfig, RoleDef, WorkflowDef,
     };

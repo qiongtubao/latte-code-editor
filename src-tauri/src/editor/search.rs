@@ -783,7 +783,7 @@ mod tests {
             dir.path().join("a.ts"),
             "first line\r\nneedle here\r\nlast\r\n",
         ).unwrap();
-        let r = search_text(dir.path(), &make_opts("needle", 100, None, None));
+        let _r = search_text(dir.path(), &make_opts("needle", 100, None, None));
         // ripgrep 的 UTF8 sink 保留 \r（作为文件原始内容的一部分）
         // 与旧实现不同，但不影响搜索结果
     }

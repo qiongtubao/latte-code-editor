@@ -13,5 +13,3 @@ pub mod languages;
 
 // Re-exports for convenience
 pub use manager::LspManager;
-pub use client::LspClient;
-pub use process::LspProcess;

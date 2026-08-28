@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, State, Window};
 use crate::workspace::registry::WorkspaceRegistry;
 
 use super::config_loader;
-use super::global_config::{load_global_models, load_roles_config, write_roles_config, global_models_path, roles_config_path, WorkflowDef, WorkflowKind, WorkflowStep};
+use super::global_config::{load_roles_config, write_roles_config, global_models_path, roles_config_path, WorkflowDef, WorkflowKind, WorkflowStep};
 const WORKFLOW_PRESETS: &[(&str, &[&str], &str)] = &[
     ("plan", &["pm", "architect", "programmer", "designer", "manager"], "Plan - design and architect"),
     ("code", &["programmer", "reviewer", "security", "tester"], "Code - review and refactor"),

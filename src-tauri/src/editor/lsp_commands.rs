@@ -3,10 +3,9 @@
 //! 手动触发模式：默认不启动 LSP，用户显式触发后才启动
 //! 这样可以最大化减少资源消耗，保持编辑器的轻量级特性
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::editor::lsp::languages::Language;
 use crate::editor::lsp::LspManager;
