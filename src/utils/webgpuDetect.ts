@@ -6,13 +6,28 @@
  */
 
 let cached: boolean | null = null;
+/**
+ * 进行中的探测。
+ *
+ * 只缓存结果不够：两个并发调用都会看到 `cached === null`，于是各自跑一遍
+ * `requestAdapter()`（在某些环境还会重复弹 consent prompt），并且都在 await
+ * 之后才写 `cached` —— 写入依据是 await 之前读到的过期值。
+ * 缓存 in-flight promise 让并发调用共享同一次探测，竞态随之消失。
+ */
+let inFlight: Promise<boolean> | null = null;
 
 /** requestAdapter 超时时间（毫秒），防止在某些 WebView 中 hang 导致 Canvas 2D 兜底失效 */
 const ADAPTER_TIMEOUT_MS = 2000;
 
-export async function isWebGPUAvailable(): Promise<boolean> {
-  if (cached !== null) return cached;
+export function isWebGPUAvailable(): Promise<boolean> {
+  if (cached !== null) return Promise.resolve(cached);
+  inFlight ??= probe().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
 
+async function probe(): Promise<boolean> {
   // 1. 基础检查：navigator.gpu 存在
   if (typeof navigator === "undefined" || !("gpu" in navigator)) {
     cached = false;
@@ -26,12 +41,8 @@ export async function isWebGPUAvailable(): Promise<boolean> {
       gpu.requestAdapter(),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), ADAPTER_TIMEOUT_MS)),
     ]);
-    if (!adapter) {
-      cached = false;
-      return false;
-    }
-    cached = true;
-    return true;
+    cached = !!adapter;
+    return cached;
   } catch {
     cached = false;
     return false;
@@ -43,4 +54,5 @@ export async function isWebGPUAvailable(): Promise<boolean> {
  */
 export function resetWebGPUCache(): void {
   cached = null;
+  inFlight = null;
 }

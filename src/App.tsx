@@ -247,7 +247,7 @@ function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [openQuickOpen]);
+  }, [openQuickOpen, setDebugOn]);
   return (
     <div className="flex flex-col h-screen">
       <WorkspaceTabs />

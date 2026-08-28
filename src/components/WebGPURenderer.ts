@@ -823,8 +823,12 @@ export class WebGPURenderer implements GraphRenderer {
         ctx.beginPath();
         const bx = screenX - textW / 2 - 4;
         const by = screenY + radius + 1;
-        if (typeof (ctx as any).roundRect === "function") {
-          (ctx as any).roundRect(bx, by, textW + 8, 16, 3);
+        // roundRect 在旧 WebView 里可能不存在，做能力探测而非断言 any
+        const rr = (ctx as CanvasRenderingContext2D & {
+          roundRect?: (x: number, y: number, w: number, h: number, r: number) => void;
+        }).roundRect;
+        if (typeof rr === "function") {
+          rr.call(ctx, bx, by, textW + 8, 16, 3);
         } else {
           ctx.rect(bx, by, textW + 8, 16);
         }

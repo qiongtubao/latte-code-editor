@@ -6,7 +6,6 @@ src-tauri/target/
 public/chat-ui/
 *.log
 .DS_Store
-.codegraph/
 
 .worktrees/
 .kiro/
