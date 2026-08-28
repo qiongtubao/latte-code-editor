@@ -461,7 +461,11 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
         {searchTextResults.length > 0 && (
           <div className="mt-1 max-h-24 overflow-y-auto bg-surface-3 border border-edge rounded text-xs">
             {searchTextResults.slice(0, 20).map((r, i) => (
-              <div key={i} className="px-2 py-0.5 text-fg truncate">{r.file_path}:{r.line_number} — {r.line_content}</div>
+              <div
+                key={i}
+                onClick={() => void handleSearchTextClick(r)}
+                className="px-2 py-0.5 text-fg truncate cursor-pointer hover:bg-info"
+              >{r.file_path}:{r.line_number} — {r.line_content}</div>
             ))}
           </div>
         )}
