@@ -20,6 +20,10 @@ import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
 import { useLspStore } from "./hooks/useLspStore";
+// 有意未接入口：LSP 后端目前是占位实现（命令未注册、client 全空转），
+// 把管理面板暴露出去只会让用户看到一个持续报错的面板。待 LSP 打通后
+// 与 StatusBar / SettingsPanel 同样方式挂上。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { LspManagerPanel } from "./components/LspManagerPanel";
 import { DebugBar } from "./components/DebugBar";
 import { DebugEventInjectModal } from "./components/DebugEventInjectModal";
@@ -38,6 +42,8 @@ function App() {
   const [outlineWidth, setOutlineWidth] = useState(180);
   const [editorFlex, setEditorFlex] = useState(0.5);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 与上方 LspManagerPanel 配对，同样待 LSP 打通后启用
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [lspManagerOpen, setLspManagerOpen] = useState(false);
   const [injectOpen, setInjectOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -393,6 +399,15 @@ function App() {
           </div>
         </div>
       </div>
+      {/* 状态栏：此前 import 了却从未渲染，导致它自带的设置入口
+          （onToggleSettings）连同 settingsOpen state 一起成了死代码，
+          设置界面因此完全无法打开。 */}
+      <StatusBar onToggleSettings={() => setSettingsOpen((v) => !v)} />
+      {settingsOpen && (
+        <div className="fixed inset-y-0 right-0 z-40 w-[360px] border-l border-edge shadow-lg">
+          <SettingsPanel onClose={() => setSettingsOpen(false)} />
+        </div>
+      )}
       <DebugBar
         onOpenInject={() => setInjectOpen(true)}
         onSnapshot={async () => {
