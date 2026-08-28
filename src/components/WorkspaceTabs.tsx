@@ -4,7 +4,7 @@
 // 每个 tab：workspace 名称（来自 project_root basename）+ 打开 tab 数量
 // 右键菜单：关闭、关闭其他、拆出到新窗口
 // "+" 按钮：打开文件夹对话框
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";

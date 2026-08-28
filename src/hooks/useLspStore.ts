@@ -5,7 +5,6 @@
  */
 
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
 import {
   type LspStatusInfo,
   startLsp as apiStartLsp,

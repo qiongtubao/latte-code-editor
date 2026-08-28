@@ -16,7 +16,7 @@ import { useGraphSettings } from "./useGraphSettings";
 export function useGraphEvents() {
   const unlisteners = useRef<UnlistenFn[]>([]);
   const activeId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const settings = useGraphSettings((s) => s.auto_update_enabled);
+  const autoUpdateEnabled = useGraphSettings((s) => s.auto_update_enabled);
 
   // Subscribe to graph-updated for the active workspace. When the
   // active workspace changes, we swap listeners.
@@ -26,6 +26,10 @@ export function useGraphEvents() {
     unlisteners.current = [];
 
     if (!activeId) return;
+    // 尊重「自动更新」开关：此前这个值被读取却从未使用，于是开关关掉后图谱
+    // 依然会在每次后端事件时重新加载 —— 一个完全没有作用的用户设置。
+    // 它也必须进依赖数组，否则切换开关不会重新订阅。
+    if (!autoUpdateEnabled) return;
 
     const updatedEvent = `graph-updated:${activeId}`;
     let mounted = true;
@@ -45,9 +49,7 @@ export function useGraphEvents() {
     return () => {
       mounted = false;
     };
-    // settings is read only; we re-sub when activeId changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId]);
+  }, [activeId, autoUpdateEnabled]);
 
   useEffect(() => {
     // Hydrate settings once on mount.

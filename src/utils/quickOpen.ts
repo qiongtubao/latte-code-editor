@@ -1,6 +1,6 @@
 // quick open 工具函数
 
-import { openFile, type FileResult } from "../api/commands";
+import { openFile } from "../api/commands";
 import { useEditorStore } from "../hooks/useEditorStore";
 
 /**
