@@ -109,15 +109,29 @@ impl IncrementalHub {
         project_root: PathBuf,
         path: PathBuf,
     ) {
-        let _ = self.tx.send(HubCommand::FileChanged(PendingPath {
+        // send 失败意味着 hub 线程已经不在了。此前是 `let _ =`，于是之后每一次
+        // 文件变更都被静默丢弃、图谱再不更新，而用户看不到任何提示。
+        if let Err(e) = self.tx.send(HubCommand::FileChanged(PendingPath {
             workspace_id,
             project_root,
             path,
-        }));
+        })) {
+            tracing::warn!(
+                event = "graph.hub.send_failed",
+                error = %e,
+                "incremental hub is gone; dropping file change (graph will stop updating)"
+            );
+        }
     }
 
     pub fn update_settings(&self, new_settings: AppSettings) {
-        let _ = self.tx.send(HubCommand::SettingsUpdated(new_settings));
+        if let Err(e) = self.tx.send(HubCommand::SettingsUpdated(new_settings)) {
+            tracing::warn!(
+                event = "graph.hub.send_failed",
+                error = %e,
+                "incremental hub is gone; settings update not applied"
+            );
+        }
     }
 }
 
@@ -295,7 +309,7 @@ fn flush_one(
     let engine = TreeSitterEngine::new(storage);
     let project_root_owned = project_root.to_path_buf();
     let paths_owned: Vec<PathBuf> = paths.to_vec();
-    let join = std::thread::Builder::new()
+    let join = match std::thread::Builder::new()
         .name(format!("graph-update-{}", workspace_id))
         .spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -314,7 +328,26 @@ fn flush_one(
                 ))
             }
         })
-        .expect("spawn update worker");
+    {
+        Ok(handle) => handle,
+        // 线程创建失败（例如系统线程数触顶）不该炸掉整个 hub 线程：
+        // 这里每来一批文件变更就会调用一次，panic 会让 hub 永久退出，
+        // 之后所有变更事件都被静默丢弃、图谱再不更新。下方已有处理
+        // worker panic 的 Skipped 分支，spawn 失败同样走它。
+        Err(e) => {
+            tracing::warn!(
+                event = "graph.update.spawn_failed",
+                workspace_id = %workspace_id,
+                error = %e,
+                "could not spawn graph update worker; skipping this batch"
+            );
+            return FlushOutcome::Skipped {
+                reason: SkipReason::Error {
+                    message: format!("spawn update worker: {e}"),
+                },
+            };
+        }
+    };
 
     let report = match join.join() {
         Ok(Ok(r)) => r,
