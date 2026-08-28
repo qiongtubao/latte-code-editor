@@ -1,5 +1,11 @@
 //! LSP 相关的 Tauri Command
 //!
+//! **当前整模块未接线**：这些命令都没有注册进 lib.rs 的 invoke_handler，
+//! 内部也仍是占位实现（见 lsp/client.rs 的 TODO）。因此编译器会把它们全部
+//! 报成 dead code。这里统一 allow 并说明原因，避免 20+ 条噪音把其它真实的
+//! dead-code 警告淹没；打通 LSP 时应连同这条 allow 一起去掉。
+#![allow(dead_code)]
+//!
 //! 手动触发模式：默认不启动 LSP，用户显式触发后才启动
 //! 这样可以最大化减少资源消耗，保持编辑器的轻量级特性
 

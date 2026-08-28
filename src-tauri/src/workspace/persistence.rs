@@ -54,6 +54,13 @@ impl Persistence {
     }
 
     /// 读取快照（文件不存在或解析失败返回空快照）
+    /// 状态文件路径。仅测试用 —— `cargo check`（只编译 lib）会报 dead code，
+    /// 但 `--all-targets` 下是活的；用 cfg(test) 让两者一致。
+    #[cfg(test)]
+    pub fn state_path(&self) -> &PathBuf {
+        &self.state_path
+    }
+
     pub async fn load(&self) -> RegistrySnapshot {
         match fs::read(&self.state_path).await {
             Ok(bytes) => match serde_json::from_slice::<RegistrySnapshot>(&bytes) {
@@ -68,11 +75,6 @@ impl Persistence {
             },
             Err(_) => RegistrySnapshot::default(),
         }
-    }
-
-    /// 状态文件路径（调试用）
-    pub fn state_path(&self) -> &PathBuf {
-        &self.state_path
     }
 }
 

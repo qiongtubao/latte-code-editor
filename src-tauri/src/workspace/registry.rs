@@ -379,15 +379,6 @@ impl WorkspaceRegistry {
     }
 }
 
-pub type SharedRegistry = Arc<WorkspaceRegistry>;
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 pub fn derive_workspace_id(project_root: &Path) -> WorkspaceId {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};

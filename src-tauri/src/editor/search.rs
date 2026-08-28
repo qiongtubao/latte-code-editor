@@ -113,6 +113,15 @@ pub fn search_text(root: &Path, opts: &SearchOptions) -> Vec<SearchMatch> {
     results
 }
 /// 检查路径是否匹配 glob
+/// `file_matches` 别名。仅测试用 —— 因此 `cargo check`（只编译 lib）会把它
+/// 报成 dead code，但 `cargo check --all-targets` 下是活的。加 cfg(test) 让
+/// 两者一致，别再被那条误导性的警告骗去删除。
+#[cfg(test)]
+#[inline]
+fn file_matches(path: &Path, pattern: &Option<String>) -> bool {
+    glob_match(path, pattern.as_deref().unwrap_or(""))
+}
+
 fn glob_match(path: &Path, pattern: &str) -> bool {
     if pattern.is_empty() { return true; } // 空 pattern 表示不限制
     glob::Pattern::new(pattern)
@@ -142,12 +151,6 @@ fn passes_glob_filters(
         if !exc.is_empty() && glob_match(rel, exc) { return false; }
     }
     true
-}
-
-/// `file_matches` 别名（保留给旧测试用）
-#[inline]
-fn file_matches(path: &Path, pattern: &Option<String>) -> bool {
-    glob_match(path, pattern.as_deref().unwrap_or(""))
 }
 
 /// Replace all occurrences across all source files using ripgrep engine.
@@ -358,17 +361,6 @@ pub fn find_files(root: &Path, query: &str, max_results: usize, exclude_dirs: &[
     scored.truncate(max_results);
     scored
 }
-
-const TEXT_EXTENSIONS: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs",
-    "py", "rb", "go", "java", "kt", "swift",
-    "c", "h", "cpp", "hpp", "cc", "hh", "cxx", "hxx",
-    "css", "scss", "less", "html", "vue", "svelte",
-    "json", "yaml", "yml", "toml", "xml", "md",
-    "sh", "bash", "zsh", "fish",
-    "sql", "graphql", "proto",
-    "txt", "cfg", "conf", "ini",
-];
 
 #[cfg(test)]
 mod tests {

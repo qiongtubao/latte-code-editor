@@ -1,6 +1,5 @@
 mod editor;
 mod graph;
-mod project;
 mod settings;
 mod settings_commands;
 mod workspace;
