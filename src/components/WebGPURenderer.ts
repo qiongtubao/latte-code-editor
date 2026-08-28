@@ -274,7 +274,7 @@ export class WebGPURenderer implements GraphRenderer {
       if (!adapter) throw new Error("No WebGPU adapter available");
 
       const device = await adapter.requestDevice();
-      device.lost.then((info) => {
+      void device.lost.then((info) => {
         console.error("[WebGPU] device lost:", info.message);
         this.res = null;
       });

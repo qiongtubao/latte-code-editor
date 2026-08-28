@@ -95,7 +95,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
         if (!cancelled) setLoading(false);
       }
     }
-    load();
+    void load();
     return () => { cancelled = true; };
   }, [loadVersion, setGraphData, setLoading, setError]);
   // Listen for "Show in Graph" events from the editor
@@ -529,7 +529,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
                           onClick={() => {
                             setDocSearchQuery(n.id.split("/").pop() ?? n.id);
                             if (node.path) {
-                              openFile(node.path).then((f) => useEditorStore.getState().openFileOrSwitch(f));
+                              openFile(node.path).then((f) => useEditorStore.getState().openFileOrSwitch(f)).catch((e) => console.error("[GP] open doc node failed:", node.path, e));
                             }
                           }}
                           className="px-3 py-1.5 text-xs cursor-pointer hover:bg-info text-fg border-b border-edge last:border-0 flex items-center gap-2">
@@ -548,7 +548,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
               onNodeClick={(id) => {
                 const node = docSimRender.nodes.find((n) => n.id === id);
                 if (node && (node as unknown as { path?: string }).path) {
-                  openFile((node as unknown as { path: string }).path).then((f) => useEditorStore.getState().openFileOrSwitch(f));
+                  openFile((node as unknown as { path: string }).path).then((f) => useEditorStore.getState().openFileOrSwitch(f)).catch((e) => console.error("[GP] open doc node failed:", e));
                 }
               }}
               onNodeHover={() => {}} />
@@ -647,7 +647,7 @@ function DocGraphView({
   }, [folderRoot, docsInputDir, onDocSim]);
 
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   if (!folderRoot) {
     return (
@@ -669,21 +669,37 @@ function DocGraphView({
           <button
             onClick={async () => {
               if (!folderRoot) return;
-              import("../api/docGen").then(({ scanProjectForDocs, writeDocStub }) => {
-                scanProjectForDocs(folderRoot).then((result) => {
-                  const names = result.suggested_docs.slice(0, 40).map(d => d.title).join(", ");
-                  const ok = window.confirm(
-                    `Found ${result.suggested_docs.length} doc suggestions.\n\n` +
-                    `Top: ${names}\n\n` +
-                    `Generate all to ${docsInputDir}?`
+              try {
+                const { scanProjectForDocs, writeDocStub } = await import("../api/docGen");
+                const result = await scanProjectForDocs(folderRoot);
+                const names = result.suggested_docs.slice(0, 40).map(d => d.title).join(", ");
+                const ok = window.confirm(
+                  `Found ${result.suggested_docs.length} doc suggestions.\n\n` +
+                  `Top: ${names}\n\n` +
+                  `Generate all to ${docsInputDir}?`
+                );
+                if (!ok) return;
+                // 逐个写入并统计失败。此前是 .catch(() => "")，把写盘失败
+                // 静默丢掉：用户点了「生成全部」，部分失败也毫无感知。
+                const settled = await Promise.all(
+                  result.suggested_docs.map((s) =>
+                    writeDocStub(`${folderRoot}/${docsInputDir}`, s, result.suggested_docs)
+                      .then(() => null)
+                      .catch((e) => `${s.rel_path}: ${String(e)}`),
+                  ),
+                );
+                const failures = settled.filter((f): f is string => f !== null);
+                if (failures.length > 0) {
+                  setError(
+                    `${failures.length}/${result.suggested_docs.length} 个文档写入失败：` +
+                    failures.slice(0, 5).join("；") +
+                    (failures.length > 5 ? ` …另有 ${failures.length - 5} 个` : ""),
                   );
-                  if (ok) {
-                    Promise.all(result.suggested_docs.map((s) =>
-                      writeDocStub(`${folderRoot}/${docsInputDir}`, s, result.suggested_docs).catch(() => "")
-                    )).then(() => refresh());
-                  }
-                }).catch((e) => setError(String(e)));
-              });
+                }
+                void refresh();
+              } catch (e) {
+                setError(String(e));
+              }
             }}
             className="px-2 py-0.5 bg-accent hover:bg-accent text-white rounded text-[10px]"
           >🔍 Scan</button>

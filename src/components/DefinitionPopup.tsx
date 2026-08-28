@@ -31,7 +31,7 @@ export function DefinitionPopup({ word, callerFile, position, onClose }: Definit
         if (!cancelled) setLoading(false);
       }
     }
-    search();
+    void search();
     return () => { cancelled = true; };
   }, [word, callerFile]);
 

@@ -128,7 +128,8 @@ function mutate(
 function persistTabs(state: WorkspaceEditor) {
   const wsId = useWorkspaceStore.getState().activeWorkspaceId;
   if (!wsId) return;
-  useWorkspaceStore.getState().updateMeta(wsId, {
+  // updateMeta 内部已 try/catch；持久化失败不应阻塞编辑器状态更新
+  void useWorkspaceStore.getState().updateMeta(wsId, {
     open_tabs: state.tabs.map((t) => t.result.path),
     active_tab: state.tabs[state.activeIndex]?.result.path ?? null,
   });

@@ -44,6 +44,9 @@ export function useGraphEvents() {
       },
     ).then((u) => {
       if (mounted) unlisteners.current.push(u);
+    // 订阅失败必须可见：静默失败会让图谱自动刷新整体失效且毫无提示
+    }).catch((e) => {
+      console.error("[useGraphEvents] failed to subscribe to", updatedEvent, e);
     });
 
     return () => {

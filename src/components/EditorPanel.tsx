@@ -23,18 +23,18 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
     setMarkdownMode,
   } = useEditorStore();
   const handleOpenFile = useCallback(async () => {
-    const selected = await dialogOpen({
-      multiple: false,
-      filters: [{ name: "All Files", extensions: ["*"] }],
-    });
-
-    if (typeof selected === "string") {
-      try {
-        const result = await openFile(selected);
-        openFileOrSwitch(result);
-      } catch (e) {
-        console.error("Failed to open file:", e);
-      }
+    // dialogOpen 此前在 try 之外：对话框自身失败（插件不可用/被取消以外的
+    // 错误）会产生未处理的 Promise 拒绝。
+    try {
+      const selected = await dialogOpen({
+        multiple: false,
+        filters: [{ name: "All Files", extensions: ["*"] }],
+      });
+      if (typeof selected !== "string") return;
+      const result = await openFile(selected);
+      openFileOrSwitch(result);
+    } catch (e) {
+      console.error("Failed to open file:", e);
     }
   }, [openFileOrSwitch]);
 
@@ -93,7 +93,7 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
       // Ctrl/Cmd + O: 打开文件
       else if (isChord(e, "o")) {
         e.preventDefault();
-        handleOpenFile();
+        void handleOpenFile();
       }
       // Ctrl/Cmd + Shift + R: 刷新当前文件
       else if (isChord(e, "r", { shift: true })) {

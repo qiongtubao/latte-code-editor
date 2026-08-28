@@ -49,7 +49,7 @@ export function DocPanel({ onDocOpen, folderRoot }: Props) {
     }
   }, [folderRoot]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   return (
     <div className="flex-1 overflow-y-auto text-xs">

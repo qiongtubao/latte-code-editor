@@ -35,7 +35,8 @@ export function Sidebar({ folderRoot, onFileOpen }: SidebarProps) {
       return;
     }
     let cancelled = false;
-    (async () => {
+    // 内部已 try/catch，void 标明故意不等待
+    void (async () => {
       try {
         const entries = await listDirectory(folderRoot);
         if (!cancelled) setRootEntries(entries);
