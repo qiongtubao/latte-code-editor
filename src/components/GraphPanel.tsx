@@ -105,6 +105,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
       setFocusedNodeId(nodeId);
       setDisplayMode("focus");
       setSearchResults([]);
+      useGraphStore.getState().setHighlightedNodes(new Set());
       setSearchQuery("");
     };
     window.addEventListener("graph-show-node", handler);
@@ -300,6 +301,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   // focus 分支再画图。
   const handleSearchSelect = useCallback(async (node: GraphNode) => {
     setSearchResults([]);
+    setHighlightedNodes(new Set());
     setSearchQuery(node.name);
     // 先切 focus：filteredData 会立即重算成 center + direct callers + direct callees
     setDisplayMode("focus");
@@ -312,7 +314,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
     } catch (e) {
       console.error("[GP] searchSelect openFile failed:", e, "path:", node.file_path);
     }
-  }, [setDisplayMode, setFocusedNodeId, setSelectedNode, openFileOrSwitch]);
+  }, [setDisplayMode, setFocusedNodeId, setSelectedNode, openFileOrSwitch, setHighlightedNodes]);
   const handleSearch = useCallback(async () => {
     const q = searchQuery.trim();
     if (!q) return;
@@ -320,6 +322,8 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
       if (searchTab === "text") {
         setSearchTextResults(await searchInFiles(q));
         setSearchResults([]);
+        // 文本搜索命中的是文件行，不是图谱节点，清掉上一次的节点高亮
+        setHighlightedNodes(new Set());
         return;
       }
       const resp = await graphSearch(q);
@@ -331,9 +335,22 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
         results = resp.nodes.filter((n) => n.kind !== "file");
       }
       setSearchTextResults([]);
-      if (results.length === 1) { handleSearchSelect(results[0]); } else { setSearchResults(results); }
-    } catch { setSearchResults([]); }
-  }, [searchQuery, searchTab, handleSearchSelect]);
+      if (results.length === 1) {
+        // 单个结果直接跳过去，不需要在图上高亮一堆
+        setHighlightedNodes(new Set());
+        handleSearchSelect(results[0]);
+      } else {
+        setSearchResults(results);
+        // 把命中节点交给画布高亮。此前 setHighlightedNodes 从未被调用，
+        // highlightedNodeIds 恒为空集，Canvas2DRenderer 里的 isHighlight
+        // 分支永远走不到 —— 消费端一直是通的，缺的是触发端。
+        setHighlightedNodes(new Set(results.map((n) => n.id)));
+      }
+    } catch {
+      setSearchResults([]);
+      setHighlightedNodes(new Set());
+    }
+  }, [searchQuery, searchTab, handleSearchSelect, setHighlightedNodes]);
 
   const handleSearchTextClick = useCallback(async (m: SearchMatch) => {
     setSearchTextResults([]); setSearchQuery(m.file_path.split("/").pop() ?? "");
