@@ -83,9 +83,15 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
     viewRef.current = view;
   };
 
+  // buildEditor 每次渲染重建且闭包捕获 filePath。两个用到它的 effect 都经
+  // 这个 ref 取最新实现：订阅那个只注册一次（不能进依赖），初始构建那个只想
+  // 在 filePath 变化时重建（不想因 buildEditor 每次变化而重建）。
+  const buildEditorRef = useRef(buildEditor);
+  buildEditorRef.current = buildEditor;
+
   // Initial build + rebuild on file change
   useEffect(() => {
-    buildEditor();
+    buildEditorRef.current();
     return () => { viewRef.current?.destroy(); viewRef.current = null; };
   }, [filePath]);
 
@@ -112,14 +118,9 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
   }, [targetLine]);
   // Rebuild on settings change
   //
-  // buildEditor 闭包捕获了 filePath。此前这个 effect 是空依赖，订阅回调因此
-  // 永久持有首次渲染的那个 buildEditor：切换文件后再改字号/主题，编辑器会用
-  // **旧的 filePath** 重建，加载错误的语言扩展。
-  // 走 ref 取最新实现（与本文件 onChangeRef / onCtrlClickRef 同一套做法），
-  // 既保持订阅只注册一次，又不会读到过期闭包。
-  const buildEditorRef = useRef(buildEditor);
-  buildEditorRef.current = buildEditor;
-
+  // 此前这个 effect 是空依赖，订阅回调因此永久持有首次渲染的 buildEditor：
+  // 切换文件后再改字号/主题，编辑器会用**旧的 filePath** 重建，加载错误的
+  // 语言扩展。经上方 buildEditorRef 取最新实现即可，订阅仍只注册一次。
   useEffect(() => {
     // Clean and rebuild when store fires
     const unsub = useSettingsStore.subscribe(() => {

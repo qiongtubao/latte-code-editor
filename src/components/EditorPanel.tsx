@@ -48,6 +48,39 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
     }
   }, [filePath, currentContent]);
 
+  // LSP 手动触发函数。
+  //
+  // 必须定义在下方 keydown effect **之前**：该 effect 的依赖数组要列出这三个
+  // 回调，而依赖数组在渲染期求值——若定义在后面，渲染时它们尚未初始化，会直接
+  // 抛 ReferenceError（TDZ）。此前 effect 漏列这三项，靠 handleSave 随
+  // currentContent 频繁变化而间接重订阅，属侥幸生效。
+  const triggerLspForCurrentFile = useCallback(async () => {
+    if (!filePath) return;
+    const { detectFileLanguage, useLspStore } = await import("../hooks/useLspStore");
+    const lang = detectFileLanguage(filePath);
+    if (!lang) {
+      console.log("[LSP] No language detected for file:", filePath);
+      return;
+    }
+    await useLspStore.getState().startLsp(lang);
+  }, [filePath]);
+
+  const hibernateCurrentLsp = useCallback(async () => {
+    if (!filePath) return;
+    const { detectFileLanguage, useLspStore } = await import("../hooks/useLspStore");
+    const lang = detectFileLanguage(filePath);
+    if (!lang) return;
+    await useLspStore.getState().hibernateLsp(lang);
+  }, [filePath]);
+
+  const stopCurrentLsp = useCallback(async () => {
+    if (!filePath) return;
+    const { detectFileLanguage, useLspStore } = await import("../hooks/useLspStore");
+    const lang = detectFileLanguage(filePath);
+    if (!lang) return;
+    await useLspStore.getState().stopLsp(lang);
+  }, [filePath]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // isChord 精确匹配修饰键：Ctrl+Alt+S 此前会同时命中「保存」和
@@ -85,35 +118,7 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleSave, handleOpenFile]);
-
-  // LSP 手动触发函数
-  const triggerLspForCurrentFile = useCallback(async () => {
-    if (!filePath) return;
-    const { detectFileLanguage, useLspStore } = await import("../hooks/useLspStore");
-    const lang = detectFileLanguage(filePath);
-    if (!lang) {
-      console.log("[LSP] No language detected for file:", filePath);
-      return;
-    }
-    await useLspStore.getState().startLsp(lang);
-  }, [filePath]);
-
-  const hibernateCurrentLsp = useCallback(async () => {
-    if (!filePath) return;
-    const { detectFileLanguage, useLspStore } = await import("../hooks/useLspStore");
-    const lang = detectFileLanguage(filePath);
-    if (!lang) return;
-    await useLspStore.getState().hibernateLsp(lang);
-  }, [filePath]);
-
-  const stopCurrentLsp = useCallback(async () => {
-    if (!filePath) return;
-    const { detectFileLanguage, useLspStore } = await import("../hooks/useLspStore");
-    const lang = detectFileLanguage(filePath);
-    if (!lang) return;
-    await useLspStore.getState().stopLsp(lang);
-  }, [filePath]);
+  }, [handleSave, handleOpenFile, triggerLspForCurrentFile, hibernateCurrentLsp, stopCurrentLsp]);
 
   const handleChange = useCallback(
     (content: string) => {
