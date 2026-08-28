@@ -109,12 +109,16 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
         flashLineEffect.of(lineObj.from),
       ],
     });
-    // 高亮动画播完即清除（装饰随文档变更自动 map，不会残留错位）
-    setTimeout(() => {
+    // 高亮动画播完即清除（装饰随文档变更自动 map，不会残留错位）。
+    // 必须在 cleanup 里 clearTimeout：1.6s 内连续跳转多次时，早先的定时器
+    // 到点会把**当次**的高亮提前清掉；组件在这段时间内卸载则是纯泄漏
+    // （viewRef.current?. 兜住了空引用，所以不会崩）。
+    const flashTimer = window.setTimeout(() => {
       viewRef.current?.dispatch({ effects: clearFlashEffect.of(null) });
     }, FLASH_MS);
     // 用完清掉，避免下次 effect 重触发
     useEditorStore.getState().setTargetLine(null);
+    return () => window.clearTimeout(flashTimer);
   }, [targetLine]);
   // Rebuild on settings change
   //
