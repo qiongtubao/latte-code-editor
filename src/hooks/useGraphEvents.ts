@@ -53,6 +53,6 @@ export function useGraphEvents() {
 
   useEffect(() => {
     // Hydrate settings once on mount.
-    useGraphSettings.getState().hydrate();
+    void useGraphSettings.getState().hydrate();
   }, []);
 }

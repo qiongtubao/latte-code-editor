@@ -97,9 +97,9 @@ export function QuickOpenModal() {
               : `:${parsed.line}`
             : "";
         if (results.length > 0) {
-          handleSelect(results[selectedIndex].path + suffix);
+          void handleSelect(results[selectedIndex].path + suffix);
         } else if (query.trim()) {
-          handleSelect(query.trim());
+          void handleSelect(query.trim());
         }
       }
     },

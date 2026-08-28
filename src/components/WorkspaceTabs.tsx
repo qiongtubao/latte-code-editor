@@ -46,7 +46,7 @@ export function WorkspaceTabs() {
     {
       label: "Close",
       onClick: () => {
-        closeWorkspace(wsId);
+        void closeWorkspace(wsId);
       },
     },
     {

@@ -180,7 +180,7 @@ export const useLspStore = create<LspStore>((set, get) => ({
 
     const interval = get().settings.memoryMonitorInterval;
     const newTimer = window.setInterval(() => {
-      get().refreshStatus();
+      void get().refreshStatus();
     }, interval);
     set({ monitorTimer: newTimer });
   },

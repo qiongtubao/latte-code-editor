@@ -338,7 +338,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
       if (results.length === 1) {
         // 单个结果直接跳过去，不需要在图上高亮一堆
         setHighlightedNodes(new Set());
-        handleSearchSelect(results[0]);
+        void handleSearchSelect(results[0]);
       } else {
         setSearchResults(results);
         // 把命中节点交给画布高亮。此前 setHighlightedNodes 从未被调用，
@@ -371,7 +371,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   }, [contextMenu, filteredData, openFileOrSwitch]);
   const handleContextExpand = useCallback(() => {
     if (!contextMenu) return; setContextMenu(null);
-    handleSearchSelect({ id: contextMenu.nodeId, name: "", kind: "", file_path: "", start_line: 0, qualified_name: "", language: "", end_line: 0, signature: null } as GraphNode);
+    void handleSearchSelect({ id: contextMenu.nodeId, name: "", kind: "", file_path: "", start_line: 0, qualified_name: "", language: "", end_line: 0, signature: null } as GraphNode);
   }, [contextMenu, handleSearchSelect]);
 
   const handleContextCopyName = useCallback(() => {
@@ -450,7 +450,7 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
             {(["symbols", "files", "text"] as const).map((tab) => (
               <button key={tab} onClick={() => { setSearchTab(tab); setSearchResults([]); setSearchTextResults([]); }} className={`px-2 py-0.5 rounded text-[10px] cursor-pointer ${searchTab === tab ? "bg-accent text-white" : "bg-control text-fg-2"}`}>{tab}</button>
             ))}
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
+            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(); }}
               placeholder={`Search ${searchTab}...`}
               className="flex-1 px-2 py-0.5 bg-control text-fg border border-edge rounded text-xs outline-none focus:border-accent" />
             {(searchResults.length > 0 || searchTextResults.length > 0) && (

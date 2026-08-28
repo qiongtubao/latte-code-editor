@@ -128,7 +128,7 @@ export function WorkspaceSearch({ onSearch, onReplace }: Props) {
       <div className="px-2 pt-2 pb-1 space-y-1">
         <div className="relative">
           <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
+            onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(); }}
             placeholder="Search"
             className="w-full px-2 py-1 pr-14 bg-control text-fg border border-edge rounded text-xs outline-none focus:border-accent placeholder-fg-3" />
           <div className="absolute right-1 top-1/2 -translate-y-1/2 flex gap-0.5">

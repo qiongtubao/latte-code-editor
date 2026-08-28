@@ -21,7 +21,7 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
   const [autoStart, setAutoStart] = useState(false);
 
   useEffect(() => {
-    refreshStatus();
+    void refreshStatus();
   }, [refreshStatus]);
 
   const getStateColor = (state: string) => {

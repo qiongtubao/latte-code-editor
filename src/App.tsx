@@ -81,7 +81,7 @@ function App() {
   }, [hydrateDebug]);
 
   useEffect(() => {
-    hydrate();
+    void hydrate();
   }, [hydrate]);
 
   // 皮肤应用：挂载时按 persist 恢复的皮肤执行一次，之后跟随设置变化。

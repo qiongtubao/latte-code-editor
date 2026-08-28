@@ -24,7 +24,7 @@ export function LspStatusBar() {
 
   // 启动时刷新一次状态
   useEffect(() => {
-    refreshStatus();
+    void refreshStatus();
   }, [refreshStatus]);
 
   // 计算总内存
@@ -47,13 +47,13 @@ export function LspStatusBar() {
 
     if (!currentLsp || currentLsp.state === "stopped") {
       // 启动 LSP
-      startLsp(currentLang);
+      void startLsp(currentLang);
     } else if (currentLsp.state === "running") {
       // 打开菜单
       setShowMenu(!showMenu);
     } else if (currentLsp.state === "hibernated") {
       // 唤醒
-      hibernateLsp(currentLang).then(() => wake(currentLang));
+      void hibernateLsp(currentLang).then(() => wake(currentLang));
     }
   };
 
@@ -102,7 +102,7 @@ export function LspStatusBar() {
             <>
               <button
                 onClick={() => {
-                  hibernateLsp(currentLang!);
+                  void hibernateLsp(currentLang!);
                   setShowMenu(false);
                 }}
                 className="block w-full text-left px-3 py-1.5 hover:bg-control"
@@ -111,7 +111,7 @@ export function LspStatusBar() {
               </button>
               <button
                 onClick={() => {
-                  stopLsp(currentLang!);
+                  void stopLsp(currentLang!);
                   setShowMenu(false);
                 }}
                 className="block w-full text-left px-3 py-1.5 hover:bg-control"
@@ -123,7 +123,7 @@ export function LspStatusBar() {
           {currentLsp.state === "hibernated" && (
             <button
               onClick={() => {
-                wake(currentLang!);
+                void wake(currentLang!);
                 setShowMenu(false);
               }}
               className="block w-full text-left px-3 py-1.5 hover:bg-control"
@@ -134,7 +134,7 @@ export function LspStatusBar() {
           {currentLsp.state === "stopped" && (
             <button
               onClick={() => {
-                startLsp(currentLang!);
+                void startLsp(currentLang!);
                 setShowMenu(false);
               }}
               className="block w-full text-left px-3 py-1.5 hover:bg-control"

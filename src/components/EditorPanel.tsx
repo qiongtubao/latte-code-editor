@@ -88,7 +88,7 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
       // Ctrl/Cmd + S: 保存
       if (isChord(e, "s")) {
         e.preventDefault();
-        handleSave();
+        void handleSave();
       }
       // Ctrl/Cmd + O: 打开文件
       else if (isChord(e, "o")) {
@@ -98,22 +98,22 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
       // Ctrl/Cmd + Shift + R: 刷新当前文件
       else if (isChord(e, "r", { shift: true })) {
         e.preventDefault();
-        useEditorStore.getState().refreshCurrentFile();
+        void useEditorStore.getState().refreshCurrentFile();
       }
       // Ctrl/Cmd + L: 手动触发当前文件 LSP
       else if (isChord(e, "l")) {
         e.preventDefault();
-        triggerLspForCurrentFile();
+        void triggerLspForCurrentFile();
       }
       // Ctrl/Cmd + Alt + H: 休眠当前 LSP
       else if (isChord(e, "h", { alt: true })) {
         e.preventDefault();
-        hibernateCurrentLsp();
+        void hibernateCurrentLsp();
       }
       // Ctrl/Cmd + Alt + S: 停止当前 LSP
       else if (isChord(e, "s", { alt: true })) {
         e.preventDefault();
-        stopCurrentLsp();
+        void stopCurrentLsp();
       }
     };
     window.addEventListener("keydown", handler);
