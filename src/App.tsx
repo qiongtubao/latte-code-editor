@@ -68,9 +68,10 @@ function App() {
   const openFileOrSwitch = useEditorStore((state) => state.openFileOrSwitch);
   const filePath = useEditorStore((state) => state.filePath);
   const graphData = useGraphStore((state) => state.graphData);
-  const activeMeta = useWorkspaceStore((s) =>
-    s.activeWorkspaceId ? s.workspaces[s.activeWorkspaceId] : null,
-  );
+  const folderRoot = useWorkspaceStore((state) => {
+    const activeId = state.activeWorkspaceId;
+    return activeId ? state.workspaces[activeId]?.project_root ?? null : null;
+  });
   const hydrate = useWorkspaceStore((s) => s.hydrate);
   const activeId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const openQuickOpen = useQuickOpenStore((s) => s.openModal);
@@ -155,8 +156,6 @@ function App() {
     window.addEventListener("ask-agent", handler);
     return () => window.removeEventListener("ask-agent", handler);
   }, []);
-
-  const folderRoot = activeMeta?.project_root ?? null;
 
   const hasOutline = !!(
     filePath &&

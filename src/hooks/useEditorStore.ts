@@ -136,9 +136,9 @@ function persistTabs(state: WorkspaceEditor) {
 }
 
 export const useEditorStore = create<EditorStore>((set) => {
-  useWorkspaceStore.subscribe(() => {
-    const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-    set((s) => projectFrom(s.byWorkspace, wsId));
+  useWorkspaceStore.subscribe((state, previousState) => {
+    if (state.activeWorkspaceId === previousState.activeWorkspaceId) return;
+    set((s) => projectFrom(s.byWorkspace, state.activeWorkspaceId));
   });
 
   return {

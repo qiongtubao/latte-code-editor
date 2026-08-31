@@ -42,6 +42,19 @@ describe("useGraphStore 多 workspace 隔离", () => {
     });
   });
 
+  it("unrelated workspace metadata changes do not publish graph state", () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-a" });
+    useGraphStore.getState().setGraphData(sampleGraph("a"));
+    const listener = vi.fn();
+    const unsubscribe = useGraphStore.subscribe(listener);
+
+    useWorkspaceStore.setState({ hydrated: false });
+
+    unsubscribe();
+    expect(listener).not.toHaveBeenCalled();
+    expect(useGraphStore.getState().graphData?.nodes[0]?.id).toBe("a");
+  });
+
   it("setGraphData 后 byWorkspace 必须真的被写回去（回归：之前只更新了 projected 字段）", () => {
     useWorkspaceStore.setState({ activeWorkspaceId: "ws-a" });
     useGraphStore.getState().setGraphData(sampleGraph("a"));

@@ -99,7 +99,8 @@ function mutateByWs(
 
 export const useGraphStore = create<GraphStore>((set) => {
   // 订阅 workspace 切换
-  useWorkspaceStore.subscribe(() => {
+  useWorkspaceStore.subscribe((state, previousState) => {
+    if (state.activeWorkspaceId === previousState.activeWorkspaceId) return;
     set((s) => project(s));
   });
 

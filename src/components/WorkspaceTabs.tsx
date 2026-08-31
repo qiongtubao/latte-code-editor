@@ -5,12 +5,25 @@
 // 右键菜单：关闭、关闭其他、拆出到新窗口
 // "+" 按钮：打开文件夹对话框
 import { useState, useCallback } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 
 export function WorkspaceTabs() {
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const workspaceIds = useWorkspaceStore(
+    useShallow((state) => Object.keys(state.workspaces)),
+  );
+  const workspaceNames = useWorkspaceStore(
+    useShallow((state) =>
+      Object.values(state.workspaces).map((workspace) => workspace.name),
+    ),
+  );
+  const workspaceTabCounts = useWorkspaceStore(
+    useShallow((state) =>
+      Object.values(state.workspaces).map((workspace) => workspace.open_tabs.length),
+    ),
+  );
   const activeId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActive = useWorkspaceStore((s) => s.setActive);
   const openFolder = useWorkspaceStore((s) => s.openFolder);
@@ -34,12 +47,10 @@ export function WorkspaceTabs() {
     }
   }, [openFolder]);
 
-  const items: { id: string; name: string; tabCount: number }[] = Object.entries(
-    workspaces,
-  ).map(([id, meta]) => ({
+  const items = workspaceIds.map((id, index) => ({
     id,
-    name: meta.name,
-    tabCount: meta.open_tabs.length,
+    name: workspaceNames[index],
+    tabCount: workspaceTabCounts[index],
   }));
 
   const buildMenuItems = (wsId: string): ContextMenuItem[] => [
@@ -52,7 +63,7 @@ export function WorkspaceTabs() {
     {
       label: "Close Others",
       onClick: async () => {
-        const others = Object.keys(workspaces).filter((id) => id !== wsId);
+        const others = workspaceIds.filter((id) => id !== wsId);
         for (const id of others) {
           await closeWorkspace(id);
         }

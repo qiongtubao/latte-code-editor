@@ -50,6 +50,19 @@ describe("useEditorStore", () => {
     });
   });
 
+  it("unrelated workspace metadata changes do not publish editor state", () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-a" });
+    useEditorStore.getState().openFileOrSwitch(makeFile("/a.rs"));
+    const listener = vi.fn();
+    const unsubscribe = useEditorStore.subscribe(listener);
+
+    useWorkspaceStore.setState({ hydrated: false });
+
+    unsubscribe();
+    expect(listener).not.toHaveBeenCalled();
+    expect(useEditorStore.getState().filePath).toBe("/a.rs");
+  });
+
   it("openFileOrSwitch without active workspace is a no-op", () => {
     useEditorStore.getState().openFileOrSwitch(makeFile("/a.rs"));
     expect(useEditorStore.getState().tabs).toHaveLength(0);
