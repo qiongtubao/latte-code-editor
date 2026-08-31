@@ -17,6 +17,8 @@ interface CanvasGraphProps {
   getRenderState?: () => CanvasRenderState;
   /** Pull the latest hit-test map without rebuilding it during React commits. */
   getNodeMap?: () => Map<string, SimRenderNode>;
+  /** Subscribe to imperative state changes that should schedule one redraw. */
+  subscribeRenderState?: (invalidate: () => void) => () => void;
   /** 外部传入的渲染器（测试或自定义场景）。优先级高于 rendererKind */
   renderer?: GraphRenderer;
   /** 渲染器选择（auto = 探测后选最优；webgpu = 强制 WebGPU；canvas2d = 强制 Canvas 2D） */
@@ -36,12 +38,14 @@ export function CanvasGraph({
   onNodeContextMenu,
   getRenderState,
   getNodeMap: externalGetNodeMap,
+  subscribeRenderState,
   renderer: externalRenderer,
   rendererKind = "auto",
   onRendererReady,
 }: CanvasGraphProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animFrameRef = useRef<number>(0);
+  const animFrameRef = useRef<number | null>(null);
+  const invalidateRef = useRef<() => void>(() => {});
   const panRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
   const isDragging = useRef(false);
@@ -87,6 +91,7 @@ export function CanvasGraph({
       // 外部传入：假设已 init 完毕（同步 init）
       rendererRef.current = externalRenderer;
       onRendererReady?.(rendererKindOf(externalRenderer));
+      invalidateRef.current();
     } else {
       // 自动 / 显式选择
       createRenderer(rendererKind, initOptions).then((r) => {
@@ -97,6 +102,7 @@ export function CanvasGraph({
         rendererRef.current = r;
         const k = rendererKindOf(r);
         onRendererReady?.(k);
+        invalidateRef.current();
       }).catch((e) => {
         console.error("[CanvasGraph] renderer init failed:", e);
       });
@@ -120,6 +126,7 @@ export function CanvasGraph({
         if (width > 0 && height > 0) {
           const dpr = window.devicePixelRatio || 1;
           rendererRef.current?.resize(width, height, dpr);
+          invalidateRef.current();
         }
       }
     });
@@ -127,22 +134,45 @@ export function CanvasGraph({
     return () => observer.disconnect();
   }, []);
 
-  // Render loop. High-frequency simulation state is pulled at frame time so a
-  // worker tick never has to tear down and recreate this RAF effect.
+  // Dirty-frame renderer: at most one RAF may be pending, and drawing never
+  // schedules another frame by itself. Idle graphs therefore consume zero RAF.
   useEffect(() => {
-    const render = () => {
-      const state = getRenderState?.() ?? renderStateRef.current;
-      rendererRef.current?.render({
-        ...state,
-        pan: panRef.current,
-        zoom: zoomRef.current,
+    const invalidate = () => {
+      if (animFrameRef.current !== null) return;
+      animFrameRef.current = requestAnimationFrame(() => {
+        animFrameRef.current = null;
+        const state = getRenderState?.() ?? renderStateRef.current;
+        rendererRef.current?.render({
+          ...state,
+          pan: panRef.current,
+          zoom: zoomRef.current,
+        });
       });
-      animFrameRef.current = requestAnimationFrame(render);
     };
 
-    render();
-    return () => cancelAnimationFrame(animFrameRef.current);
+    invalidateRef.current = invalidate;
+    invalidate();
+    return () => {
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
+      if (invalidateRef.current === invalidate) {
+        invalidateRef.current = () => {};
+      }
+    };
   }, [getRenderState]);
+
+  useEffect(() => {
+    if (!subscribeRenderState) return;
+    return subscribeRenderState(() => invalidateRef.current());
+  }, [subscribeRenderState]);
+
+  // Prop-driven canvases (for example the doc graph) redraw when their render
+  // state changes. Store-driven canvases use subscribeRenderState instead.
+  useEffect(() => {
+    invalidateRef.current();
+  }, [simNodes, simEdges, selectedNodeId, hoveredNodeId, highlightedNodeIds]);
 
   // Hit test (delegates to renderer)
   const hitTest = useCallback(
@@ -176,6 +206,7 @@ export function CanvasGraph({
         panRef.current.x += dx;
         panRef.current.y += dy;
         lastMouse.current = { x: e.clientX, y: e.clientY };
+        invalidateRef.current();
         return;
       }
 
@@ -234,6 +265,7 @@ export function CanvasGraph({
     e.preventDefault();
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
     zoomRef.current = Math.max(0.1, Math.min(10, zoomRef.current * zoomFactor));
+    invalidateRef.current();
   }, []);
 
   return (

@@ -13,9 +13,9 @@ const handleNodeHover = (nodeId: string | null) => {
 };
 
 /**
- * CanvasGraph already owns a continuous render loop, so simulation ticks do not
- * need a React commit. This boundary pulls the latest Zustand snapshot at frame
- * time and lazily rebuilds the hit-test map only when hit testing is requested.
+ * CanvasGraph owns a coalesced dirty-frame scheduler, so simulation ticks do not
+ * need a React commit or a permanent RAF loop. This boundary pulls the latest
+ * Zustand snapshot at draw time and lazily rebuilds hit-test maps.
  */
 function GraphStoreCanvasComponent({
   onNodeClick,
@@ -48,6 +48,19 @@ function GraphStoreCanvasComponent({
     return nodeMapCache.current.map;
   }, []);
 
+  const subscribeRenderState = useCallback((invalidate: () => void) =>
+    useGraphStore.subscribe((state, previousState) => {
+      if (
+        state.simNodes !== previousState.simNodes ||
+        state.simEdges !== previousState.simEdges ||
+        state.selectedNodeId !== previousState.selectedNodeId ||
+        state.hoveredNodeId !== previousState.hoveredNodeId ||
+        state.highlightedNodeIds !== previousState.highlightedNodeIds
+      ) {
+        invalidate();
+      }
+    }), []);
+
   const initialState = useGraphStore.getState();
   return (
     <CanvasGraph
@@ -58,6 +71,7 @@ function GraphStoreCanvasComponent({
       highlightedNodeIds={initialState.highlightedNodeIds}
       getRenderState={getRenderState}
       getNodeMap={getNodeMap}
+      subscribeRenderState={subscribeRenderState}
       onNodeClick={onNodeClick}
       onNodeHover={handleNodeHover}
       onNodeContextMenu={onNodeContextMenu}

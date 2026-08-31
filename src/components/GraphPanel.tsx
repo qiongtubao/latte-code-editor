@@ -27,6 +27,8 @@ import {
   type ForceLayoutOutputMessage,
 } from "./forceLayoutProtocol";
 
+const EMPTY_HIGHLIGHTED_NODE_IDS = new Set<string>();
+
 export function GraphPanel({
   folderRoot = null,
   revealRequest = null,
@@ -594,7 +596,7 @@ export function GraphPanel({
               })()}
             </div>
             <CanvasGraph simNodes={filteredDocSim.nodes} simEdges={filteredDocSim.edges}
-              selectedNodeId={null} hoveredNodeId={null} highlightedNodeIds={new Set()}
+              selectedNodeId={null} hoveredNodeId={null} highlightedNodeIds={EMPTY_HIGHLIGHTED_NODE_IDS}
               onNodeClick={(id) => {
                 const node = docSimRender.nodes.find((n) => n.id === id);
                 if (node && (node as unknown as { path?: string }).path) {
