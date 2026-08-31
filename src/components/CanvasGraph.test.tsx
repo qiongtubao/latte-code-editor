@@ -113,14 +113,9 @@ describe("CanvasGraph dirty-frame rendering", () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
-  it("reports hover only when the hit node changes", () => {
+  it("coalesces hover hit tests per frame and uses the latest pointer position", () => {
     const renderer = makeRenderer();
-    vi.mocked(renderer.hitTest)
-      .mockReturnValueOnce("n1")
-      .mockReturnValueOnce("n1")
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce("n1");
+    vi.mocked(renderer.hitTest).mockImplementation((cx) => cx >= 10 ? "n1" : null);
     const onNodeHover = vi.fn();
     let currentHoveredNodeId: string | null = null;
     onNodeHover.mockImplementation((nodeId: string | null) => {
@@ -142,21 +137,105 @@ describe("CanvasGraph dirty-frame rendering", () => {
     const canvas = view.container.querySelector("canvas");
     expect(canvas).toBeTruthy();
     if (!canvas) return;
+    runFrame();
 
-    fireEvent.mouseMove(canvas, { clientX: 1, clientY: 1 });
-    fireEvent.mouseMove(canvas, { clientX: 2, clientY: 2 });
+    fireEvent.mouseMove(canvas, { clientX: 1, clientY: 2 });
+    fireEvent.mouseMove(canvas, { clientX: 10, clientY: 20 });
+    fireEvent.mouseMove(canvas, { clientX: 20, clientY: 30 });
+    expect(frames.size).toBe(1);
+    expect(renderer.hitTest).not.toHaveBeenCalled();
+    runFrame();
+    expect(renderer.hitTest).toHaveBeenCalledTimes(1);
+    expect(renderer.hitTest).toHaveBeenLastCalledWith(
+      20,
+      30,
+      { x: 0, y: 0 },
+      1,
+    );
+    expect(onNodeHover.mock.calls).toEqual([["n1"]]);
+    expect(canvas.style.cursor).toBe("pointer");
+
+    fireEvent.mouseMove(canvas, { clientX: 21, clientY: 31 });
+    fireEvent.mouseMove(canvas, { clientX: 22, clientY: 32 });
+    expect(frames.size).toBe(1);
+    runFrame();
+    expect(renderer.hitTest).toHaveBeenCalledTimes(2);
     expect(onNodeHover.mock.calls).toEqual([["n1"]]);
 
     // An external store update can clear hover without rerendering this canvas.
     // Null is a real current value and must not fall back to the local n1 cache.
     currentHoveredNodeId = null;
-    fireEvent.mouseMove(canvas, { clientX: 3, clientY: 3 });
-    fireEvent.mouseMove(canvas, { clientX: 4, clientY: 4 });
-    expect(onNodeHover.mock.calls).toEqual([["n1"]]);
+    fireEvent.mouseMove(canvas, { clientX: 23, clientY: 33 });
+    runFrame();
+    expect(onNodeHover.mock.calls).toEqual([["n1"], ["n1"]]);
 
     fireEvent.mouseMove(canvas, { clientX: 5, clientY: 5 });
-    fireEvent.mouseLeave(canvas);
-    fireEvent.mouseLeave(canvas);
+    runFrame();
     expect(onNodeHover.mock.calls).toEqual([["n1"], ["n1"], [null]]);
+    expect(canvas.style.cursor).toBe("default");
+  });
+
+  it("cancels pending hover work for drag, leave, and unmount", () => {
+    const renderer = makeRenderer();
+    vi.mocked(renderer.hitTest).mockReturnValue("n1");
+    const onNodeClick = vi.fn();
+    const onNodeHover = vi.fn();
+    let currentHoveredNodeId: string | null = null;
+    onNodeHover.mockImplementation((nodeId: string | null) => {
+      currentHoveredNodeId = nodeId;
+    });
+    const view = render(
+      <CanvasGraph
+        simNodes={nodes}
+        simEdges={edges}
+        selectedNodeId={null}
+        hoveredNodeId={null}
+        highlightedNodeIds={highlights}
+        onNodeClick={onNodeClick}
+        onNodeHover={onNodeHover}
+        getHoveredNodeId={() => currentHoveredNodeId}
+        renderer={renderer}
+      />,
+    );
+    const canvas = view.container.querySelector("canvas");
+    expect(canvas).toBeTruthy();
+    if (!canvas) return;
+    runFrame();
+
+    fireEvent.mouseMove(canvas, { clientX: 1, clientY: 1 });
+    expect(frames.size).toBe(1);
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 5, clientY: 5 });
+    expect(frames.size).toBe(0);
+    expect(renderer.hitTest).not.toHaveBeenCalled();
+
+    fireEvent.mouseMove(canvas, { clientX: 20, clientY: 25 });
+    expect(frames.size).toBe(1);
+    runFrame();
+    expect(renderer.hitTest).not.toHaveBeenCalled();
+
+    fireEvent.mouseUp(canvas, { button: 0, clientX: 5, clientY: 5 });
+    expect(renderer.hitTest).toHaveBeenCalledTimes(1);
+    expect(onNodeClick).toHaveBeenCalledWith("n1");
+    expect(frames.size).toBe(0);
+
+    fireEvent.mouseMove(canvas, { clientX: 10, clientY: 10 });
+    runFrame();
+    expect(renderer.hitTest).toHaveBeenCalledTimes(2);
+    expect(onNodeHover.mock.calls).toEqual([["n1"]]);
+
+    fireEvent.mouseMove(canvas, { clientX: 11, clientY: 11 });
+    expect(frames.size).toBe(1);
+    fireEvent.mouseLeave(canvas);
+    expect(frames.size).toBe(0);
+    expect(renderer.hitTest).toHaveBeenCalledTimes(2);
+    expect(onNodeHover.mock.calls).toEqual([["n1"], [null]]);
+    expect(canvas.style.cursor).toBe("default");
+
+    fireEvent.mouseMove(canvas, { clientX: 12, clientY: 12 });
+    expect(frames.size).toBe(1);
+    view.unmount();
+    expect(frames.size).toBe(0);
+    expect(renderer.hitTest).toHaveBeenCalledTimes(2);
+    expect(onNodeHover.mock.calls).toEqual([["n1"], [null]]);
   });
 });

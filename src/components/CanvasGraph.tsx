@@ -1,6 +1,10 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { GraphRenderer, RenderParams, SimRenderNode } from "./graphRenderer";
 import { createRenderer, rendererKindOf, type RendererKind } from "./rendererFactory";
+import {
+  createAnimationFrameCoalescer,
+  type AnimationFrameCoalescer,
+} from "../utils/animationFrameCoalescer";
 
 type CanvasRenderState = Omit<RenderParams, "pan" | "zoom">;
 
@@ -48,6 +52,10 @@ export function CanvasGraph({
 }: CanvasGraphProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animFrameRef = useRef<number | null>(null);
+  const hoverCoalescerRef = useRef<AnimationFrameCoalescer<{
+    clientX: number;
+    clientY: number;
+  }> | null>(null);
   const invalidateRef = useRef<() => void>(() => {});
   const panRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
@@ -193,9 +201,33 @@ export function CanvasGraph({
     onNodeHover(nodeId);
   }, [getHoveredNodeId, onNodeHover]);
 
+  useEffect(() => {
+    const coalescer = createAnimationFrameCoalescer(
+      ({ clientX, clientY }: { clientX: number; clientY: number }) => {
+        const canvas = canvasRef.current;
+        if (!canvas || !rendererRef.current || isDragging.current) return;
+        const rect = canvas.getBoundingClientRect();
+        const hit = hitTest(clientX - rect.left, clientY - rect.top);
+        reportNodeHover(hit);
+        const cursor = hit ? "pointer" : "default";
+        if (canvas.style.cursor !== cursor) {
+          canvas.style.cursor = cursor;
+        }
+      },
+    );
+    hoverCoalescerRef.current = coalescer;
+    return () => {
+      coalescer.cancel();
+      if (hoverCoalescerRef.current === coalescer) {
+        hoverCoalescerRef.current = null;
+      }
+    };
+  }, [hitTest, reportNodeHover]);
+
   // Mouse handlers
   const mouseDownPos = useRef({ x: 0, y: 0 });
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    hoverCoalescerRef.current?.cancel();
     // Left button only starts drag
     if (e.button !== 0) return;
     isDragging.current = true;
@@ -205,11 +237,7 @@ export function CanvasGraph({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
+      if (!canvasRef.current) return;
 
       if (isDragging.current) {
         const dx = e.clientX - lastMouse.current.x;
@@ -221,14 +249,12 @@ export function CanvasGraph({
         return;
       }
 
-      const hit = hitTest(cx, cy);
-      reportNodeHover(hit);
-      const cursor = hit ? "pointer" : "default";
-      if (canvas.style.cursor !== cursor) {
-        canvas.style.cursor = cursor;
-      }
+      hoverCoalescerRef.current?.schedule({
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
     },
-    [hitTest, reportNodeHover],
+    [],
   );
   const handleMouseUp = useCallback(
     (e: React.MouseEvent) => {
@@ -293,8 +319,13 @@ export function CanvasGraph({
       onContextMenu={handleContextMenu}
       onWheel={handleWheel}
       onMouseLeave={() => {
+        hoverCoalescerRef.current?.cancel();
         isDragging.current = false;
         reportNodeHover(null);
+        const canvas = canvasRef.current;
+        if (canvas && canvas.style.cursor !== "default") {
+          canvas.style.cursor = "default";
+        }
       }}
     />
   );
