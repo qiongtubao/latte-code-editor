@@ -1,5 +1,6 @@
 import type { GraphRenderer, GraphRendererInitOptions, RenderParams, SimRenderNode } from "./graphRenderer";
-import { NODE_COLORS, EDGE_COLORS } from "./graphRenderer";
+import { NODE_COLORS } from "./graphRenderer";
+import { GraphTopologyCache, isEdgeDimmed } from "./graphTopologyCache";
 import { cssVar } from "../skins";
 
 /**
@@ -13,6 +14,7 @@ export class Canvas2DRenderer implements GraphRenderer {
   private getNodeMap: (() => Map<string, SimRenderNode>) | null = null;
   private dpr = 1;
   private nodeDegrees = new Map<string, number>();
+  private topologyCache = new GraphTopologyCache();
 
   init(options: GraphRendererInitOptions): void {
     this.canvas = options.canvas;
@@ -72,91 +74,73 @@ export class Canvas2DRenderer implements GraphRenderer {
     ctx.translate(pan.x * zoom, pan.y * zoom);
     ctx.scale(zoom, zoom);
 
-    // Build node map & compute degrees
+    // Node positions change every simulation frame, but edge topology is
+    // immutable until simEdges identity changes.
+    const topology = this.topologyCache.get(simEdges);
+    this.nodeDegrees = topology.nodeDegrees;
     const nodeMap = new Map<string, SimRenderNode>();
-    this.nodeDegrees.clear();
-    for (const n of simNodes) nodeMap.set(n.id, n);
-    for (const e of simEdges) {
-      const s = typeof e.source === "string" ? e.source : e.source.id;
-      const t = typeof e.target === "string" ? e.target : e.target.id;
-      this.nodeDegrees.set(s, (this.nodeDegrees.get(s) ?? 0) + 1);
-      this.nodeDegrees.set(t, (this.nodeDegrees.get(t) ?? 0) + 1);
-    }
-    // Edge helper for source/target
-    const src = (e: { source: string | { id: string }; target: string | { id: string }; kind: string }): string =>
-      typeof e.source === "string" ? e.source : e.source.id;
-    const tgt = (e: { source: string | { id: string }; target: string | { id: string }; kind: string }): string =>
-      typeof e.target === "string" ? e.target : e.target.id;
-    const hoveredNodes = new Set<string>();
-    if (hoveredNodeId) {
-      hoveredNodes.add(hoveredNodeId);
-      for (const e of simEdges) {
-        const s = src(e);
-        const t = tgt(e);
-        if (s === hoveredNodeId) hoveredNodes.add(t);
-        if (t === hoveredNodeId) hoveredNodes.add(s);
-      }
-    }
-    const isDimmed = (id: string): boolean => hoveredNodeId != null && !hoveredNodes.has(id);
+    for (const node of simNodes) nodeMap.set(node.id, node);
+    const hoveredNodes = this.topologyCache.getHoveredNodes(topology, hoveredNodeId);
+    const isDimmed = (id: string): boolean =>
+      hoveredNodeId !== null && !hoveredNodes.has(id);
 
     // 皮肤联动的对比色（高亮边/选中描边/标签），绘制时现取。
     const fgColor = cssVar("--fg", "#ffffff");
     const surfaceColor = cssVar("--surface", "#1e1e1e");
 
     // === Edges ===
-    for (const e of simEdges) {
-      const s = src(e);
-      const t = tgt(e);
-      const sNode = nodeMap.get(s);
-      const tNode = nodeMap.get(t);
-      if (!sNode || !tNode) continue;
-
-      // weight: explicit number on the edge; falls back to kind-based default
-      const hasWeight = typeof (e as { weight?: number }).weight === "number";
-      const weight = hasWeight
-        ? (e as { weight: number }).weight
-        : 0.5;
-      const baseWidth = 0.6 + weight * 1.8;   // 0.6..2.4
-      // If weight is not present at all, use a debug red to make missing weight obvious
-      const edgeColor = hasWeight
-        ? (EDGE_COLORS[e.kind] ?? "#888")
-        : "#ff3333";
+    for (const cachedEdge of topology.edges) {
+      const {
+        sourceId,
+        targetId,
+        weight,
+        canvasWidth,
+        color,
+        directed,
+      } = cachedEdge;
+      const sourceNode = nodeMap.get(sourceId);
+      const targetNode = nodeMap.get(targetId);
+      if (!sourceNode || !targetNode) continue;
 
       const isHighlighted =
-        (selectedNodeId != null && (s === selectedNodeId || t === selectedNodeId)) ||
-        (hoveredNodeId != null && (s === hoveredNodeId || t === hoveredNodeId));
-      const dim = isDimmed(s) || isDimmed(t);
+        (selectedNodeId !== null && (sourceId === selectedNodeId || targetId === selectedNodeId)) ||
+        (hoveredNodeId !== null && (sourceId === hoveredNodeId || targetId === hoveredNodeId));
+      const dim = isEdgeDimmed(hoveredNodeId, hoveredNodes, sourceId, targetId);
 
       ctx.beginPath();
-      ctx.moveTo(sNode.x, sNode.y);
-      ctx.lineTo(tNode.x, tNode.y);
-      ctx.strokeStyle = isHighlighted ? fgColor : edgeColor;
-      ctx.lineWidth = isHighlighted ? baseWidth * 2 : baseWidth;
+      ctx.moveTo(sourceNode.x, sourceNode.y);
+      ctx.lineTo(targetNode.x, targetNode.y);
+      ctx.strokeStyle = isHighlighted ? fgColor : color;
+      ctx.lineWidth = isHighlighted ? canvasWidth * 2 : canvasWidth;
       // Stronger association → more opaque
       ctx.globalAlpha = dim ? 0.06 : isHighlighted ? 0.95 : (0.25 + weight * 0.55);
       ctx.stroke();
       // Arrow head
-      if (dim) continue;
-      if (e.kind === "calls" || e.kind === "imports" || e.kind === "wikilink" || e.kind === "source-shared") {
-        const angle = Math.atan2(tNode.y - sNode.y, tNode.x - sNode.x);
-        const tR = Math.min(16, Math.max(6, 4 + Math.sqrt((this.nodeDegrees.get(t) ?? 1)) * 1.5));
-        const arrowLen = 8;
-        const ax = tNode.x - Math.cos(angle) * (tR + 4);
-        const ay = tNode.y - Math.sin(angle) * (tR + 4);
-        ctx.save();
-        ctx.translate(ax, ay);
-        ctx.rotate(angle);
-        ctx.beginPath();
-        ctx.moveTo(arrowLen, 0);
-        ctx.lineTo(-arrowLen * 0.5, -arrowLen * 0.5);
-        ctx.lineTo(-arrowLen * 0.5, arrowLen * 0.5);
-        ctx.closePath();
-        ctx.fillStyle = isHighlighted ? fgColor : edgeColor;
-        ctx.globalAlpha = isHighlighted ? 0.9 : 0.5;
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.restore();
-      }
+      if (dim || !directed) continue;
+      const angle = Math.atan2(
+        targetNode.y - sourceNode.y,
+        targetNode.x - sourceNode.x,
+      );
+      const targetRadius = Math.min(
+        16,
+        Math.max(6, 4 + Math.sqrt((this.nodeDegrees.get(targetId) ?? 1)) * 1.5),
+      );
+      const arrowLen = 8;
+      const ax = targetNode.x - Math.cos(angle) * (targetRadius + 4);
+      const ay = targetNode.y - Math.sin(angle) * (targetRadius + 4);
+      ctx.save();
+      ctx.translate(ax, ay);
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.moveTo(arrowLen, 0);
+      ctx.lineTo(-arrowLen * 0.5, -arrowLen * 0.5);
+      ctx.lineTo(-arrowLen * 0.5, arrowLen * 0.5);
+      ctx.closePath();
+      ctx.fillStyle = isHighlighted ? fgColor : color;
+      ctx.globalAlpha = isHighlighted ? 0.9 : 0.5;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.restore();
     }
 
     // === Nodes ===
@@ -233,5 +217,7 @@ export class Canvas2DRenderer implements GraphRenderer {
     this.ctx = null;
     this.canvas = null;
     this.getNodeMap = null;
+    this.topologyCache.clear();
+    this.nodeDegrees = new Map();
   }
 }

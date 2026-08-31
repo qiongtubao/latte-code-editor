@@ -25,7 +25,12 @@ import type {
   RenderParams,
   SimRenderNode,
 } from "./graphRenderer";
-import { NODE_COLORS, EDGE_COLORS } from "./graphRenderer";
+import { NODE_COLORS } from "./graphRenderer";
+import {
+  GraphTopologyCache,
+  isEdgeDimmed,
+  type CachedGraphEdge,
+} from "./graphTopologyCache";
 import { cssVar } from "../skins";
 
 /** GPU buffer 容量上限（避免极端情况下无限增长） */
@@ -62,9 +67,8 @@ interface WebGPUResources {
   // Canvas 2D context（用于文本标签，叠在 WebGPU 输出之上）
   textCtx: CanvasRenderingContext2D | null;
 
-  // 上次渲染的边/节点数据快照（用于 hitTest）
+  // 上次渲染的节点数据快照（用于 hitTest）
   lastNodes: SimRenderNode[];
-  lastEdges: RenderParams["simEdges"];
   nodeDegrees: Map<string, number>;
   canvas: HTMLCanvasElement;
   dpr: number;
@@ -254,6 +258,7 @@ export class WebGPURenderer implements GraphRenderer {
   private res: WebGPUResources | null = null;
   private getNodeMap: (() => Map<string, SimRenderNode>) | null = null;
   private initError: string | null = null;
+  private topologyCache = new GraphTopologyCache();
 
   /** 渲染器是否成功初始化（外部可读，用于状态显示） */
   get initialized(): boolean { return this.res !== null; }
@@ -331,7 +336,6 @@ export class WebGPURenderer implements GraphRenderer {
         uniformBindGroup,
         textCtx,
         lastNodes: [],
-        lastEdges: [],
         nodeDegrees: new Map(),
         canvas: options.canvas,
         dpr,
@@ -363,41 +367,23 @@ export class WebGPURenderer implements GraphRenderer {
     const r = this.res;
     const { simNodes, simEdges, selectedNodeId, hoveredNodeId, highlightedNodeIds, pan, zoom } = params;
 
-    // 0. 兜底：节点数超过容量就截断
+    // 0. 兜底：节点/边数超过容量就截断
     const nodes = simNodes.length > MAX_NODES ? simNodes.slice(0, MAX_NODES) : simNodes;
-    const edges = simEdges.length > MAX_EDGES ? simEdges.slice(0, MAX_EDGES) : simEdges;
+    const edgeLimit = Math.min(simEdges.length, MAX_EDGES);
+    const topology = this.topologyCache.get(simEdges, edgeLimit);
+    r.nodeDegrees = topology.nodeDegrees;
+    const hoveredNeighbors = this.topologyCache.getHoveredNodes(topology, hoveredNodeId);
 
-    // 1. 计算 node 度（用于决定节点半径）
-    r.nodeDegrees.clear();
-    for (const e of edges) {
-      const s = typeof e.source === "string" ? e.source : e.source.id;
-      const t = typeof e.target === "string" ? e.target : e.target.id;
-      r.nodeDegrees.set(s, (r.nodeDegrees.get(s) ?? 0) + 1);
-      r.nodeDegrees.set(t, (r.nodeDegrees.get(t) ?? 0) + 1);
-    }
-
-    // 2. 准备悬停高亮集合
-    const hoveredNeighbors = new Set<string>();
-    if (hoveredNodeId) {
-      hoveredNeighbors.add(hoveredNodeId);
-      for (const e of edges) {
-        const s = typeof e.source === "string" ? e.source : e.source.id;
-        const t = typeof e.target === "string" ? e.target : e.target.id;
-        if (s === hoveredNodeId) hoveredNeighbors.add(t);
-        if (t === hoveredNodeId) hoveredNeighbors.add(s);
-      }
-    }
-
-    // 3. 更新 node instance buffer
+    // 1. 更新 node instance buffer
     this.uploadNodes(r, nodes, selectedNodeId, hoveredNodeId, highlightedNodeIds, hoveredNeighbors);
 
-    // 4. 更新 edge vertex buffer
-    this.uploadEdges(r, edges, nodes, selectedNodeId, hoveredNodeId, hoveredNeighbors);
+    // 2. 更新 edge vertex buffer
+    this.uploadEdges(r, topology.edges, nodes, selectedNodeId, hoveredNodeId, hoveredNeighbors);
 
-    // 5. 更新 uniform buffer（view matrix + 视口）
-    this.uploadUniform(r, pan, zoom, nodes.length, edges.length);
+    // 3. 更新 uniform buffer（view matrix + 视口）
+    this.uploadUniform(r, pan, zoom, nodes.length, topology.edges.length);
 
-    // 6. 编码并提交 command buffer
+    // 4. 编码并提交 command buffer
     const commandEncoder = r.device.createCommandEncoder();
     const textureView = r.context.getCurrentTexture().createView();
     const renderPass = commandEncoder.beginRenderPass({
@@ -414,7 +400,7 @@ export class WebGPURenderer implements GraphRenderer {
     // Pass 1: edges
     renderPass.setPipeline(r.edgePipeline);
     renderPass.setBindGroup(0, r.uniformBindGroup);
-    renderPass.draw(edges.length * 2, 1, 0, 0);
+    renderPass.draw(topology.edges.length * 2, 1, 0, 0);
 
     // Pass 2: nodes
     renderPass.setPipeline(r.nodePipeline);
@@ -425,12 +411,11 @@ export class WebGPURenderer implements GraphRenderer {
     renderPass.end();
     r.device.queue.submit([commandEncoder.finish()]);
 
-    // 7. 用 2D context 渲染文本标签（叠在 WebGPU 输出之上）
+    // 5. 用 2D context 渲染文本标签（叠在 WebGPU 输出之上）
     this.renderTextOverlay(r, nodes, selectedNodeId, hoveredNodeId, highlightedNodeIds, hoveredNeighbors, pan, zoom);
 
-    // 8. 缓存数据用于 hitTest
+    // 6. 缓存节点数据用于 hitTest
     r.lastNodes = nodes;
-    r.lastEdges = edges;
   }
 
   hitTest(
@@ -472,6 +457,8 @@ export class WebGPURenderer implements GraphRenderer {
     );
     overlay?.remove();
     this.res = null;
+    this.getNodeMap = null;
+    this.topologyCache.clear();
   }
 
   // ============================================================================
@@ -673,7 +660,7 @@ export class WebGPURenderer implements GraphRenderer {
 
   private uploadEdges(
     r: WebGPUResources,
-    edges: RenderParams["simEdges"],
+    edges: CachedGraphEdge[],
     nodes: SimRenderNode[],
     selectedNodeId: string | null,
     hoveredNodeId: string | null,
@@ -702,39 +689,39 @@ export class WebGPURenderer implements GraphRenderer {
     const f32 = new Float32Array(data);
     const u32 = new Uint32Array(data);
     // 高亮边的对比色跟随皮肤（绘制时现取一次）。
-    const fgColor = cssVar("--fg", "#ffffff");
+    const highlightedRgba = hexToRgba(cssVar("--fg", "#ffffff"), 1);
 
     for (let i = 0; i < edges.length; i++) {
-      const e = edges[i];
-      const s = typeof e.source === "string" ? e.source : e.source.id;
-      const t = typeof e.target === "string" ? e.target : e.target.id;
-      const sIdx = idToIndex.get(s) ?? 0;
-      const tIdx = idToIndex.get(t) ?? 0;
-
-      let baseColor = EDGE_COLORS[e.kind] ?? "#888";
-      // Per-edge weight (buildDocSim sets this for doc graph edges).
-      // Debug: if no weight, render red so we can spot missing-weight bugs.
-      const hasWeight = typeof (e as { weight?: number }).weight === "number";
-      const w = hasWeight ? (e as { weight: number }).weight : 0.5;
-      if (!hasWeight) baseColor = "#ff3333";
-
-
+      const {
+        sourceId,
+        targetId,
+        weight,
+        gpuWidth,
+        rgba,
+      } = edges[i];
+      const sourceIndex = idToIndex.get(sourceId) ?? 0;
+      const targetIndex = idToIndex.get(targetId) ?? 0;
       const isHighlighted =
-        (selectedNodeId != null && (s === selectedNodeId || t === selectedNodeId)) ||
-        (hoveredNodeId != null && (s === hoveredNodeId || t === hoveredNodeId));
-      const dim = (hoveredNodeId !== null) && !hoveredNeighbors.has(s) || !hoveredNeighbors.has(t);
+        (selectedNodeId !== null && (sourceId === selectedNodeId || targetId === selectedNodeId)) ||
+        (hoveredNodeId !== null && (sourceId === hoveredNodeId || targetId === hoveredNodeId));
+      const dim = isEdgeDimmed(
+        hoveredNodeId,
+        hoveredNeighbors,
+        sourceId,
+        targetId,
+      );
 
       let alpha: number;
       if (dim) alpha = 0.05;
       else if (isHighlighted) alpha = 0.95;
-      else alpha = 0.25 + w * 0.55;
+      else alpha = 0.25 + weight * 0.55;
 
-      const color = isHighlighted ? hexToRgba(fgColor, 1) : hexToRgba(baseColor, 1);
-      const width = isHighlighted ? (0.4 + w * 1.6) * 2 : (0.4 + w * 1.6);
+      const color = isHighlighted ? highlightedRgba : rgba;
+      const width = isHighlighted ? gpuWidth * 2 : gpuWidth;
 
       const base = i * (EDGE_VERTEX_STRIDE / 4);
-      u32[base + 0] = sIdx;
-      u32[base + 1] = tIdx;
+      u32[base + 0] = sourceIndex;
+      u32[base + 1] = targetIndex;
       f32[base + 2] = color[0];
       f32[base + 3] = color[1];
       f32[base + 4] = color[2];
