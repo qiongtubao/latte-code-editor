@@ -3,18 +3,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useGraphStore } from "../hooks/useGraphStore";
 import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
 import { GraphStoreCanvas } from "./GraphStoreCanvas";
+import type { SimRenderNode } from "./graphRenderer";
 
 let subscribeRenderState:
   | ((invalidate: () => void) => () => void)
   | undefined;
+let getNodes: (() => SimRenderNode[]) | undefined;
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("./CanvasGraph", () => ({
   CanvasGraph: (props: {
+    getNodes?: () => SimRenderNode[];
     subscribeRenderState?: (invalidate: () => void) => () => void;
   }) => {
+    getNodes = props.getNodes;
     subscribeRenderState = props.subscribeRenderState;
     return <canvas />;
   },
@@ -22,6 +26,7 @@ vi.mock("./CanvasGraph", () => ({
 
 describe("GraphStoreCanvas invalidation subscription", () => {
   beforeEach(() => {
+    getNodes = undefined;
     subscribeRenderState = undefined;
     useGraphStore.setState({
       byWorkspace: {},
@@ -55,6 +60,8 @@ describe("GraphStoreCanvas invalidation subscription", () => {
       />,
     );
     expect(subscribeRenderState).toBeTypeOf("function");
+    expect(getNodes).toBeTypeOf("function");
+    expect(getNodes!()).toBe(useGraphStore.getState().simNodes);
     const invalidate = vi.fn();
     const unsubscribe = subscribeRenderState!(invalidate);
 
@@ -65,6 +72,9 @@ describe("GraphStoreCanvas invalidation subscription", () => {
       nodes: [{ id: "n1", x: 1, y: 2, vx: 0, vy: 0, group: 1 }],
       edges: [],
     }));
+    const latestNodes = useGraphStore.getState().simNodes;
+    expect(getNodes!()).toBe(latestNodes);
+    expect(latestNodes[0]).toMatchObject({ x: 1, y: 2 });
     act(() => useGraphStore.getState().setSelectedNode("n1"));
     act(() => useGraphStore.getState().setHoveredNode("n1"));
     act(() => useGraphStore.getState().setHighlightedNodes(new Set(["n1"])));

@@ -70,7 +70,7 @@ describe("Canvas2DRenderer topology caching", () => {
     const renderer = new Canvas2DRenderer();
     renderer.init({
       canvas: canvas as unknown as HTMLCanvasElement,
-      getNodeMap: () => new Map(),
+      getNodes: () => [],
     });
 
     const baseParams: Omit<RenderParams, "simNodes"> = {
@@ -108,5 +108,41 @@ describe("Canvas2DRenderer topology caching", () => {
     expect(targetReads).toBe(2);
     expect(context.moveTo).toHaveBeenLastCalledWith(100, 200);
     expect(context.lineTo).toHaveBeenLastCalledWith(300, 400);
+  });
+});
+
+describe("Canvas2DRenderer hit testing", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reads ordered nodes without materializing entries per hit test", () => {
+    const context = createContext();
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+      getBoundingClientRect: vi.fn(() => ({ width: 640, height: 480 })),
+    };
+    Object.defineProperty(context, "canvas", { value: canvas });
+
+    let nodes = [node("first", 20, 20), node("topmost", 20, 20)];
+    const getNodes = vi.fn(() => nodes);
+    const renderer = new Canvas2DRenderer();
+    renderer.init({
+      canvas: canvas as unknown as HTMLCanvasElement,
+      getNodes,
+    });
+    const arrayFrom = vi.spyOn(Array, "from");
+
+    for (let i = 0; i < 100; i++) {
+      expect(renderer.hitTest(20, 20, { x: 0, y: 0 }, 1)).toBe("topmost");
+    }
+    expect(getNodes).toHaveBeenCalledTimes(100);
+    expect(arrayFrom).not.toHaveBeenCalled();
+
+    nodes = [node("latest", 80, 90)];
+    expect(renderer.hitTest(80, 90, { x: 0, y: 0 }, 1)).toBe("latest");
+    expect(renderer.hitTest(20, 20, { x: 0, y: 0 }, 1)).toBeNull();
   });
 });

@@ -15,7 +15,7 @@ export class Canvas2DRenderer implements GraphRenderer {
   readonly kind = "canvas2d" as const;
   private ctx: CanvasRenderingContext2D | null = null;
   private canvas: HTMLCanvasElement | null = null;
-  private getNodeMap: (() => Map<string, SimRenderNode>) | null = null;
+  private getNodes: (() => SimRenderNode[]) | null = null;
   private dpr = 1;
   private nodeDegrees = new Map<string, number>();
   private topologyCache = new GraphTopologyCache();
@@ -24,7 +24,7 @@ export class Canvas2DRenderer implements GraphRenderer {
   init(options: GraphRendererInitOptions): void {
     this.canvas = options.canvas;
     this.ctx = options.canvas.getContext("2d");
-    this.getNodeMap = options.getNodeMap;
+    this.getNodes = options.getNodes;
 
     const rect = options.canvas.getBoundingClientRect();
     this.dpr = window.devicePixelRatio || 1;
@@ -45,18 +45,17 @@ export class Canvas2DRenderer implements GraphRenderer {
     pan: { x: number; y: number },
     zoom: number,
   ): string | null {
-    const nodeMap = this.getNodeMap?.();
-    if (!nodeMap) return null;
+    const nodes = this.getNodes?.();
+    if (!nodes) return null;
 
-    const entries = Array.from(nodeMap.entries());
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const [id, node] = entries[i];
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const node = nodes[i];
       const sx = (node.x + pan.x) * zoom;
       const sy = (node.y + pan.y) * zoom;
-      const deg = this.nodeDegrees.get(id) ?? 1;
+      const deg = this.nodeDegrees.get(node.id) ?? 1;
       const r = Math.min(16, Math.max(6, 4 + Math.sqrt(deg) * 1.5)) * zoom;
       if (Math.abs(cx - sx) <= r && Math.abs(cy - sy) <= r) {
-        return id;
+        return node.id;
       }
     }
     return null;
@@ -222,7 +221,7 @@ export class Canvas2DRenderer implements GraphRenderer {
   destroy(): void {
     this.ctx = null;
     this.canvas = null;
-    this.getNodeMap = null;
+    this.getNodes = null;
     this.topologyCache.clear();
     this.nodeIndexCache.clear();
     this.nodeDegrees = new Map();

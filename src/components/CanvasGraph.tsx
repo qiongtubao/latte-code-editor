@@ -15,8 +15,8 @@ interface CanvasGraphProps {
   onNodeContextMenu?: (nodeId: string, x: number, y: number) => void;
   /** Pull the latest render state without requiring a React render per tick. */
   getRenderState?: () => CanvasRenderState;
-  /** Pull the latest hit-test map without rebuilding it during React commits. */
-  getNodeMap?: () => Map<string, SimRenderNode>;
+  /** Pull the latest ordered nodes for allocation-free hit testing. */
+  getNodes?: () => SimRenderNode[];
   /** Pull only the current hover ID for mousemove transition deduplication. */
   getHoveredNodeId?: () => string | null;
   /** Subscribe to imperative state changes that should schedule one redraw. */
@@ -39,7 +39,7 @@ export function CanvasGraph({
   onNodeHover,
   onNodeContextMenu,
   getRenderState,
-  getNodeMap: externalGetNodeMap,
+  getNodes: externalGetNodes,
   getHoveredNodeId,
   subscribeRenderState,
   renderer: externalRenderer,
@@ -58,7 +58,6 @@ export function CanvasGraph({
     lastReportedHoveredNodeRef.current = hoveredNodeId;
   }
   const rendererRef = useRef<GraphRenderer | null>(null);
-  const nodeMapRef = useRef<Map<string, SimRenderNode>>(new Map());
   const renderStateRef = useRef<CanvasRenderState>({
     simNodes,
     simEdges,
@@ -74,16 +73,6 @@ export function CanvasGraph({
     highlightedNodeIds,
   };
 
-  // Build node lookup from simNodes (used by hitTest via getNodeMap)
-  useEffect(() => {
-    if (externalGetNodeMap) return;
-    const map = new Map<string, SimRenderNode>();
-    for (const n of simNodes) {
-      map.set(n.id, n);
-    }
-    nodeMapRef.current = map;
-  }, [externalGetNodeMap, simNodes]);
-
   // Initialize renderer (支持 async——WebGPU 探测和设备请求都是 async)
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -91,7 +80,7 @@ export function CanvasGraph({
 
     const initOptions = {
       canvas: canvasRef.current,
-      getNodeMap: externalGetNodeMap ?? (() => nodeMapRef.current),
+      getNodes: externalGetNodes ?? (() => renderStateRef.current.simNodes),
     };
 
     if (externalRenderer) {
@@ -121,7 +110,7 @@ export function CanvasGraph({
       if (r && r !== externalRenderer) r.destroy();
       rendererRef.current = null;
     };
-  }, [externalGetNodeMap, externalRenderer, rendererKind, onRendererReady]);
+  }, [externalGetNodes, externalRenderer, rendererKind, onRendererReady]);
   // Resize handler
   useEffect(() => {
     const canvas = canvasRef.current;

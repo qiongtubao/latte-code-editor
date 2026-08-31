@@ -4,7 +4,8 @@
  */
 export interface GraphRendererInitOptions {
   canvas: HTMLCanvasElement;
-  getNodeMap: () => Map<string, SimRenderNode>;
+  /** Latest nodes in draw order; later entries have higher hit-test priority. */
+  getNodes: () => SimRenderNode[];
 }
 
 export interface SimRenderNode {

@@ -268,7 +268,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 export class WebGPURenderer implements GraphRenderer {
   readonly kind = "webgpu" as const;
   private res: WebGPUResources | null = null;
-  private getNodeMap: (() => Map<string, SimRenderNode>) | null = null;
   private initError: string | null = null;
   private topologyCache = new GraphTopologyCache();
   private nodeIndexCache = new GraphNodeIndexCache();
@@ -283,7 +282,6 @@ export class WebGPURenderer implements GraphRenderer {
   get error(): string | null { return this.initError; }
 
   async init(options: GraphRendererInitOptions): Promise<void> {
-    this.getNodeMap = options.getNodeMap;
     this.initError = null;
 
     try {
@@ -487,7 +485,6 @@ export class WebGPURenderer implements GraphRenderer {
       overlay?.remove();
     }
     this.res = null;
-    this.getNodeMap = null;
     this.topologyCache.clear();
     this.nodeIndexCache.clear();
     this.nodeUploadBuffer.clear();

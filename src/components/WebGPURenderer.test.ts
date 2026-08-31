@@ -127,7 +127,7 @@ describe("WebGPURenderer initialization", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const renderer = new WebGPURenderer();
-    await renderer.init({ canvas, getNodeMap: () => new Map() });
+    await renderer.init({ canvas, getNodes: () => [] });
 
     expect(renderer.initialized).toBe(true);
     expect(fake.createBindGroupLayout).toHaveBeenCalledTimes(1);

@@ -1,7 +1,6 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback } from "react";
 import { useGraphStore } from "../hooks/useGraphStore";
 import { CanvasGraph } from "./CanvasGraph";
-import type { SimRenderNode } from "./graphRenderer";
 
 interface GraphStoreCanvasProps {
   onNodeClick: (nodeId: string) => void;
@@ -15,17 +14,12 @@ const handleNodeHover = (nodeId: string | null) => {
 /**
  * CanvasGraph owns a coalesced dirty-frame scheduler, so simulation ticks do not
  * need a React commit or a permanent RAF loop. This boundary pulls the latest
- * Zustand snapshot at draw time and lazily rebuilds hit-test maps.
+ * Zustand snapshot at draw and hit-test time without duplicating node data.
  */
 function GraphStoreCanvasComponent({
   onNodeClick,
   onNodeContextMenu,
 }: GraphStoreCanvasProps) {
-  const nodeMapCache = useRef<{
-    nodes: SimRenderNode[] | null;
-    map: Map<string, SimRenderNode>;
-  }>({ nodes: null, map: new Map() });
-
   const getRenderState = useCallback(() => {
     const state = useGraphStore.getState();
     return {
@@ -37,16 +31,10 @@ function GraphStoreCanvasComponent({
     };
   }, []);
 
-  const getNodeMap = useCallback(() => {
-    const nodes = useGraphStore.getState().simNodes;
-    if (nodeMapCache.current.nodes !== nodes) {
-      nodeMapCache.current = {
-        nodes,
-        map: new Map(nodes.map((node) => [node.id, node])),
-      };
-    }
-    return nodeMapCache.current.map;
-  }, []);
+  const getNodes = useCallback(
+    () => useGraphStore.getState().simNodes,
+    [],
+  );
 
   const getHoveredNodeId = useCallback(
     () => useGraphStore.getState().hoveredNodeId,
@@ -75,7 +63,7 @@ function GraphStoreCanvasComponent({
       hoveredNodeId={initialState.hoveredNodeId}
       highlightedNodeIds={initialState.highlightedNodeIds}
       getRenderState={getRenderState}
-      getNodeMap={getNodeMap}
+      getNodes={getNodes}
       getHoveredNodeId={getHoveredNodeId}
       subscribeRenderState={subscribeRenderState}
       onNodeClick={onNodeClick}
