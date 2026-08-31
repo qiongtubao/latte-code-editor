@@ -51,6 +51,22 @@ const FLAG_SELECTED = 0x2;
 const FLAG_HIGHLIGHTED = 0x4;
 const FLAG_DIMMED = 0x8;
 
+type Rgba = readonly [number, number, number, number];
+
+const NODE_COLOR_RGBA = Object.freeze(
+  Object.fromEntries(
+    Object.entries(NODE_COLORS).map(([group, color]) => [
+      Number(group),
+      hexToRgba(color, 1),
+    ]),
+  ),
+) as Readonly<Record<number, Rgba>>;
+const DEFAULT_NODE_RGBA: Rgba = hexToRgba("#808080", 1);
+const SELECTED_NODE_RGBA: Rgba = hexToRgba("#ffcc00", 1);
+const HOVERED_NODE_RGBA: Rgba = hexToRgba("#4fc3ff", 1);
+const HIGHLIGHTED_NODE_RGBA: Rgba = hexToRgba("#ff8a65", 1);
+const DIMMED_NODE_RGBA: Rgba = [0.27, 0.27, 0.27, 0.4];
+
 /** WebGPU 资源句柄集合（init 时创建，destroy 时释放） */
 interface WebGPUResources {
   device: GPUDevice;
@@ -668,19 +684,22 @@ export class WebGPURenderer implements GraphRenderer {
       const deg = r.nodeDegrees.get(n.id) ?? 1;
       const radius = Math.min(16, Math.max(6, 4 + Math.sqrt(deg) * 1.5));
 
+      const selected = n.id === selectedNodeId;
+      const hovered = n.id === hoveredNodeId;
+      const highlighted = highlightedNodeIds.has(n.id);
+      const dimmed = hoveredNodeId !== null && !hoveredNeighbors.has(n.id);
       let flags = 0;
-      if (n.id === selectedNodeId) flags |= FLAG_SELECTED;
-      if (n.id === hoveredNodeId) flags |= FLAG_HOVERED;
-      if (highlightedNodeIds.has(n.id)) flags |= FLAG_HIGHLIGHTED;
-      if (hoveredNodeId && !hoveredNeighbors.has(n.id)) flags |= FLAG_DIMMED;
+      if (selected) flags |= FLAG_SELECTED;
+      if (hovered) flags |= FLAG_HOVERED;
+      if (highlighted) flags |= FLAG_HIGHLIGHTED;
+      if (dimmed) flags |= FLAG_DIMMED;
 
-      // 选颜色
-      let color: [number, number, number, number];
-      if (n.id === selectedNodeId) color = hexToRgba("#ffcc00", 1);
-      else if (n.id === hoveredNodeId) color = hexToRgba("#4fc3ff", 1);
-      else if (highlightedNodeIds.has(n.id)) color = hexToRgba("#ff8a65", 1);
-      else if (flags & FLAG_DIMMED) color = [0.27, 0.27, 0.27, 0.4];
-      else color = hexToRgba(NODE_COLORS[n.group] ?? "#808080", 1);
+      let color: Rgba;
+      if (selected) color = SELECTED_NODE_RGBA;
+      else if (hovered) color = HOVERED_NODE_RGBA;
+      else if (highlighted) color = HIGHLIGHTED_NODE_RGBA;
+      else if (dimmed) color = DIMMED_NODE_RGBA;
+      else color = NODE_COLOR_RGBA[n.group] ?? DEFAULT_NODE_RGBA;
 
       const base = i * WEBGPU_NODE_INSTANCE_LAYOUT.wordStride;
       const positionOffset = base + WEBGPU_NODE_INSTANCE_LAYOUT.positionWordOffset;
@@ -710,6 +729,8 @@ export class WebGPURenderer implements GraphRenderer {
     hoveredNodeId: string | null,
     hoveredNeighbors: Set<string>,
   ): void {
+    if (edges.length === 0) return;
+
     if (edges.length > r.edgeCapacity) {
       const newCapacity = growBufferCapacity(
         r.edgeCapacity,

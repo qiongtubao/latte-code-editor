@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebGPURenderer } from "./WebGPURenderer";
+import { WEBGPU_NODE_INSTANCE_LAYOUT } from "./webgpuUploadBuffer";
 import type { SimRenderNode } from "./graphRenderer";
 
 interface FakeWebGPU {
@@ -10,6 +11,7 @@ interface FakeWebGPU {
   createPipelineLayout: ReturnType<typeof vi.fn>;
   createRenderPipeline: ReturnType<typeof vi.fn>;
   createBindGroup: ReturnType<typeof vi.fn>;
+  writeBuffer: ReturnType<typeof vi.fn>;
   buffers: Array<{ destroy: ReturnType<typeof vi.fn> }>;
   resolveLost: (info: GPUDeviceLostInfo) => void;
 }
@@ -37,10 +39,11 @@ function createFakeDevice(): FakeWebGPU {
   const createPipelineLayout = vi.fn(() => pipelineLayout);
   const createRenderPipeline = vi.fn(() => ({} as GPURenderPipeline));
   const createBindGroup = vi.fn(() => ({} as GPUBindGroup));
+  const writeBuffer = vi.fn();
   const device = {
     lost,
     queue: {
-      writeBuffer: vi.fn(),
+      writeBuffer,
       submit: vi.fn(),
     },
     createBindGroupLayout,
@@ -65,6 +68,7 @@ function createFakeDevice(): FakeWebGPU {
     createPipelineLayout,
     createRenderPipeline,
     createBindGroup,
+    writeBuffer,
     buffers,
     resolveLost,
   };
@@ -79,6 +83,37 @@ function node(index: number): SimRenderNode {
     vy: 0,
     group: 1,
   };
+}
+
+function uploadedNodeColor(
+  writeBuffer: ReturnType<typeof vi.fn>,
+  nodeIndex: number,
+): number[] {
+  const data = writeBuffer.mock.calls[0]?.[2] as ArrayBuffer;
+  const f32 = new Float32Array(data);
+  const offset =
+    nodeIndex * WEBGPU_NODE_INSTANCE_LAYOUT.wordStride
+    + WEBGPU_NODE_INSTANCE_LAYOUT.colorWordOffset;
+  return Array.from(f32.subarray(offset, offset + 4));
+}
+
+function expectColor(actual: number[], expected: number[]): void {
+  expect(actual).toHaveLength(4);
+  for (let index = 0; index < 4; index++) {
+    expect(actual[index]).toBeCloseTo(expected[index]);
+  }
+}
+
+interface WebGPURendererInternals {
+  res: unknown;
+  uploadNodes: (
+    resources: unknown,
+    nodes: SimRenderNode[],
+    selectedNodeId: string | null,
+    hoveredNodeId: string | null,
+    highlightedNodeIds: Set<string>,
+    hoveredNeighbors: Set<string>,
+  ) => void;
 }
 
 describe("WebGPURenderer initialization", () => {
@@ -148,8 +183,9 @@ describe("WebGPURenderer initialization", () => {
     expect(overlay?.width).toBe(1280);
     expect(overlay?.height).toBe(960);
 
+    const largeNodes = Array.from({ length: 1025 }, (_, index) => node(index));
     renderer.render({
-      simNodes: Array.from({ length: 1025 }, (_, index) => node(index)),
+      simNodes: largeNodes,
       simEdges: [],
       selectedNodeId: null,
       hoveredNodeId: null,
@@ -159,6 +195,40 @@ describe("WebGPURenderer initialization", () => {
     });
     expect(fake.createBindGroup).toHaveBeenCalledTimes(2);
     expect(fake.createBindGroup.mock.calls[1]?.[0].layout).toBe(fake.bindGroupLayout);
+
+    const internals = renderer as unknown as WebGPURendererInternals;
+    const parseIntSpy = vi.spyOn(globalThis, "parseInt");
+    fake.writeBuffer.mockClear();
+    internals.uploadNodes(
+      internals.res,
+      largeNodes,
+      null,
+      null,
+      new Set(),
+      new Set(),
+    );
+    expect(parseIntSpy).not.toHaveBeenCalled();
+    expectColor(uploadedNodeColor(fake.writeBuffer, 0), [
+      0x6a / 255,
+      0x87 / 255,
+      0x59 / 255,
+      1,
+    ]);
+
+    fake.writeBuffer.mockClear();
+    internals.uploadNodes(
+      internals.res,
+      largeNodes.slice(0, 4),
+      "n0",
+      "n1",
+      new Set(["n2"]),
+      new Set(["n1"]),
+    );
+    expect(parseIntSpy).not.toHaveBeenCalled();
+    expectColor(uploadedNodeColor(fake.writeBuffer, 0), [1, 0xcc / 255, 0, 1]);
+    expectColor(uploadedNodeColor(fake.writeBuffer, 1), [0x4f / 255, 0xc3 / 255, 1, 1]);
+    expectColor(uploadedNodeColor(fake.writeBuffer, 2), [1, 0x8a / 255, 0x65 / 255, 1]);
+    expectColor(uploadedNodeColor(fake.writeBuffer, 3), [0.27, 0.27, 0.27, 0.4]);
 
     renderer.destroy();
     expect(renderer.initialized).toBe(false);
