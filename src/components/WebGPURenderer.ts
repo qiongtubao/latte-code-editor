@@ -32,6 +32,13 @@ import {
   isEdgeDimmed,
   type CachedGraphEdge,
 } from "./graphTopologyCache";
+import {
+  ReusableUploadBuffer,
+  WEBGPU_EDGE_RECORD_LAYOUT,
+  WEBGPU_NODE_INSTANCE_LAYOUT,
+  WEBGPU_UNIFORM_BYTE_LENGTH,
+  growBufferCapacity,
+} from "./webgpuUploadBuffer";
 import { cssVar } from "../skins";
 
 /** GPU buffer 容量上限（避免极端情况下无限增长） */
@@ -58,8 +65,8 @@ interface WebGPUResources {
 
   // 边管线
   edgePipeline: GPURenderPipeline;
-  edgeVertexBuffer: GPUBuffer;       // 边顶点（src/dst 索引对）
-  edgeVertexCapacity: number;
+  edgeVertexBuffer: GPUBuffer;       // 每条边一个 storage record
+  edgeCapacity: number;              // 当前 edge record 容量
 
   // 通用 uniform（view matrix + 视口尺寸）
   uniformBuffer: GPUBuffer;
@@ -75,26 +82,29 @@ interface WebGPUResources {
   dpr: number;
 }
 
-/** Node instance 数据布局（struct in WGSL）：
- *  pos:        vec2<f32>   // 8 bytes, offset 0
- *  radius:     f32         // 4 bytes, offset 8
- *  color:      vec4<f32>   // 16 bytes, offset 12 (r,g,b,a)
- *  flags:      u32         // 4 bytes, offset 28
- *  reserved:   u32         // 4 bytes, offset 32 (对齐到 16)
- *  total: 36 bytes per instance
+/** Node instance storage 布局（WGSL storage struct 按 16 bytes 对齐）：
+ *  pos:        vec2<f32>   // offset 0
+ *  radius:     f32         // offset 8
+ *  _pad0:      f32         // offset 12
+ *  color:      vec4<f32>   // offset 16
+ *  flags:      u32         // offset 32
+ *  _pad1:      u32         // offset 36
+ *  tail padding            // offset 40..47
+ *  total array stride: 48 bytes
  */
-const NODE_INSTANCE_STRIDE = 36;
+const NODE_INSTANCE_STRIDE = WEBGPU_NODE_INSTANCE_LAYOUT.byteStride;
 
-/** Edge vertex 布局：
- *  srcIdx:  u32
- *  dstIdx:  u32
- *  color:   vec4<f32>
- *  width:   f32
- *  alpha:   f32
- *  reserved: vec2<f32>
- *  total: 32 bytes per vertex
+/** Edge storage record 布局（vec4 要求 16-byte alignment）：
+ *  srcIdx:     u32         // offset 0
+ *  dstIdx:     u32         // offset 4
+ *  padding                 // offset 8..15
+ *  color:      vec4<f32>   // offset 16
+ *  width:      f32         // offset 32
+ *  alpha:      f32         // offset 36
+ *  reserved:   vec2<f32>   // offset 40
+ *  total array stride: 48 bytes
  */
-const EDGE_VERTEX_STRIDE = 32;
+const EDGE_VERTEX_STRIDE = WEBGPU_EDGE_RECORD_LAYOUT.byteStride;
 
 /** Uniform 布局：
  *  viewport:    vec2<f32>  (canvas size in CSS pixels)
@@ -106,7 +116,7 @@ const EDGE_VERTEX_STRIDE = 32;
  *  reserved:    u32
  *  total: 40 bytes
  */
-const UNIFORM_STRIDE = 40;
+const UNIFORM_STRIDE = WEBGPU_UNIFORM_BYTE_LENGTH;
 
 // ============================================================================
 // WGSL Shaders
@@ -261,6 +271,9 @@ export class WebGPURenderer implements GraphRenderer {
   private initError: string | null = null;
   private topologyCache = new GraphTopologyCache();
   private nodeIndexCache = new GraphNodeIndexCache();
+  private nodeUploadBuffer = new ReusableUploadBuffer();
+  private edgeUploadBuffer = new ReusableUploadBuffer();
+  private uniformUploadBuffer = new ReusableUploadBuffer();
 
   /** 渲染器是否成功初始化（外部可读，用于状态显示） */
   get initialized(): boolean { return this.res !== null; }
@@ -333,7 +346,7 @@ export class WebGPURenderer implements GraphRenderer {
         nodeInstanceCapacity: 1024,
         edgePipeline,
         edgeVertexBuffer,
-        edgeVertexCapacity: 2048,
+        edgeCapacity: 2048,
         uniformBuffer,
         uniformBindGroup,
         textCtx,
@@ -446,22 +459,26 @@ export class WebGPURenderer implements GraphRenderer {
   }
 
   destroy(): void {
-    if (!this.res) return;
     const r = this.res;
-    r.nodeVertexBuffer.destroy();
-    r.nodeInstanceBuffer.destroy();
-    r.edgeVertexBuffer.destroy();
-    r.uniformBuffer.destroy();
-    r.device.destroy();
-    // 清理 text overlay canvas
-    const overlay = r.canvas.parentElement?.querySelector<HTMLCanvasElement>(
-      "canvas[data-webgpu-text-overlay]"
-    );
-    overlay?.remove();
+    if (r) {
+      r.nodeVertexBuffer.destroy();
+      r.nodeInstanceBuffer.destroy();
+      r.edgeVertexBuffer.destroy();
+      r.uniformBuffer.destroy();
+      r.device.destroy();
+      // 清理 text overlay canvas
+      const overlay = r.canvas.parentElement?.querySelector<HTMLCanvasElement>(
+        "canvas[data-webgpu-text-overlay]"
+      );
+      overlay?.remove();
+    }
     this.res = null;
     this.getNodeMap = null;
     this.topologyCache.clear();
     this.nodeIndexCache.clear();
+    this.nodeUploadBuffer.clear();
+    this.edgeUploadBuffer.clear();
+    this.uniformUploadBuffer.clear();
   }
 
   // ============================================================================
@@ -605,11 +622,14 @@ export class WebGPURenderer implements GraphRenderer {
     hoveredNeighbors: Set<string>,
   ): void {
     if (nodes.length > r.nodeInstanceCapacity) {
-      // 扩容（按 1.5 倍）
-      const newCap = Math.min(MAX_NODES, Math.ceil(r.nodeInstanceCapacity * 1.5));
+      const newCapacity = growBufferCapacity(
+        r.nodeInstanceCapacity,
+        nodes.length,
+        MAX_NODES,
+      );
       r.nodeInstanceBuffer.destroy();
-      r.nodeInstanceBuffer = this.createNodeInstanceBuffer(r.device, newCap);
-      r.nodeInstanceCapacity = newCap;
+      r.nodeInstanceBuffer = this.createNodeInstanceBuffer(r.device, newCapacity);
+      r.nodeInstanceCapacity = newCapacity;
       // 重建 bind group
       r.uniformBindGroup = r.device.createBindGroup({
         layout: r.edgePipeline.getBindGroupLayout(0),
@@ -621,9 +641,8 @@ export class WebGPURenderer implements GraphRenderer {
       });
     }
 
-    const data = new ArrayBuffer(nodes.length * NODE_INSTANCE_STRIDE);
-    const f32 = new Float32Array(data);
-    const u32 = new Uint32Array(data);
+    const byteLength = nodes.length * NODE_INSTANCE_STRIDE;
+    const { buffer: data, f32, u32 } = this.nodeUploadBuffer.acquire(byteLength);
 
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i];
@@ -644,21 +663,24 @@ export class WebGPURenderer implements GraphRenderer {
       else if (flags & FLAG_DIMMED) color = [0.27, 0.27, 0.27, 0.4];
       else color = hexToRgba(NODE_COLORS[n.group] ?? "#808080", 1);
 
-      // layout: pos(2f) + radius(1f) + pad(1f) + color(4f) + flags(1u) + pad(1u)
-      const base = i * (NODE_INSTANCE_STRIDE / 4);
-      f32[base + 0] = n.x;
-      f32[base + 1] = n.y;
-      f32[base + 2] = radius;
-      f32[base + 3] = 0; // pad
-      f32[base + 4] = color[0];
-      f32[base + 5] = color[1];
-      f32[base + 6] = color[2];
-      f32[base + 7] = color[3];
-      u32[base + 8] = flags;
-      u32[base + 9] = 0; // pad
+      const base = i * WEBGPU_NODE_INSTANCE_LAYOUT.wordStride;
+      const positionOffset = base + WEBGPU_NODE_INSTANCE_LAYOUT.positionWordOffset;
+      const colorOffset = base + WEBGPU_NODE_INSTANCE_LAYOUT.colorWordOffset;
+      f32[positionOffset] = n.x;
+      f32[positionOffset + 1] = n.y;
+      f32[base + WEBGPU_NODE_INSTANCE_LAYOUT.radiusWordOffset] = radius;
+      f32[base + 3] = 0;
+      f32[colorOffset] = color[0];
+      f32[colorOffset + 1] = color[1];
+      f32[colorOffset + 2] = color[2];
+      f32[colorOffset + 3] = color[3];
+      u32[base + WEBGPU_NODE_INSTANCE_LAYOUT.flagsWordOffset] = flags;
+      u32[base + 9] = 0;
     }
 
-    r.device.queue.writeBuffer(r.nodeInstanceBuffer, 0, data);
+    if (byteLength > 0) {
+      r.device.queue.writeBuffer(r.nodeInstanceBuffer, 0, data, 0, byteLength);
+    }
   }
 
   private uploadEdges(
@@ -669,11 +691,15 @@ export class WebGPURenderer implements GraphRenderer {
     hoveredNodeId: string | null,
     hoveredNeighbors: Set<string>,
   ): void {
-    if (edges.length * 2 > r.edgeVertexCapacity) {
-      const newCap = Math.min(MAX_EDGES, Math.ceil(r.edgeVertexCapacity * 1.5));
+    if (edges.length > r.edgeCapacity) {
+      const newCapacity = growBufferCapacity(
+        r.edgeCapacity,
+        edges.length,
+        MAX_EDGES,
+      );
       r.edgeVertexBuffer.destroy();
-      r.edgeVertexBuffer = this.createEdgeVertexBuffer(r.device, newCap);
-      r.edgeVertexCapacity = newCap;
+      r.edgeVertexBuffer = this.createEdgeVertexBuffer(r.device, newCapacity);
+      r.edgeCapacity = newCapacity;
       r.uniformBindGroup = r.device.createBindGroup({
         layout: r.edgePipeline.getBindGroupLayout(0),
         entries: [
@@ -686,9 +712,8 @@ export class WebGPURenderer implements GraphRenderer {
 
     const idToIndex = this.nodeIndexCache.get(nodes);
 
-    const data = new ArrayBuffer(edges.length * EDGE_VERTEX_STRIDE);
-    const f32 = new Float32Array(data);
-    const u32 = new Uint32Array(data);
+    const byteLength = edges.length * EDGE_VERTEX_STRIDE;
+    const { buffer: data, f32, u32 } = this.edgeUploadBuffer.acquire(byteLength);
     // 高亮边的对比色跟随皮肤（绘制时现取一次）。
     const highlightedRgba = hexToRgba(cssVar("--fg", "#ffffff"), 1);
 
@@ -720,18 +745,21 @@ export class WebGPURenderer implements GraphRenderer {
       const color = isHighlighted ? highlightedRgba : rgba;
       const width = isHighlighted ? gpuWidth * 2 : gpuWidth;
 
-      const base = i * (EDGE_VERTEX_STRIDE / 4);
-      u32[base + 0] = sourceIndex;
-      u32[base + 1] = targetIndex;
-      f32[base + 2] = color[0];
-      f32[base + 3] = color[1];
-      f32[base + 4] = color[2];
-      f32[base + 5] = color[3];
-      f32[base + 6] = width;
-      f32[base + 7] = alpha;
+      const base = i * WEBGPU_EDGE_RECORD_LAYOUT.wordStride;
+      const colorOffset = base + WEBGPU_EDGE_RECORD_LAYOUT.colorWordOffset;
+      u32[base + WEBGPU_EDGE_RECORD_LAYOUT.sourceIndexWordOffset] = sourceIndex;
+      u32[base + WEBGPU_EDGE_RECORD_LAYOUT.targetIndexWordOffset] = targetIndex;
+      f32[colorOffset] = color[0];
+      f32[colorOffset + 1] = color[1];
+      f32[colorOffset + 2] = color[2];
+      f32[colorOffset + 3] = color[3];
+      f32[base + WEBGPU_EDGE_RECORD_LAYOUT.widthWordOffset] = width;
+      f32[base + WEBGPU_EDGE_RECORD_LAYOUT.alphaWordOffset] = alpha;
     }
 
-    r.device.queue.writeBuffer(r.edgeVertexBuffer, 0, data);
+    if (byteLength > 0) {
+      r.device.queue.writeBuffer(r.edgeVertexBuffer, 0, data, 0, byteLength);
+    }
   }
 
   private uploadUniform(
@@ -741,9 +769,7 @@ export class WebGPURenderer implements GraphRenderer {
     nodeCount: number,
     edgeCount: number,
   ): void {
-    const data = new ArrayBuffer(UNIFORM_STRIDE);
-    const f32 = new Float32Array(data);
-    const u32 = new Uint32Array(data);
+    const { buffer: data, f32, u32 } = this.uniformUploadBuffer.acquire(UNIFORM_STRIDE);
 
     f32[0] = r.canvas.width / r.dpr;  // viewport (CSS pixels)
     f32[1] = r.canvas.height / r.dpr;
@@ -754,7 +780,7 @@ export class WebGPURenderer implements GraphRenderer {
     u32[6] = nodeCount;
     u32[7] = edgeCount;
 
-    r.device.queue.writeBuffer(r.uniformBuffer, 0, data);
+    r.device.queue.writeBuffer(r.uniformBuffer, 0, data, 0, UNIFORM_STRIDE);
   }
 
   // ============================================================================
