@@ -15,12 +15,78 @@ pub struct Buffer {
     pub is_large_file: bool,
 }
 
-/// 大文件阈值：50MB 或 100,000 行
-const LARGE_FILE_SIZE: u64 = 50 * 1024 * 1024;
-const LARGE_FILE_LINES: usize = 100_000;
+// 大文件的两个阈值此前混成一个，语义被搅在一起。现在分开：
+//
+// 1) REFUSE_READ_BYTES —— 根本不读内容，只回一句提示。这是内存与 IPC 的
+//    硬上限（整个文件会以字符串形式过一次 invoke）。
+// 2) PLAIN_VIEWER_* —— 内容照常完整读取，只是渲染退化成只读纯文本
+//    viewer，不交给 CodeMirror。
+//
+// 刻意**不下调** REFUSE_READ_BYTES：8–50MB 的文件目前是「能读、以纯文本
+// 查看」，调低会让它们退化成只剩一句提示，从能看变成不能看。
+
+/// 超过此大小不读取内容（内存 / IPC 硬上限）
+const REFUSE_READ_BYTES: u64 = 50 * 1024 * 1024;
+
+/// 超过此大小改用只读纯文本 viewer。
+///
+/// 必须按字节判定，不能只看行数：一个 30MB 的压缩 JS 可能只有几百行，
+/// 只看行数会让它直接进 CodeMirror。
+const PLAIN_VIEWER_BYTES: u64 = 8 * 1024 * 1024;
+
+/// 超过此行数改用只读纯文本 viewer。
+///
+/// 从 100_000 放宽到 400_000：CodeMirror 6 的语法解析本就是增量且按视口
+/// 驱动的（带时间预算分片、解析到视口边界即让出主线程、未解析区域先不
+/// 上色），10 万行对它偏保守。放宽后这一档文件能恢复高亮与编辑，而"只
+/// 高亮可见部分"这件事由 CM6 自己完成 —— 且它用从头增量解析的方式绕开了
+/// 词法状态问题（孤立地给某个行区间上色无法知道该处是否位于块注释或
+/// 多行字符串内部）。
+const PLAIN_VIEWER_LINES: usize = 400_000;
 
 /// tmp 文件名去重计数器：同一文件的并发保存不应互相踩踏。
 static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `read_with_limits` 的结果。
+struct ReadOutcome {
+    content: String,
+    line_count: usize,
+    byte_size: usize,
+    is_large: bool,
+}
+
+/// 按大小限制读取文件内容并判定是否退化为只读纯文本 viewer。
+///
+/// 抽成共用函数是因为 `open` 与 `refresh` 各自实现过一遍同样的判定——
+/// 两份重复的阈值逻辑迟早漂移（`search_text` / `replace_text` 的 glob 口径
+/// 就是这么分叉的）。
+async fn read_with_limits(path: &Path, file_size: u64) -> Result<ReadOutcome, String> {
+    let refuse_read = file_size > REFUSE_READ_BYTES;
+
+    let content = if refuse_read {
+        format!(
+            "[Large file: {} bytes. Opened in read-only large file mode.]",
+            file_size
+        )
+    } else {
+        tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| format!("Cannot read file: {}", e))?
+    };
+
+    let line_count = content.lines().count();
+    let byte_size = content.len();
+    // 三者任一成立即退化为只读纯文本 viewer
+    let is_large =
+        refuse_read || file_size > PLAIN_VIEWER_BYTES || line_count > PLAIN_VIEWER_LINES;
+
+    Ok(ReadOutcome {
+        content,
+        line_count,
+        byte_size,
+        is_large,
+    })
+}
 
 /// 原子覆写文件：先写同目录临时文件，再 rename 顶掉目标。
 ///
@@ -97,23 +163,12 @@ impl BufferManager {
         let metadata = std::fs::metadata(&canonical)
             .map_err(|e| format!("Cannot read metadata: {}", e))?;
 
-        let file_size = metadata.len();
-        let is_large_size = file_size > LARGE_FILE_SIZE;
-
-        let content = if is_large_size {
-            format!(
-                "[Large file: {} bytes. Opened in read-only large file mode.]",
-                file_size
-            )
-        } else {
-            tokio::fs::read_to_string(&canonical)
-                .await
-                .map_err(|e| format!("Cannot read file: {}", e))?
-        };
-
-        let line_count = content.lines().count();
-        let byte_size = content.len();
-        let is_large = is_large_size || line_count > LARGE_FILE_LINES;
+        let ReadOutcome {
+            content,
+            line_count,
+            byte_size,
+            is_large,
+        } = read_with_limits(&canonical, metadata.len()).await?;
 
         let buffer = Arc::new(RwLock::new(Buffer {
             path: canonical.clone(),
@@ -217,23 +272,12 @@ impl BufferManager {
         let metadata = std::fs::metadata(&canonical)
             .map_err(|e| format!("Cannot read metadata: {}", e))?;
 
-        let file_size = metadata.len();
-        let is_large_size = file_size > LARGE_FILE_SIZE;
-
-        let content = if is_large_size {
-            format!(
-                "[Large file: {} bytes. Opened in read-only large file mode.]",
-                file_size
-            )
-        } else {
-            tokio::fs::read_to_string(&canonical)
-                .await
-                .map_err(|e| format!("Cannot read file: {}", e))?
-        };
-
-        let line_count = content.lines().count();
-        let byte_size = content.len();
-        let is_large = is_large_size || line_count > LARGE_FILE_LINES;
+        let ReadOutcome {
+            content,
+            line_count,
+            byte_size,
+            is_large,
+        } = read_with_limits(&canonical, metadata.len()).await?;
 
         // 更新 buffer 内容
         {
@@ -319,6 +363,74 @@ mod tests {
         let r = buf.read().await;
         assert_eq!(r.content, "world");
         assert!(r.is_modified);
+    }
+
+    /// 常规文件：交给 CodeMirror，不退化
+    #[tokio::test]
+    async fn normal_file_is_not_marked_large() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("small.rs");
+        std::fs::write(&p, "fn main() {}\n").unwrap();
+        let bm = BufferManager::new();
+        let buf = bm.open(&p).await.unwrap();
+        let r = buf.read().await;
+        assert!(!r.is_large_file);
+        assert_eq!(r.content, "fn main() {}\n");
+    }
+
+    /// 行数在放宽后的阈值之内：仍然交给 CodeMirror。
+    /// 旧阈值是 100_000，这个文件会被误判为大文件而丢掉高亮与编辑能力。
+    #[tokio::test]
+    async fn file_within_raised_line_limit_stays_editable() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("many_lines.rs");
+        let content = "x\n".repeat(150_000);
+        std::fs::write(&p, &content).unwrap();
+        let bm = BufferManager::new();
+        let buf = bm.open(&p).await.unwrap();
+        let r = buf.read().await;
+        assert_eq!(r.line_count, 150_000);
+        assert!(
+            !r.is_large_file,
+            "15 万行应在放宽后的 400_000 阈值内，不该退化"
+        );
+    }
+
+    /// 字节数超限但行数很少（压缩后的产物形态）：必须按字节判定退化。
+    /// 只看行数会让这类文件直接进 CodeMirror。
+    #[tokio::test]
+    async fn byte_heavy_file_with_few_lines_is_marked_large() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("bundle.min.js");
+        // 单行、约 9MB，超过 PLAIN_VIEWER_BYTES(8MB)
+        let content = "a".repeat(9 * 1024 * 1024);
+        std::fs::write(&p, &content).unwrap();
+        let bm = BufferManager::new();
+        let buf = bm.open(&p).await.unwrap();
+        let r = buf.read().await;
+        assert_eq!(r.line_count, 1, "压缩产物通常只有极少行");
+        assert!(r.is_large_file, "超过字节阈值必须退化，不能只看行数");
+        // 内容仍应完整读取（未达到拒读上限）
+        assert_eq!(r.content.len(), 9 * 1024 * 1024);
+    }
+
+    /// 未达拒读上限的大文件内容仍完整可读 —— 不能因为"大"就变成一句提示，
+    /// 那会让 8–50MB 的文件从能看变成不能看。
+    #[tokio::test]
+    async fn large_but_readable_file_keeps_its_content() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("big.log");
+        let content = "line\n".repeat(500_000); // 约 2.5MB、50 万行
+        std::fs::write(&p, &content).unwrap();
+        let bm = BufferManager::new();
+        let buf = bm.open(&p).await.unwrap();
+        let r = buf.read().await;
+        assert!(r.is_large_file, "50 万行超过行数阈值");
+        assert!(
+            !r.content.starts_with("[Large file:"),
+            "未超过拒读上限就不该被替换成提示文本"
+        );
+        assert_eq!(r.line_count, 500_000);
     }
 
     /// 验证 save 落盘
