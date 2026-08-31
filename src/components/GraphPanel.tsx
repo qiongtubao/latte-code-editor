@@ -21,6 +21,7 @@ import type {
 import { nodeKindToGroup } from "../hooks/graphTypes";
 import { NODE_COLORS } from "./graphRenderer";
 import { toWorkspaceRel } from "../chatBridge";
+import { createAnimationFrameCoalescer } from "../utils/animationFrameCoalescer";
 
 export function GraphPanel({
   folderRoot = null,
@@ -233,6 +234,16 @@ export function GraphPanel({
 
     const w = new Worker(new URL("./forceLayout.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = w;
+    const tickPublisher = createAnimationFrameCoalescer<SimResult>((result) => {
+      // Recheck at flush time: the layout may have been replaced or unmounted
+      // after this result was queued but before the animation frame ran.
+      if (
+        layoutVersionRef.current === myVersion &&
+        workerRef.current === w
+      ) {
+        setSimResult(result);
+      }
+    });
     const t = setTimeout(() => {
       // 3s 还没收到任何 tick：worker 卡住了，直接用圆形兜底
       if (layoutVersionRef.current === myVersion && workerRef.current === w) {
@@ -242,13 +253,17 @@ export function GraphPanel({
     w.onmessage = (e: MessageEvent<SimResult & { type?: string }>) => {
       if (e.data?.type === "ready") return;
       // 旧 worker 迟到的 tick：忽略，避免把已经重置的 sim 写回去
-      if (layoutVersionRef.current !== myVersion) return;
+      if (
+        layoutVersionRef.current !== myVersion ||
+        workerRef.current !== w
+      ) return;
       clearTimeout(t);
-      setSimResult(e.data);
+      tickPublisher.schedule(e.data);
     };
     w.postMessage({ nodes: sNodes, edges: sEdges, width: containerRef.current?.clientWidth || 800, height: containerRef.current?.clientHeight || 600 });
     return () => {
       clearTimeout(t);
+      tickPublisher.cancel();
       w.terminate();
       if (workerRef.current === w) workerRef.current = null;
     };

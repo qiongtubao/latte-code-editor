@@ -62,6 +62,28 @@ const fakeGraph: GraphData = {
   stats: { total_nodes: 3, total_edges: 1, node_kinds: [], edge_kinds: [] },
 };
 
+const burstGraph: GraphData = {
+  nodes: Array.from({ length: 4 }, (_, index) => ({
+    id: `fn:${index}`,
+    kind: "function",
+    name: `fn${index}`,
+    qualified_name: `fn${index}`,
+    file_path: `/repo/src/fn${index}.ts`,
+    language: "typescript",
+    start_line: index + 1,
+    end_line: index + 1,
+    signature: `fn${index}()`,
+  })),
+  edges: Array.from({ length: 3 }, (_, index) => ({
+    id: `call:${index}`,
+    source: `fn:${index}`,
+    target: `fn:${index + 1}`,
+    kind: "calls",
+    metadata: null,
+  })),
+  stats: { total_nodes: 4, total_edges: 3, node_kinds: [], edge_kinds: [] },
+};
+
 const fakeFile = (path: string) => ({
   path,
   content: "// hello",
@@ -248,6 +270,82 @@ describe("GraphPanel 搜索结果点击", () => {
     // 选中节点也指向 Foo
     expect(useGraphStore.getState().selectedNodeId).toBe("c:src/a.ts:Foo");
   });
+  it("coalesces burst worker ticks and publishes only the latest result", async () => {
+    class BurstWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      postMessage(message: unknown) {
+        const input = message as {
+          nodes: Array<{ id: string; group: number }>;
+          edges: Array<{ source: string; target: string; kind: string }>;
+        };
+        for (const tick of [1, 2, 3]) {
+          this.onmessage?.({
+            data: {
+              nodes: input.nodes.map((node) => ({
+                id: node.id,
+                x: tick,
+                y: tick,
+                vx: 0,
+                vy: 0,
+                group: node.group,
+              })),
+              edges: input.edges,
+            },
+          } as MessageEvent);
+        }
+      }
+      terminate() { /* no-op */ }
+      addEventListener() {}
+      removeEventListener() {}
+    }
+
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrameId = 1;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = nextFrameId++;
+      frames.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    (globalThis as unknown as { Worker: typeof BurstWorker }).Worker = BurstWorker;
+    invokeMock.mockImplementation(async (command: string) =>
+      command === "graph_get_data" ? { data: burstGraph } : null,
+    );
+
+    const view = render(<GraphPanel />);
+    let unsubscribe = () => {};
+    try {
+      await waitFor(() => {
+        expect(useGraphStore.getState().graphData?.nodes).toHaveLength(4);
+        expect(frames.size).toBe(1);
+      });
+
+      let simulationPublications = 0;
+      unsubscribe = useGraphStore.subscribe((state, previousState) => {
+        if (state.simNodes !== previousState.simNodes) {
+          simulationPublications += 1;
+        }
+      });
+      expect(useGraphStore.getState().simNodes).toEqual([]);
+
+      const [frameId, flush] = frames.entries().next().value as [
+        number,
+        FrameRequestCallback,
+      ];
+      frames.delete(frameId);
+      act(() => flush(performance.now()));
+
+      expect(simulationPublications).toBe(1);
+      expect(useGraphStore.getState().simNodes).toHaveLength(4);
+      expect(useGraphStore.getState().simNodes.every((node) => node.x === 3)).toBe(true);
+    } finally {
+      unsubscribe();
+      view.unmount();
+      (globalThis as unknown as { Worker: typeof FakeWorker }).Worker = FakeWorker;
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("simulation-only ticks do not commit the GraphPanel React tree", async () => {
     let commits = 0;
     render(
