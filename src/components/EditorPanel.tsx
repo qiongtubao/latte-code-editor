@@ -1,10 +1,12 @@
 import { useCallback, useEffect } from "react";
 import { useEditorStore } from "../hooks/useEditorStore";
-import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import {
+  LazyCodeEditor,
   LazyLargeFileMode,
   LazyMarkdownPreview,
+  preloadCodeEditor,
   preloadMarkdownPreview,
+  shouldPreloadCodeEditor,
 } from "./LazyEditorViewers";
 import { EmptyState } from "./EmptyState";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
@@ -34,6 +36,9 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
         filters: [{ name: "All Files", extensions: ["*"] }],
       });
       if (typeof selected !== "string") return;
+      if (shouldPreloadCodeEditor(selected)) {
+        void preloadCodeEditor().catch(() => undefined);
+      }
       const result = await openFile(selected);
       openFileOrSwitch(result);
     } catch (e) {
@@ -147,6 +152,8 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
                 className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "preview" ? "bg-accent text-white" : "bg-control text-fg hover:bg-control-hover"}`}
               >Preview</button>
               <button
+                onMouseEnter={() => void preloadCodeEditor().catch(() => undefined)}
+                onFocus={() => void preloadCodeEditor().catch(() => undefined)}
                 onClick={() => setMarkdownMode("source")}
                 className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "source" ? "bg-accent text-white" : "bg-control text-fg hover:bg-control-hover"}`}
               >Source</button>
@@ -156,7 +163,7 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
               {markdownMode === "preview" ? (
                 <LazyMarkdownPreview content={currentContent} filePath={filePath || undefined} />
               ) : (
-                <CodeMirrorEditor
+                <LazyCodeEditor
                   onCtrlClick={onCtrlClick}
                   onShowInGraph={onShowInGraph}
                   content={currentContent}
@@ -169,7 +176,7 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
         );
       case "code":
         return (
-          <CodeMirrorEditor
+          <LazyCodeEditor
             onCtrlClick={onCtrlClick}
             onShowInGraph={onShowInGraph}
             content={currentContent}

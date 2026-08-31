@@ -9,11 +9,11 @@ vi.mock("../api/commands", () => ({
   openFile: vi.fn(),
   saveFile: vi.fn(),
 }));
-vi.mock("./CodeMirrorEditor", () => ({
-  CodeMirrorEditor: ({ content }: { content: string }) => <div>source:{content}</div>,
-}));
 vi.mock("./LazyEditorViewers", () => ({
+  preloadCodeEditor: vi.fn().mockResolvedValue(undefined),
   preloadMarkdownPreview: vi.fn().mockResolvedValue(undefined),
+  shouldPreloadCodeEditor: vi.fn().mockReturnValue(false),
+  LazyCodeEditor: ({ content }: { content: string }) => <div>source:{content}</div>,
   LazyMarkdownPreview: ({ content }: { content: string }) => <div>preview:{content}</div>,
   LazyLargeFileMode: ({ file }: { file: { path: string } }) => <div>large:{file.path}</div>,
 }));
@@ -63,6 +63,12 @@ describe("EditorPanel conditional viewers", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     expect(screen.getByText("preview:# title")).toBeTruthy();
+  });
+
+  it("routes ordinary code files to the lazy CodeMirror editor", () => {
+    useEditorStore.getState().openFileOrSwitch(file("/repo/main.ts", "const x = 1"));
+    render(<EditorPanel />);
+    expect(screen.getByText("source:const x = 1")).toBeTruthy();
   });
 
   it("routes large files to the lazy paged viewer", () => {

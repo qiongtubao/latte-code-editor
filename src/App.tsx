@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorPanel } from "./components/EditorPanel";
 import { LazyGraphPanel, preloadGraphPanel } from "./components/LazyGraphPanel";
 import {
+  preloadCodeEditor,
+  shouldPreloadCodeEditor,
+} from "./components/LazyEditorViewers";
+import {
   LazyChatPanel,
   LazyDebugInjectModal,
   LazyQuickOpenModal,
@@ -160,6 +164,9 @@ function App() {
 
   const handleFileOpen = useCallback(
     async (path: string) => {
+      if (shouldPreloadCodeEditor(path)) {
+        void preloadCodeEditor().catch(() => undefined);
+      }
       try {
         const result = await openFile(path);
         openFileOrSwitch(result);

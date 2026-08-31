@@ -34,7 +34,7 @@ const FLASH_MS = 1600;
 
 /** 语言扩展的可重配置槽位。语言包异步到位后经它热替换，无需重建编辑器。 */
 const langCompartment = new Compartment();
-interface CodeMirrorProps {
+export interface CodeMirrorProps {
   content: string;
   filePath: string | null;
   onChange: (content: string) => void;
