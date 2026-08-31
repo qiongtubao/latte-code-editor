@@ -13,7 +13,7 @@ import { useEditorStore } from "../hooks/useEditorStore";
 
 export function LspStatusBar() {
   const { status, refreshStatus, startLsp, stopLsp, hibernateLsp, getTotalMemory } = useLspStore();
-  const { filePath } = useEditorStore();
+  const filePath = useEditorStore((state) => state.filePath);
   const [showMenu, setShowMenu] = useState(false);
 
   // 当前文件语言

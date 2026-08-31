@@ -65,8 +65,9 @@ function App() {
   const lastSRef = useRef(0);
   const graphRevealSeqRef = useRef(0);
   const [graphRevealRequest, setGraphRevealRequest] = useState<GraphRevealRequest | null>(null);
-  const { openFileOrSwitch, filePath } = useEditorStore();
-  const { graphData } = useGraphStore();
+  const openFileOrSwitch = useEditorStore((state) => state.openFileOrSwitch);
+  const filePath = useEditorStore((state) => state.filePath);
+  const graphData = useGraphStore((state) => state.graphData);
   const activeMeta = useWorkspaceStore((s) =>
     s.activeWorkspaceId ? s.workspaces[s.activeWorkspaceId] : null,
   );

@@ -36,7 +36,7 @@ export function GraphPanel({
     setGraphData, setLoading, setError, setSimResult,
     setSelectedNode, setHoveredNode, setHighlightedNodes, requestReload,
   } = useGraphStore();
-  const { openFileOrSwitch } = useEditorStore();
+  const openFileOrSwitch = useEditorStore((state) => state.openFileOrSwitch);
   const containerRef = useRef<HTMLDivElement>(null);
   const workerRef = useRef<Worker | null>(null);
   // 递增锁：每次 layout effect 跑都 ++，旧 worker 来的 tick 比对版本号后丢弃，

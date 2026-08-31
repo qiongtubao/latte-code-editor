@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { Profiler } from "react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
@@ -75,5 +76,19 @@ describe("EditorPanel conditional viewers", () => {
     useEditorStore.getState().openFileOrSwitch(file("/repo/big.log", "", true));
     render(<EditorPanel />);
     expect(screen.getByText("large:/repo/big.log")).toBeTruthy();
+  });
+
+  it("does not rerender for unrelated cursor word changes", () => {
+    useEditorStore.getState().openFileOrSwitch(file("/repo/main.ts", "const x = 1"));
+    let commits = 0;
+    render(
+      <Profiler id="editor-panel" onRender={() => { commits += 1; }}>
+        <EditorPanel />
+      </Profiler>,
+    );
+    const initialCommits = commits;
+
+    act(() => useEditorStore.getState().setCursorWord("value"));
+    expect(commits).toBe(initialCommits);
   });
 });

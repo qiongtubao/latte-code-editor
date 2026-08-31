@@ -8,7 +8,14 @@ export function StatusBar({
 }: {
   onToggleSettings: () => void;
 }) {
-  const { openFile, modified, tabState, filePath } = useEditorStore();
+  const hasOpenFile = useEditorStore((state) => state.openFile !== null);
+  const lineCount = useEditorStore((state) => state.openFile?.line_count ?? 0);
+  const isLargeFile = useEditorStore(
+    (state) => state.openFile?.is_large_file ?? false,
+  );
+  const modified = useEditorStore((state) => state.modified);
+  const tabState = useEditorStore((state) => state.tabState);
+  const filePath = useEditorStore((state) => state.filePath);
   const autoUpdate = useGraphSettings((s) => s.auto_update_enabled);
 
   const getLanguageLabel = (path: string | null): string => {
@@ -30,9 +37,9 @@ export function StatusBar({
   };
 
   const getLineInfo = (): string => {
-    if (!openFile) return "";
-    if (openFile.is_large_file) return "Paged view";
-    return `${openFile.line_count} lines`;
+    if (!hasOpenFile) return "";
+    if (isLargeFile) return "Paged view";
+    return `${lineCount} lines`;
   };
 
   return (
@@ -60,7 +67,7 @@ export function StatusBar({
         {tabState === "large-file" && (
           <span className="opacity-90">⚠ Large File</span>
         )}
-        {openFile && <span className="opacity-80">{getLineInfo()}</span>}
+        {hasOpenFile && <span className="opacity-80">{getLineInfo()}</span>}
         {/* LSP 状态栏 - 手动触发模式 */}
         <LspStatusBar />
         <button

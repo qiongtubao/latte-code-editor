@@ -17,16 +17,16 @@ interface EditorPanelProps {
   onShowInGraph?: (word: string, filePath: string | null) => void;
 }
 export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
-  const {
-    openFile: activeFile,
-    currentContent,
-    setContent,
-    openFileOrSwitch,
-    tabState,
-    filePath,
-    markdownMode,
-    setMarkdownMode,
-  } = useEditorStore();
+  const activeFile = useEditorStore((state) =>
+    state.tabState === "large-file" ? state.openFile : null,
+  );
+  const currentContent = useEditorStore((state) => state.currentContent);
+  const setContent = useEditorStore((state) => state.setContent);
+  const openFileOrSwitch = useEditorStore((state) => state.openFileOrSwitch);
+  const tabState = useEditorStore((state) => state.tabState);
+  const filePath = useEditorStore((state) => state.filePath);
+  const markdownMode = useEditorStore((state) => state.markdownMode);
+  const setMarkdownMode = useEditorStore((state) => state.setMarkdownMode);
   const handleOpenFile = useCallback(async () => {
     // dialogOpen 此前在 try 之外：对话框自身失败（插件不可用/被取消以外的
     // 错误）会产生未处理的 Promise 拒绝。

@@ -34,8 +34,8 @@ const KIND_ORDER: Record<string, number> = {
 };
 
 export function OutlinePanel() {
-  const { filePath } = useEditorStore();
-  const { graphData } = useGraphStore();
+  const filePath = useEditorStore((state) => state.filePath);
+  const graphData = useGraphStore((state) => state.graphData);
 
   const symbols = useMemo(() => {
     if (!graphData || !filePath) return [];
