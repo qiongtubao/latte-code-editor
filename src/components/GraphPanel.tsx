@@ -3,6 +3,7 @@ import { useGraphStore } from "../hooks/useGraphStore";
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useSettingsStore } from "../hooks/useSettingsStore";
 import { CanvasGraph } from "./CanvasGraph";
+import { GraphStoreCanvas } from "./GraphStoreCanvas";
 import type { SimRenderNode } from "./graphRenderer";
 import { invoke } from "@tauri-apps/api/core";
 import { graphGetData, graphSearch } from "../api/graphCommands";
@@ -30,12 +31,18 @@ export function GraphPanel({
   revealRequest?: GraphRevealRequest | null;
   onRevealHandled?: (requestId: number) => void;
 }) {
-  const {
-    graphData, loading, error, simNodes, simEdges,
-    selectedNodeId, hoveredNodeId, highlightedNodeIds, loadVersion,
-    setGraphData, setLoading, setError, setSimResult,
-    setSelectedNode, setHoveredNode, setHighlightedNodes, requestReload,
-  } = useGraphStore();
+  const graphData = useGraphStore((state) => state.graphData);
+  const loading = useGraphStore((state) => state.loading);
+  const error = useGraphStore((state) => state.error);
+  const loadVersion = useGraphStore((state) => state.loadVersion);
+  const hasWorker = useGraphStore((state) => state.simNodes.length > 0);
+  const setGraphData = useGraphStore((state) => state.setGraphData);
+  const setLoading = useGraphStore((state) => state.setLoading);
+  const setError = useGraphStore((state) => state.setError);
+  const setSimResult = useGraphStore((state) => state.setSimResult);
+  const setSelectedNode = useGraphStore((state) => state.setSelectedNode);
+  const setHighlightedNodes = useGraphStore((state) => state.setHighlightedNodes);
+  const requestReload = useGraphStore((state) => state.requestReload);
   const openFileOrSwitch = useEditorStore((state) => state.openFileOrSwitch);
   const containerRef = useRef<HTMLDivElement>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -410,7 +417,6 @@ export function GraphPanel({
 
   const nodeCount = filteredData?.nodes.length ?? 0;
   const edgeCount = filteredData?.edges.length ?? 0;
-  const hasWorker = simNodes.length > 0;
 
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--surface)" }}>
@@ -506,11 +512,10 @@ export function GraphPanel({
         {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length > 0 && <div className="absolute inset-0 flex items-center justify-center text-fg-3 text-sm">Layout… ({filteredData.nodes.length} nodes)</div>}
         {!loading && !error && !hasWorker && filteredData && filteredData.nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-fg-3 text-sm">No nodes to display</div>}
         {hasWorker && (
-          <CanvasGraph simNodes={simNodes} simEdges={simEdges}
-            selectedNodeId={selectedNodeId} hoveredNodeId={hoveredNodeId}
-            highlightedNodeIds={highlightedNodeIds}
-            onNodeClick={handleNodeClick} onNodeHover={setHoveredNode}
-            onNodeContextMenu={handleNodeContextMenu} />
+          <GraphStoreCanvas
+            onNodeClick={handleNodeClick}
+            onNodeContextMenu={handleNodeContextMenu}
+          />
         )}
         </>)}
         {graphMode === "docs" && docSimRender && filteredDocSim && (

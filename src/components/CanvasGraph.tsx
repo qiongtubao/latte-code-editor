@@ -1,7 +1,8 @@
 import { useEffect, useRef, useCallback } from "react";
-import type { SimRenderNode } from "./graphRenderer";
-import type { GraphRenderer } from "./graphRenderer";
+import type { GraphRenderer, RenderParams, SimRenderNode } from "./graphRenderer";
 import { createRenderer, rendererKindOf, type RendererKind } from "./rendererFactory";
+
+type CanvasRenderState = Omit<RenderParams, "pan" | "zoom">;
 
 interface CanvasGraphProps {
   simNodes: SimRenderNode[];
@@ -12,6 +13,10 @@ interface CanvasGraphProps {
   onNodeClick: (nodeId: string) => void;
   onNodeHover: (nodeId: string | null) => void;
   onNodeContextMenu?: (nodeId: string, x: number, y: number) => void;
+  /** Pull the latest render state without requiring a React render per tick. */
+  getRenderState?: () => CanvasRenderState;
+  /** Pull the latest hit-test map without rebuilding it during React commits. */
+  getNodeMap?: () => Map<string, SimRenderNode>;
   /** 外部传入的渲染器（测试或自定义场景）。优先级高于 rendererKind */
   renderer?: GraphRenderer;
   /** 渲染器选择（auto = 探测后选最优；webgpu = 强制 WebGPU；canvas2d = 强制 Canvas 2D） */
@@ -29,6 +34,8 @@ export function CanvasGraph({
   onNodeClick,
   onNodeHover,
   onNodeContextMenu,
+  getRenderState,
+  getNodeMap: externalGetNodeMap,
   renderer: externalRenderer,
   rendererKind = "auto",
   onRendererReady,
@@ -41,15 +48,30 @@ export function CanvasGraph({
   const lastMouse = useRef({ x: 0, y: 0 });
   const rendererRef = useRef<GraphRenderer | null>(null);
   const nodeMapRef = useRef<Map<string, SimRenderNode>>(new Map());
+  const renderStateRef = useRef<CanvasRenderState>({
+    simNodes,
+    simEdges,
+    selectedNodeId,
+    hoveredNodeId,
+    highlightedNodeIds,
+  });
+  renderStateRef.current = {
+    simNodes,
+    simEdges,
+    selectedNodeId,
+    hoveredNodeId,
+    highlightedNodeIds,
+  };
 
   // Build node lookup from simNodes (used by hitTest via getNodeMap)
   useEffect(() => {
+    if (externalGetNodeMap) return;
     const map = new Map<string, SimRenderNode>();
     for (const n of simNodes) {
       map.set(n.id, n);
     }
     nodeMapRef.current = map;
-  }, [simNodes]);
+  }, [externalGetNodeMap, simNodes]);
 
   // Initialize renderer (支持 async——WebGPU 探测和设备请求都是 async)
   useEffect(() => {
@@ -58,7 +80,7 @@ export function CanvasGraph({
 
     const initOptions = {
       canvas: canvasRef.current,
-      getNodeMap: () => nodeMapRef.current,
+      getNodeMap: externalGetNodeMap ?? (() => nodeMapRef.current),
     };
 
     if (externalRenderer) {
@@ -86,7 +108,7 @@ export function CanvasGraph({
       if (r && r !== externalRenderer) r.destroy();
       rendererRef.current = null;
     };
-  }, [externalRenderer, rendererKind, onRendererReady]);
+  }, [externalGetNodeMap, externalRenderer, rendererKind, onRendererReady]);
   // Resize handler
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -105,15 +127,13 @@ export function CanvasGraph({
     return () => observer.disconnect();
   }, []);
 
-  // Render loop
+  // Render loop. High-frequency simulation state is pulled at frame time so a
+  // worker tick never has to tear down and recreate this RAF effect.
   useEffect(() => {
     const render = () => {
+      const state = getRenderState?.() ?? renderStateRef.current;
       rendererRef.current?.render({
-        simNodes,
-        simEdges,
-        selectedNodeId,
-        hoveredNodeId,
-        highlightedNodeIds,
+        ...state,
         pan: panRef.current,
         zoom: zoomRef.current,
       });
@@ -122,7 +142,7 @@ export function CanvasGraph({
 
     render();
     return () => cancelAnimationFrame(animFrameRef.current);
-  }, [simNodes, simEdges, selectedNodeId, hoveredNodeId, highlightedNodeIds]);
+  }, [getRenderState]);
 
   // Hit test (delegates to renderer)
   const hitTest = useCallback(

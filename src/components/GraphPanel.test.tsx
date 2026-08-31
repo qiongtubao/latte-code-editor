@@ -11,7 +11,8 @@
 //    之前只 setSelectedNode 不切 displayMode，结果用户在主图里根本找不到那个节点
 //    （被 getDefaultSubgraph 过滤掉了）。
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { Profiler } from "react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { useGraphStore } from "../hooks/useGraphStore";
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
@@ -247,6 +248,34 @@ describe("GraphPanel 搜索结果点击", () => {
     // 选中节点也指向 Foo
     expect(useGraphStore.getState().selectedNodeId).toBe("c:src/a.ts:Foo");
   });
+  it("simulation-only ticks do not commit the GraphPanel React tree", async () => {
+    let commits = 0;
+    render(
+      <Profiler id="graph-panel" onRender={() => { commits += 1; }}>
+        <GraphPanel />
+      </Profiler>,
+    );
+    await waitFor(() => {
+      expect(useGraphStore.getState().simNodes.length).toBeGreaterThan(0);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const settledCommits = commits;
+    const current = useGraphStore.getState();
+
+    act(() => current.setSimResult({
+      nodes: current.simNodes.map((node) => ({
+        ...node,
+        x: node.x + 10,
+        y: node.y + 10,
+      })),
+      edges: current.simEdges,
+    }));
+
+    expect(commits).toBe(settledCommits);
+  });
+
   it("挂载时会消费懒加载期间排队的 reveal request", async () => {
     const handled = vi.fn();
     render(
