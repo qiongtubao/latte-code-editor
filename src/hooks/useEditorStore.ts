@@ -125,11 +125,11 @@ function mutate(
   return { byWorkspace: next, ...projectFrom(next, wsId) };
 }
 
-function persistTabs(state: WorkspaceEditor) {
-  const wsId = useWorkspaceStore.getState().activeWorkspaceId;
-  if (!wsId) return;
-  // updateMeta 内部已 try/catch；持久化失败不应阻塞编辑器状态更新
-  void useWorkspaceStore.getState().updateMeta(wsId, {
+function persistTabs(workspaceId: string, state: WorkspaceEditor) {
+  // The active workspace may change before this queued microtask runs. Persist
+  // to the workspace where the tab operation happened, not whichever is active
+  // later.
+  void useWorkspaceStore.getState().updateMeta(workspaceId, {
     open_tabs: state.tabs.map((t) => t.result.path),
     active_tab: state.tabs[state.activeIndex]?.result.path ?? null,
   });
@@ -164,7 +164,7 @@ export const useEditorStore = create<EditorStore>((set) => {
         }
         // 原子地同时设置 targetLine + 切换 tab：避免中间帧抖动到错误位置
         const newWs: WorkspaceEditor = { ...ws, tabs: newTabs, activeIndex: newIndex, targetLine };
-        queueMicrotask(() => persistTabs(newWs));
+        queueMicrotask(() => persistTabs(wsId, newWs));
         return mutate(s.byWorkspace, wsId, newWs);
       });
     },
@@ -217,7 +217,7 @@ export const useEditorStore = create<EditorStore>((set) => {
         const ws = s.byWorkspace[wsId] ?? emptyEditor();
         if (index < 0 || index >= ws.tabs.length) return s;
         const newWs: WorkspaceEditor = { ...ws, activeIndex: index };
-        queueMicrotask(() => persistTabs(newWs));
+        queueMicrotask(() => persistTabs(wsId, newWs));
         return mutate(s.byWorkspace, wsId, newWs);
       });
     },
@@ -233,7 +233,7 @@ export const useEditorStore = create<EditorStore>((set) => {
         if (index <= newIndex && newIndex > 0) newIndex--;
         if (newIndex >= newTabs.length) newIndex = Math.max(0, newTabs.length - 1);
         const newWs: WorkspaceEditor = { ...ws, tabs: newTabs, activeIndex: newIndex };
-        queueMicrotask(() => persistTabs(newWs));
+        queueMicrotask(() => persistTabs(wsId, newWs));
         return mutate(s.byWorkspace, wsId, newWs);
       });
     },
@@ -246,7 +246,11 @@ export const useEditorStore = create<EditorStore>((set) => {
       });
     },
 
-    reset: () => set({ byWorkspace: {} }),
+    reset: () => set(() => {
+      const byWorkspace: Record<string, WorkspaceEditor> = {};
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      return { byWorkspace, ...projectFrom(byWorkspace, activeWorkspaceId) };
+    }),
 
     refreshCurrentFile: async () => {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;

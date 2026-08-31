@@ -219,7 +219,10 @@ export const useGraphStore = create<GraphStore>((set) => {
       });
     },
 
-    reset: () => set({ byWorkspace: {} }),
+    reset: () => set((state) => {
+      const byWorkspace: Record<string, WorkspaceGraph> = {};
+      return { byWorkspace, ...project({ ...state, byWorkspace }) };
+    }),
   };
 });
 

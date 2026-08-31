@@ -134,6 +134,24 @@ describe("useWorkspaceStore", () => {
     expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
   });
 
+  it("setActive keeps the current workspace when the backend rejects", async () => {
+    useWorkspaceStore.setState({
+      workspaces: {
+        "ws-a": sampleMeta("ws-a", "a"),
+        "ws-b": sampleMeta("ws-b", "b"),
+      },
+      activeWorkspaceId: "ws-a",
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    invokeMock.mockRejectedValueOnce(new Error("backend unavailable"));
+
+    await useWorkspaceStore.getState().setActive("ws-b");
+
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("ws-a");
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it("setActive switches and calls backend", async () => {
     useWorkspaceStore.setState({
       workspaces: {
@@ -161,6 +179,31 @@ describe("useWorkspaceStore", () => {
     expect(s.workspaces["ws-a"]).toBeUndefined();
     expect(s.activeWorkspaceId).toBeNull();
     expect(invokeMock).toHaveBeenCalledWith("close_workspace", { workspaceId: "ws-a" });
+  });
+
+  it("closeWorkspace preserves local state when the backend close fails", async () => {
+    useWorkspaceStore.setState({
+      workspaces: { "ws-a": sampleMeta("ws-a", "a") },
+      activeWorkspaceId: "ws-a",
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    invokeMock.mockImplementation((command: string) =>
+      command === "close_workspace"
+        ? Promise.reject(new Error("backend unavailable"))
+        : Promise.resolve(undefined),
+    );
+
+    await useWorkspaceStore.getState().closeWorkspace("ws-a");
+
+    expect(useWorkspaceStore.getState().workspaces["ws-a"]).toBeDefined();
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("ws-a");
+
+    // A second attempt must not be blocked by a leaked debug lock.
+    invokeMock.mockResolvedValue(undefined);
+    await useWorkspaceStore.getState().closeWorkspace("ws-a");
+    expect(useWorkspaceStore.getState().workspaces["ws-a"]).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("updateMeta updates local optimistically and invokes backend with snake_case", async () => {

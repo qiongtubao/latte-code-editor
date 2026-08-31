@@ -213,6 +213,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     } catch (e) {
       log.error("ws.activate.error", String(e), { workspaceId });
       console.error("[useWorkspaceStore] setActive failed:", e);
+      return;
     }
     set({ activeWorkspaceId: workspaceId });
     log.info("ws.activate.ok", "active", { workspaceId });
@@ -224,31 +225,47 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       return;
     }
     try {
-      log.info("ws.close", "closing", { workspaceId });
-      const { cancelWorkspaceDiscussion } = await import("../api/chat");
-      await cancelWorkspaceDiscussion(workspaceId).catch((e) => {
-        console.error("[useWorkspaceStore] cancel workspace chat failed:", e);
+      let backendClosed = false;
+      try {
+        log.info("ws.close", "closing", { workspaceId });
+        const { cancelWorkspaceDiscussion } = await import("../api/chat");
+        await cancelWorkspaceDiscussion(workspaceId).catch((e) => {
+          console.error("[useWorkspaceStore] cancel workspace chat failed:", e);
+        });
+        await invoke("close_workspace", { workspaceId });
+        backendClosed = true;
+      } catch (e) {
+        log.error("ws.close.error", String(e), { workspaceId });
+        console.error("[useWorkspaceStore] closeWorkspace failed:", e);
+      }
+      // The backend owns workspace lifetime. Retain all frontend state when it
+      // rejects the close so subsequent commands do not target a deleted UI
+      // workspace that is still alive in the backend.
+      if (!backendClosed) return;
+
+      try {
+        const [{ useEditorStore }, { useGraphStore }] = await Promise.all([
+          import("./useEditorStore"),
+          import("./useGraphStore"),
+        ]);
+        useEditorStore.getState().evictWorkspace(workspaceId);
+        useGraphStore.getState().evictWorkspace(workspaceId);
+      } catch (e) {
+        // Backend close already succeeded; local workspace removal must still
+        // complete even if cache cleanup unexpectedly fails.
+        console.error("[useWorkspaceStore] workspace cache cleanup failed:", e);
+      }
+      set((s) => {
+        const { [workspaceId]: _drop, ...rest } = s.workspaces;
+        const isActive = s.activeWorkspaceId === workspaceId;
+        return {
+          workspaces: rest,
+          activeWorkspaceId: isActive ? null : s.activeWorkspaceId,
+        };
       });
-      await invoke("close_workspace", { workspaceId });
-    } catch (e) {
-      log.error("ws.close.error", String(e), { workspaceId });
-      console.error("[useWorkspaceStore] closeWorkspace failed:", e);
+    } finally {
+      useDebugStore.getState().releaseLock(lockKey);
     }
-    const [{ useEditorStore }, { useGraphStore }] = await Promise.all([
-      import("./useEditorStore"),
-      import("./useGraphStore"),
-    ]);
-    useEditorStore.getState().evictWorkspace(workspaceId);
-    useGraphStore.getState().evictWorkspace(workspaceId);
-    set((s) => {
-      const { [workspaceId]: _drop, ...rest } = s.workspaces;
-      const isActive = s.activeWorkspaceId === workspaceId;
-      return {
-        workspaces: rest,
-        activeWorkspaceId: isActive ? null : s.activeWorkspaceId,
-      };
-    });
-    useDebugStore.getState().releaseLock(lockKey);
   },
 
   updateMeta: async (workspaceId, patch) => {

@@ -94,6 +94,35 @@ describe("useGraphStore 多 workspace 隔离", () => {
     expect(useGraphStore.getState().graphData?.nodes[0]?.id).toBe("a");
   });
 
+  it("reset clears cached and projected graph state", () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-a" });
+    const store = useGraphStore.getState();
+    store.setGraphData(sampleGraph("a"));
+    store.setLoading(true);
+    store.setError("failed");
+    store.setSimResult({
+      nodes: [{ id: "a", x: 1, y: 2, vx: 0, vy: 0, group: 1 }],
+      edges: [],
+    });
+    store.setSelectedNode("a");
+    store.setHoveredNode("a");
+    store.setHighlightedNodes(new Set(["a"]));
+
+    useGraphStore.getState().reset();
+
+    const state = useGraphStore.getState();
+    expect(state.byWorkspace).toEqual({});
+    expect(state.graphData).toBeNull();
+    expect(state.loading).toBe(false);
+    expect(state.error).toBeNull();
+    expect(state.simNodes).toEqual([]);
+    expect(state.simEdges).toEqual([]);
+    expect(state.selectedNodeId).toBeNull();
+    expect(state.hoveredNodeId).toBeNull();
+    expect(state.highlightedNodeIds).toEqual(new Set());
+    expect(state.loadVersion).toBe(0);
+  });
+
   it("evictWorkspace 真的把对应 workspace 的数据从 byWorkspace 删掉", () => {
     useWorkspaceStore.setState({ activeWorkspaceId: "ws-a" });
     useGraphStore.getState().setGraphData(sampleGraph("a"));

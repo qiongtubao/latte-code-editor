@@ -8,7 +8,7 @@
 // - evictWorkspace 清理数据
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useEditorStore } from "./useEditorStore";
-import { useWorkspaceStore } from "./useWorkspaceStore";
+import { useWorkspaceStore, type WorkspaceMeta } from "./useWorkspaceStore";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
@@ -26,6 +26,22 @@ const makeFile = (path: string, content = "hello") => ({
   line_count: 1,
   is_large_file: false,
   is_modified: false,
+});
+
+const makeWorkspace = (name: string): WorkspaceMeta => ({
+  name,
+  project_root: `/${name}`,
+  open_tabs: [],
+  active_tab: null,
+  ui_state: {
+    sidebar_width: 240,
+    outline_width: 180,
+    editor_flex: 0.5,
+    sidebar_open: true,
+    active_panel: "editor",
+    sidebar_panel: "explorer",
+  },
+  last_used_at: 0,
 });
 
 describe("useEditorStore", () => {
@@ -150,6 +166,51 @@ describe("useEditorStore", () => {
     expect(useEditorStore.getState().tabs).toHaveLength(0);
     // 内部 map 也清空
     expect(useEditorStore.getState().byWorkspace["ws-a"]).toBeUndefined();
+  });
+
+  it("reset clears cached and projected editor state", () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-a" });
+    const store = useEditorStore.getState();
+    store.openFileOrSwitch(makeFile("/a/foo.md"));
+    store.setCursorWord("foo");
+    store.setTargetLine(42, 3);
+    store.setMarkdownMode("source");
+
+    useEditorStore.getState().reset();
+
+    const state = useEditorStore.getState();
+    expect(state.byWorkspace).toEqual({});
+    expect(state.tabs).toEqual([]);
+    expect(state.activeIndex).toBe(0);
+    expect(state.openFile).toBeNull();
+    expect(state.currentContent).toBe("");
+    expect(state.tabState).toBe("empty");
+    expect(state.modified).toBe(false);
+    expect(state.filePath).toBeNull();
+    expect(state.cursorWord).toBe("");
+    expect(state.targetLine).toBeNull();
+    expect(state.targetColumn).toBeNull();
+    expect(state.markdownMode).toBe("preview");
+  });
+
+  it("persists tabs to the workspace where the operation occurred", async () => {
+    useWorkspaceStore.setState({
+      workspaces: {
+        "ws-a": makeWorkspace("a"),
+        "ws-b": makeWorkspace("b"),
+      },
+      activeWorkspaceId: "ws-a",
+    });
+
+    useEditorStore.getState().openFileOrSwitch(makeFile("/a/foo.rs"));
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-b" });
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    const workspaces = useWorkspaceStore.getState().workspaces;
+    expect(workspaces["ws-a"].open_tabs).toEqual(["/a/foo.rs"]);
+    expect(workspaces["ws-a"].active_tab).toBe("/a/foo.rs");
+    expect(workspaces["ws-b"].open_tabs).toEqual([]);
+    expect(workspaces["ws-b"].active_tab).toBeNull();
   });
 
   it("setTargetLine and setCursorWord follow active workspace", () => {
