@@ -82,6 +82,9 @@ pub fn run() {
             crate::editor::commands::open_file,
             crate::editor::commands::save_file,
             crate::editor::commands::get_file_content,
+            // 大文件按范围读取（虚拟滚动用，避免整份内容过一次 IPC）
+            crate::editor::commands::stat_text_file,
+            crate::editor::commands::read_file_range,
             crate::editor::commands::refresh_file,
             crate::editor::commands::check_file_changed,
             crate::editor::commands::search_in_files,
