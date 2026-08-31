@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorPanel } from "./components/EditorPanel";
-import { GraphPanel } from "./components/GraphPanel";
+import { LazyGraphPanel, preloadGraphPanel } from "./components/LazyGraphPanel";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { OutlinePanel } from "./components/OutlinePanel";
@@ -16,6 +16,7 @@ import { graphSearch, graphResolveCall } from "./api/graphCommands";
 import { screenshotWindow, copyScreenshotToClipboard } from "./api/screenshot";
 import { useEditorStore } from "./hooks/useEditorStore";
 import { useGraphStore } from "./hooks/useGraphStore";
+import type { GraphRevealRequest } from "./hooks/graphTypes";
 import { useWorkspaceStore } from "./hooks/useWorkspaceStore";
 import { useQuickOpenStore } from "./hooks/useQuickOpenStore";
 import { useGraphEvents } from "./hooks/useGraphEvents";
@@ -36,7 +37,9 @@ import { applySkin, SKINS } from "./skins";
 import { useSettingsStore } from "./hooks/useSettingsStore";
 type ActivePanel = "editor" | "graph" | "split";
 function App() {
-  const [activePanel, setActivePanel] = useState<ActivePanel>("split");
+  // Editor-first is required for a true runtime lazy boundary. Starting in
+  // split mode would request the graph chunk during the first render anyway.
+  const [activePanel, setActivePanel] = useState<ActivePanel>("editor");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [outlineWidth, setOutlineWidth] = useState(180);
@@ -52,6 +55,8 @@ function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const lastRRef = useRef(0);
   const lastSRef = useRef(0);
+  const graphRevealSeqRef = useRef(0);
+  const [graphRevealRequest, setGraphRevealRequest] = useState<GraphRevealRequest | null>(null);
   const { openFileOrSwitch, filePath } = useEditorStore();
   const { graphData } = useGraphStore();
   const activeMeta = useWorkspaceStore((s) =>
@@ -96,18 +101,27 @@ function App() {
   useEffect(() => {
     if (activeId) useGraphStore.getState().requestReload();
   }, [activeId]);
+  const revealGraphNode = useCallback((nodeId: string) => {
+    graphRevealSeqRef.current += 1;
+    setGraphRevealRequest({ nodeId, requestId: graphRevealSeqRef.current });
+    setChatOpen(false);
+    setActivePanel("split");
+  }, []);
+  const handleGraphRevealHandled = useCallback((requestId: number) => {
+    setGraphRevealRequest((current) =>
+      current?.requestId === requestId ? null : current,
+    );
+  }, []);
+
   const handleShowInGraph = useCallback(async (word: string) => {
     try {
       const resp = await graphSearch(word);
       const node = resp.nodes.find((n) => n.kind !== "file" && n.kind !== "import");
-      if (node) {
-        window.dispatchEvent(new CustomEvent("graph-show-node", { detail: { nodeId: node.id } }));
-        setActivePanel("split");
-      }
+      if (node) revealGraphNode(node.id);
     } catch (e) {
       console.error("Show in graph failed:", e);
     }
-  }, []);
+  }, [revealGraphNode]);
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<string>).detail;
@@ -267,12 +281,16 @@ function App() {
           Editor
         </button>
         <button
+          onMouseEnter={() => void preloadGraphPanel().catch(() => undefined)}
+          onFocus={() => void preloadGraphPanel().catch(() => undefined)}
           onClick={() => setActivePanel("graph")}
           className={`px-3 py-1.5 border-r border-edge cursor-pointer transition-colors ${activePanel === "graph" ? "bg-surface text-fg" : "text-fg-2 hover:text-fg"}`}
         >
           Graph
         </button>
         <button
+          onMouseEnter={() => void preloadGraphPanel().catch(() => undefined)}
+          onFocus={() => void preloadGraphPanel().catch(() => undefined)}
           onClick={() => setActivePanel("split")}
           className={`px-3 py-1.5 cursor-pointer transition-colors ${activePanel === "split" ? "bg-surface text-fg" : "text-fg-2 hover:text-fg"}`}
         >
@@ -378,7 +396,11 @@ function App() {
             )}
             {(activePanel === "graph" || activePanel === "split") && !chatOpen && (
               <div className="flex-1 overflow-hidden">
-                <GraphPanel folderRoot={folderRoot} />
+                <LazyGraphPanel
+                  folderRoot={folderRoot}
+                  revealRequest={graphRevealRequest}
+                  onRevealHandled={handleGraphRevealHandled}
+                />
               </div>
             )}
             {chatOpen && (
@@ -387,12 +409,7 @@ function App() {
               <div className="flex-1 overflow-hidden border-l border-edge">
                 <ChatAgentPanel
                   onClose={() => setChatOpen(false)}
-                  onShowGraph={() => {
-                    // GraphPanel 只在 !chatOpen 时渲染（见上方条件），
-                    // 所以"在图谱中显示"需要让出侧栏并切到 split。
-                    setChatOpen(false);
-                    setActivePanel("split");
-                  }}
+                  onShowGraph={revealGraphNode}
                 />
               </div>
             )}

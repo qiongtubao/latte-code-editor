@@ -120,7 +120,7 @@ const DEFAULT_UI_STATE: UiState = {
   outline_width: 180,
   editor_flex: 0.5,
   sidebar_open: true,
-  active_panel: "split",
+  active_panel: "editor",
   sidebar_panel: "explorer",
 };
 

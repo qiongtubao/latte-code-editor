@@ -54,6 +54,15 @@ export interface SimResult {
 /** Display mode for the graph panel */
 export type GraphDisplayMode = "main" | "focus" | "full";
 
+/**
+ * A monotonic id makes repeated requests for the same node observable. Unlike
+ * the old window event, this state survives while the graph chunk is loading.
+ */
+export interface GraphRevealRequest {
+  nodeId: string;
+  requestId: number;
+}
+
 // Node kind to numeric group for coloring
 const KIND_GROUP: Record<string, number> = {
   file: 0,

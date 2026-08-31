@@ -11,12 +11,25 @@ import {
   getDefaultSubgraph, detectCommunities, extractFocusSubgraph,
   type RawNode, type RawEdge,
 } from "../hooks/graphUtils";
-import type { GraphNode, SimResult, GraphDisplayMode } from "../hooks/graphTypes";
+import type {
+  GraphNode,
+  SimResult,
+  GraphDisplayMode,
+  GraphRevealRequest,
+} from "../hooks/graphTypes";
 import { nodeKindToGroup } from "../hooks/graphTypes";
 import { NODE_COLORS } from "./graphRenderer";
 import { toWorkspaceRel } from "../chatBridge";
 
-export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }) {
+export function GraphPanel({
+  folderRoot = null,
+  revealRequest = null,
+  onRevealHandled,
+}: {
+  folderRoot?: string | null;
+  revealRequest?: GraphRevealRequest | null;
+  onRevealHandled?: (requestId: number) => void;
+}) {
   const {
     graphData, loading, error, simNodes, simEdges,
     selectedNodeId, hoveredNodeId, highlightedNodeIds, loadVersion,
@@ -96,19 +109,18 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
     void load();
     return () => { cancelled = true; };
   }, [loadVersion, setGraphData, setLoading, setError]);
-  // Listen for "Show in Graph" events from the editor
+  // A prop rather than a window event: requests made while this module is still
+  // downloading remain present and are applied immediately after mount.
   useEffect(() => {
-    const handler = (e: Event) => {
-      const { nodeId } = (e as CustomEvent<{ nodeId: string }>).detail;
-      setFocusedNodeId(nodeId);
-      setDisplayMode("focus");
-      setSearchResults([]);
-      useGraphStore.getState().setHighlightedNodes(new Set());
-      setSearchQuery("");
-    };
-    window.addEventListener("graph-show-node", handler);
-    return () => window.removeEventListener("graph-show-node", handler);
-  }, []);
+    if (!revealRequest) return;
+    setFocusedNodeId(revealRequest.nodeId);
+    setSelectedNode(revealRequest.nodeId);
+    setDisplayMode("focus");
+    setSearchResults([]);
+    useGraphStore.getState().setHighlightedNodes(new Set());
+    setSearchQuery("");
+    onRevealHandled?.(revealRequest.requestId);
+  }, [onRevealHandled, revealRequest, setSelectedNode]);
 
   // Filtered data
   const filteredData = useMemo(() => {

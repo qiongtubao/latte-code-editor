@@ -116,7 +116,7 @@ fn default_sidebar_width() -> u32 { 240 }
 fn default_outline_width() -> u32 { 180 }
 fn default_editor_flex() -> f32 { 0.5 }
 fn default_true() -> bool { true }
-fn default_active_panel() -> String { "split".to_string() }
+fn default_active_panel() -> String { "editor".to_string() }
 fn default_sidebar_panel() -> String { "explorer".to_string() }
 
 pub struct Workspace {

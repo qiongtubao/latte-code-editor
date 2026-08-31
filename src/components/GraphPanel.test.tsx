@@ -247,4 +247,24 @@ describe("GraphPanel 搜索结果点击", () => {
     // 选中节点也指向 Foo
     expect(useGraphStore.getState().selectedNodeId).toBe("c:src/a.ts:Foo");
   });
+  it("挂载时会消费懒加载期间排队的 reveal request", async () => {
+    const handled = vi.fn();
+    render(
+      <GraphPanel
+        revealRequest={{ nodeId: "c:src/a.ts:Foo", requestId: 1 }}
+        onRevealHandled={handled}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(useGraphStore.getState().graphData?.nodes.length).toBe(3);
+    });
+    await waitFor(() => {
+      const ids = useGraphStore.getState().simNodes.map((node) => node.id);
+      expect(ids).toContain("c:src/a.ts:Foo");
+    });
+    expect(useGraphStore.getState().selectedNodeId).toBe("c:src/a.ts:Foo");
+    expect(handled).toHaveBeenCalledWith(1);
+  });
+
 });

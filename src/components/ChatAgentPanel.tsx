@@ -81,8 +81,8 @@ function findGraphNode(data: GraphData, absPath: string, ref: CodeRef): GraphNod
 
 interface Props {
   onClose: () => void;
-  /** 打开图谱面板（App 侧切 panel；GraphPanel 只在 chat 关闭时渲染）。 */
-  onShowGraph: () => void;
+  /** Open the graph panel and reveal the resolved node after lazy mounting. */
+  onShowGraph: (nodeId: string) => void;
 }
 
 export function ChatAgentPanel({ onClose, onShowGraph }: Props) {
@@ -122,14 +122,7 @@ export function ChatAgentPanel({ onClose, onShowGraph }: Props) {
         }
         graph.setSelectedNode(node.id);
         graph.setHighlightedNodes(new Set([node.id]));
-        onShowGraph();
-        // App.tsx "Show in Graph" 同款定位事件。GraphPanel 此刻才挂载，
-        // 延后一个 macrotask 等它 commit 完再发，保证 listener 已装上。
-        setTimeout(() => {
-          window.dispatchEvent(
-            new CustomEvent("graph-show-node", { detail: { nodeId: node.id } }),
-          );
-        }, 0);
+        onShowGraph(node.id);
       } catch (e) {
         console.warn("[ChatAgentPanel] revealInGraph failed:", e);
       }
