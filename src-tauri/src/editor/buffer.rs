@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::sync::RwLock;
 
 /// 代表内存中一个打开的文件 buffer
@@ -13,22 +14,16 @@ pub struct Buffer {
     pub byte_size: usize,
     pub is_modified: bool,
     pub is_large_file: bool,
+    /// 每 `LINE_INDEX_STRIDE` 行的字节偏移，只为大文件范围读取服务。
+    #[serde(skip)]
+    pub line_index: Vec<u64>,
+    /// 建索引时的 mtime；范围读取前用它发现同尺寸的外部改动。
+    #[serde(skip)]
+    pub indexed_modified: Option<SystemTime>,
 }
 
-// 大文件的两个阈值此前混成一个，语义被搅在一起。现在分开：
-//
-// 1) REFUSE_READ_BYTES —— 根本不读内容，只回一句提示。这是内存与 IPC 的
-//    硬上限（整个文件会以字符串形式过一次 invoke）。
-// 2) PLAIN_VIEWER_* —— 内容照常完整读取，只是渲染退化成只读纯文本
-//    viewer，不交给 CodeMirror。
-//
-// 刻意**不下调** REFUSE_READ_BYTES：8–50MB 的文件目前是「能读、以纯文本
-// 查看」，调低会让它们退化成只剩一句提示，从能看变成不能看。
-
-/// 超过此大小不读取内容（内存 / IPC 硬上限）
-const REFUSE_READ_BYTES: u64 = 50 * 1024 * 1024;
-
-/// 超过此大小改用只读纯文本 viewer。
+// 大文件按两条独立边界判定：字节过大，或行数过多。进入大文件模式后，
+// buffer 只保存元数据与稀疏索引，绝不保存全文；可见内容由范围读取命令提供。
 ///
 /// 必须按字节判定，不能只看行数：一个 30MB 的压缩 JS 可能只有几百行，
 /// 只看行数会让它直接进 CodeMirror。
@@ -47,45 +42,274 @@ const PLAIN_VIEWER_LINES: usize = 400_000;
 /// tmp 文件名去重计数器：同一文件的并发保存不应互相踩踏。
 static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// 稀疏索引每 1024 行记一个字节偏移。即使是 2500 万行的极端文件，
+/// 索引也只有约 200KB；任意跳转最多只需再跳过 1023 行。
+pub(crate) const LINE_INDEX_STRIDE: usize = 1024;
+
+#[derive(Debug, Clone)]
+pub(crate) struct TextFileIndex {
+    pub total_lines: usize,
+    pub byte_size: u64,
+    pub offsets: Vec<u64>,
+    pub modified: Option<SystemTime>,
+}
+
+#[derive(Debug)]
+pub(crate) struct IndexedRange {
+    pub lines: Vec<String>,
+    pub eof: bool,
+}
+
+fn index_bytes(bytes: &[u8]) -> (usize, Vec<u64>) {
+    let mut offsets = vec![0];
+    let mut newlines = 0usize;
+    for (position, &byte) in bytes.iter().enumerate() {
+        if byte == b'\n' {
+            newlines += 1;
+            if newlines % LINE_INDEX_STRIDE == 0 {
+                offsets.push(position as u64 + 1);
+            }
+        }
+    }
+    let total_lines = if bytes.is_empty() {
+        0
+    } else if bytes.last() == Some(&b'\n') {
+        newlines
+    } else {
+        newlines + 1
+    };
+    (total_lines, offsets)
+}
+
+/// 流式建立稀疏行索引。前后各取一次 fingerprint；扫描期间文件变化时宁可
+/// 失败并让前端重试，也不能把一套混合版本的偏移交给后续随机读取。
+pub(crate) fn index_text_file(path: &Path) -> Result<TextFileIndex, String> {
+    use std::io::Read;
+
+    let before = std::fs::metadata(path).map_err(|e| format!("Cannot read metadata: {}", e))?;
+    let before_modified = before.modified().ok();
+    let file = std::fs::File::open(path).map_err(|e| format!("Cannot open file: {}", e))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut buf = [0u8; 64 * 1024];
+    let mut offsets = vec![0];
+    let mut newlines = 0usize;
+    let mut absolute = 0u64;
+    let mut last_byte = None;
+
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("Cannot read file: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        for (position, &byte) in buf[..n].iter().enumerate() {
+            if byte == b'\n' {
+                newlines += 1;
+                if newlines % LINE_INDEX_STRIDE == 0 {
+                    offsets.push(absolute + position as u64 + 1);
+                }
+            }
+        }
+        absolute += n as u64;
+        last_byte = Some(buf[n - 1]);
+    }
+
+    let after = std::fs::metadata(path).map_err(|e| format!("Cannot read metadata: {}", e))?;
+    let after_modified = after.modified().ok();
+    if before.len() != after.len() || before_modified != after_modified {
+        return Err("File changed while it was being indexed; retry".to_string());
+    }
+    let total_lines = match last_byte {
+        None => 0,
+        Some(b'\n') => newlines,
+        Some(_) => newlines + 1,
+    };
+    Ok(TextFileIndex {
+        total_lines,
+        byte_size: after.len(),
+        offsets,
+        modified: after_modified,
+    })
+}
+
+const MAX_CAPTURED_LINE_BYTES: usize = 64 * 1024;
+const MAX_CAPTURED_RANGE_BYTES: usize = 2 * 1024 * 1024;
+const TRUNCATED_LINE_SUFFIX: &str = " … [line truncated in large-file view]";
+
+/// Consume one physical line without ever allocating its full length. `capture_limit`
+/// controls how many bytes are retained; the remainder is streamed past until `\n`.
+fn read_bounded_line<R: std::io::BufRead>(
+    reader: &mut R,
+    capture_limit: usize,
+) -> std::io::Result<Option<(Vec<u8>, bool)>> {
+    let mut captured = Vec::with_capacity(capture_limit.min(4096));
+    let mut saw_input = false;
+    let mut truncated = false;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return if saw_input {
+                Ok(Some((captured, truncated)))
+            } else {
+                Ok(None)
+            };
+        }
+        saw_input = true;
+        let newline = available.iter().position(|&byte| byte == b'\n');
+        let payload_len = newline.unwrap_or(available.len());
+        let remaining = capture_limit.saturating_sub(captured.len());
+        let take = payload_len.min(remaining);
+        captured.extend_from_slice(&available[..take]);
+        if take < payload_len {
+            truncated = true;
+        }
+        let consumed = newline.map_or(available.len(), |position| position + 1);
+        reader.consume(consumed);
+        if newline.is_some() {
+            break;
+        }
+    }
+    Ok(Some((captured, truncated)))
+}
+
+/// 从最近的稀疏锚点读取行区间，而不是为每一页从文件头重新扫描。
+/// 每行与整页都有捕获上限；超长压缩产物会显示截断标记，不会把一个 50MB
+/// 单行重新塞进内存并穿过 IPC。
+pub(crate) fn read_indexed_range(
+    path: &Path,
+    start_line: usize,
+    max_lines: usize,
+    index: &TextFileIndex,
+) -> Result<IndexedRange, String> {
+    use std::io::{BufRead, Seek};
+
+    let metadata = std::fs::metadata(path).map_err(|e| format!("Cannot read metadata: {}", e))?;
+    if metadata.len() != index.byte_size || metadata.modified().ok() != index.modified {
+        return Err("File changed since it was indexed; refresh and retry".to_string());
+    }
+
+    let requested_block = start_line / LINE_INDEX_STRIDE;
+    let block = requested_block.min(index.offsets.len().saturating_sub(1));
+    let base_line = block * LINE_INDEX_STRIDE;
+    let offset = index.offsets.get(block).copied().unwrap_or(0);
+    let file = std::fs::File::open(path).map_err(|e| format!("Cannot open file: {}", e))?;
+    let mut reader = std::io::BufReader::new(file);
+    reader
+        .seek(std::io::SeekFrom::Start(offset))
+        .map_err(|e| format!("Cannot seek file: {}", e))?;
+
+    let skip = start_line.saturating_sub(base_line);
+    for relative in 0..skip {
+        if read_bounded_line(&mut reader, 0)
+            .map_err(|e| format!("Cannot skip line {}: {}", base_line + relative, e))?
+            .is_none()
+        {
+            return Ok(IndexedRange {
+                lines: Vec::new(),
+                eof: true,
+            });
+        }
+    }
+
+    let mut lines = Vec::with_capacity(max_lines.min(4096));
+    let mut captured_bytes = 0usize;
+    for offset_in_range in 0..max_lines {
+        let capture_limit = MAX_CAPTURED_LINE_BYTES
+            .min(MAX_CAPTURED_RANGE_BYTES.saturating_sub(captured_bytes));
+        let Some((mut bytes, truncated)) = read_bounded_line(&mut reader, capture_limit)
+            .map_err(|e| format!("Cannot read line {}: {}", start_line + offset_in_range, e))?
+        else {
+            break;
+        };
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+        let mut line = match std::str::from_utf8(&bytes) {
+            Ok(text) => text.to_string(),
+            // A byte cap can split the final UTF-8 scalar; retain only the valid
+            // prefix in that one case. Invalid UTF-8 inside the captured prefix
+            // remains an error, matching read_to_string's text-file contract.
+            Err(error) if truncated && error.error_len().is_none() => {
+                String::from_utf8(bytes[..error.valid_up_to()].to_vec())
+                    .expect("valid_up_to always marks valid UTF-8")
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Invalid UTF-8 at line {} byte {}",
+                    start_line + offset_in_range,
+                    error.valid_up_to()
+                ));
+            }
+        };
+        captured_bytes += line.len();
+        if truncated {
+            line.push_str(TRUNCATED_LINE_SUFFIX);
+        }
+        lines.push(line);
+    }
+    let eof = reader
+        .fill_buf()
+        .map_err(|e| format!("Cannot inspect range end: {}", e))?
+        .is_empty();
+
+    let after = std::fs::metadata(path).map_err(|e| format!("Cannot read metadata: {}", e))?;
+    if after.len() != index.byte_size || after.modified().ok() != index.modified {
+        return Err("File changed during range read; refresh and retry".to_string());
+    }
+    Ok(IndexedRange { lines, eof })
+}
+
 /// `read_with_limits` 的结果。
 struct ReadOutcome {
     content: String,
     line_count: usize,
     byte_size: usize,
     is_large: bool,
+    line_index: Vec<u64>,
+    indexed_modified: Option<SystemTime>,
 }
 
-/// 按大小限制读取文件内容并判定是否退化为只读纯文本 viewer。
-///
-/// 抽成共用函数是因为 `open` 与 `refresh` 各自实现过一遍同样的判定——
-/// 两份重复的阈值逻辑迟早漂移（`search_text` / `replace_text` 的 glob 口径
-/// 就是这么分叉的）。
+/// 读取普通文件；大文件只保留元数据。按字节已知会退化时立即返回，让 UI
+/// 先打开 tab，再由 stat 命令在后台流式建索引，不让 `open_file` 卡在全盘扫描。
 async fn read_with_limits(path: &Path, file_size: u64) -> Result<ReadOutcome, String> {
-    let refuse_read = file_size > REFUSE_READ_BYTES;
+    let byte_size = usize::try_from(file_size).map_err(|_| "File size exceeds this platform".to_string())?;
+    if file_size > PLAIN_VIEWER_BYTES {
+        return Ok(ReadOutcome {
+            content: String::new(),
+            line_count: 0,
+            byte_size,
+            is_large: true,
+            line_index: Vec::new(),
+            indexed_modified: None,
+        });
+    }
 
-    let content = if refuse_read {
-        format!(
-            "[Large file: {} bytes. Opened in read-only large file mode.]",
-            file_size
-        )
+    let content = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| format!("Cannot read file: {}", e))?;
+    let (line_count, line_index) = index_bytes(content.as_bytes());
+    let is_large = line_count > PLAIN_VIEWER_LINES;
+    if is_large {
+        let modified = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+        Ok(ReadOutcome {
+            content: String::new(),
+            line_count,
+            byte_size,
+            is_large: true,
+            line_index,
+            indexed_modified: modified,
+        })
     } else {
-        tokio::fs::read_to_string(path)
-            .await
-            .map_err(|e| format!("Cannot read file: {}", e))?
-    };
-
-    let line_count = content.lines().count();
-    let byte_size = content.len();
-    // 三者任一成立即退化为只读纯文本 viewer
-    let is_large =
-        refuse_read || file_size > PLAIN_VIEWER_BYTES || line_count > PLAIN_VIEWER_LINES;
-
-    Ok(ReadOutcome {
-        content,
-        line_count,
-        byte_size,
-        is_large,
-    })
+        Ok(ReadOutcome {
+            content,
+            line_count,
+            byte_size,
+            is_large: false,
+            line_index: Vec::new(),
+            indexed_modified: None,
+        })
+    }
 }
 
 /// 原子覆写文件：先写同目录临时文件，再 rename 顶掉目标。
@@ -168,6 +392,8 @@ impl BufferManager {
             line_count,
             byte_size,
             is_large,
+            line_index,
+            indexed_modified,
         } = read_with_limits(&canonical, metadata.len()).await?;
 
         let buffer = Arc::new(RwLock::new(Buffer {
@@ -177,6 +403,8 @@ impl BufferManager {
             byte_size,
             is_modified: false,
             is_large_file: is_large,
+            line_index,
+            indexed_modified,
         }));
 
         {
@@ -277,6 +505,8 @@ impl BufferManager {
             line_count,
             byte_size,
             is_large,
+            line_index,
+            indexed_modified,
         } = read_with_limits(&canonical, metadata.len()).await?;
 
         // 更新 buffer 内容
@@ -286,6 +516,8 @@ impl BufferManager {
             buf.line_count = line_count;
             buf.byte_size = byte_size;
             buf.is_large_file = is_large;
+            buf.line_index = line_index;
+            buf.indexed_modified = indexed_modified;
             buf.is_modified = false; // 刷新后标记为未修改
         }
 
@@ -306,12 +538,16 @@ impl BufferManager {
 
         let buf = buffer.read().await;
 
-        // 如果是大文件模式，无法精确对比
+        // 大文件不驻留全文：用尺寸 + 建索引时的 mtime 检查外部变化。
         if buf.is_large_file {
-            // 检查文件大小是否变化
             let metadata = std::fs::metadata(&canonical)
                 .map_err(|e| format!("Cannot read metadata: {}", e))?;
-            return Ok(metadata.len() != buf.byte_size as u64);
+            return Ok(
+                metadata.len() != buf.byte_size as u64
+                    || buf
+                        .indexed_modified
+                        .is_some_and(|modified| metadata.modified().ok() != Some(modified)),
+            );
         }
 
         // 读取磁盘内容对比
@@ -408,16 +644,19 @@ mod tests {
         let bm = BufferManager::new();
         let buf = bm.open(&p).await.unwrap();
         let r = buf.read().await;
-        assert_eq!(r.line_count, 1, "压缩产物通常只有极少行");
         assert!(r.is_large_file, "超过字节阈值必须退化，不能只看行数");
-        // 内容仍应完整读取（未达到拒读上限）
-        assert_eq!(r.content.len(), 9 * 1024 * 1024);
+        assert!(r.content.is_empty(), "大文件全文不能常驻 buffer 或穿过 IPC");
+        assert_eq!(r.byte_size, 9 * 1024 * 1024);
+        // 字节阈值已足以判定；行数与索引由 viewer 的 stat 命令异步建立，
+        // open_file 不应为了它阻塞扫描整个文件。
+        assert_eq!(r.line_count, 0);
+        assert!(r.line_index.is_empty());
     }
 
-    /// 未达拒读上限的大文件内容仍完整可读 —— 不能因为"大"就变成一句提示，
-    /// 那会让 8–50MB 的文件从能看变成不能看。
+    /// 行数阈值触发大文件模式后也必须丢弃全文；否则只省了 DOM，Rust
+    /// buffer 与 invoke 序列化仍各保留一份完整字符串。
     #[tokio::test]
-    async fn large_but_readable_file_keeps_its_content() {
+    async fn line_heavy_file_discards_content_and_keeps_sparse_index() {
         let dir = TempDir::new().unwrap();
         let p = dir.path().join("big.log");
         let content = "line\n".repeat(500_000); // 约 2.5MB、50 万行
@@ -426,11 +665,97 @@ mod tests {
         let buf = bm.open(&p).await.unwrap();
         let r = buf.read().await;
         assert!(r.is_large_file, "50 万行超过行数阈值");
-        assert!(
-            !r.content.starts_with("[Large file:"),
-            "未超过拒读上限就不该被替换成提示文本"
-        );
+        assert!(r.content.is_empty(), "大文件全文必须在判定后立即释放");
         assert_eq!(r.line_count, 500_000);
+        assert!(r.line_index.len() > 400, "应每 1024 行保留一个稀疏锚点");
+    }
+
+    #[test]
+    fn sparse_index_counts_line_endings_and_reads_utf8_crlf() {
+        let dir = TempDir::new().unwrap();
+        let cases: &[(&str, usize)] = &[
+            ("", 0),
+            ("a", 1),
+            ("a\n", 1),
+            ("a\nb", 2),
+            ("a\nb\n", 2),
+            ("\n", 1),
+            ("\n\n", 2),
+        ];
+        for (i, (content, expected)) in cases.iter().enumerate() {
+            let path = dir.path().join(format!("case-{i}.txt"));
+            std::fs::write(&path, content).unwrap();
+            let index = index_text_file(&path).unwrap();
+            assert_eq!(index.total_lines, *expected, "content {content:?}");
+            assert_eq!(index.byte_size as usize, content.len());
+        }
+
+        let path = dir.path().join("utf8-crlf.txt");
+        let expected: Vec<String> = (0..3000).map(|i| format!("第 {i} 行 ☕")).collect();
+        std::fs::write(&path, expected.join("\r\n")).unwrap();
+        let index = index_text_file(&path).unwrap();
+        assert!(index.offsets.len() >= 3);
+        let range = read_indexed_range(&path, 1023, 4, &index).unwrap();
+        assert_eq!(range.lines, expected[1023..1027]);
+        assert!(!range.eof);
+    }
+
+    #[test]
+    fn indexed_ranges_reassemble_the_file_and_handle_bounds() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("many.txt");
+        let expected: Vec<String> = (0..5000).map(|i| format!("line {i}")).collect();
+        std::fs::write(&path, expected.join("\n")).unwrap();
+        let index = index_text_file(&path).unwrap();
+
+        let mut collected = Vec::new();
+        let mut start = 0;
+        loop {
+            let range = read_indexed_range(&path, start, 137, &index).unwrap();
+            start += range.lines.len();
+            collected.extend(range.lines);
+            if range.eof {
+                break;
+            }
+            assert!(start < 10_000, "range loop did not reach eof");
+        }
+        assert_eq!(collected, expected);
+
+        let past_end = read_indexed_range(&path, 99_999, 10, &index).unwrap();
+        assert!(past_end.lines.is_empty());
+        assert!(past_end.eof);
+    }
+
+    #[test]
+    fn indexed_range_bounds_a_very_long_single_line() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("minified.js");
+        let long_line = "λ".repeat(512 * 1024);
+        std::fs::write(&path, &long_line).unwrap();
+        let index = index_text_file(&path).unwrap();
+        assert_eq!(index.total_lines, 1);
+        let range = read_indexed_range(&path, 0, 1, &index).unwrap();
+        assert_eq!(range.lines.len(), 1);
+        assert!(range.lines[0].ends_with(TRUNCATED_LINE_SUFFIX));
+        assert!(
+            range.lines[0].len() <= MAX_CAPTURED_LINE_BYTES + TRUNCATED_LINE_SUFFIX.len(),
+            "超长单行不能整行进入内存或 IPC"
+        );
+        assert!(range.eof);
+    }
+
+    #[test]
+    fn indexed_range_rejects_same_size_external_changes() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("changing.txt");
+        std::fs::write(&path, "a\nb\nc\n").unwrap();
+        let index = index_text_file(&path).unwrap();
+        // APFS exposes sub-second mtimes; a short pause avoids coalescing on other
+        // common filesystems while keeping the test inexpensive.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&path, "x\ny\nz\n").unwrap(); // exactly the same byte size
+        let error = read_indexed_range(&path, 0, 2, &index).unwrap_err();
+        assert!(error.contains("changed"), "error was: {error}");
     }
 
     /// 验证 save 落盘

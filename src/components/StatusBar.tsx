@@ -31,6 +31,7 @@ export function StatusBar({
 
   const getLineInfo = (): string => {
     if (!openFile) return "";
+    if (openFile.is_large_file) return "Paged view";
     return `${openFile.line_count} lines`;
   };
 

@@ -13,10 +13,10 @@ interface EditorPanelProps {
 }
 export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
   const {
+    openFile: activeFile,
     currentContent,
     setContent,
     openFileOrSwitch,
-    modified,
     tabState,
     filePath,
     markdownMode,
@@ -132,9 +132,7 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
       case "empty":
         return <EmptyState onOpen={handleOpenFile} />;
       case "large-file":
-        return (
-          <LargeFileViewer content={currentContent} fileName={filePath || ""} />
-        );
+        return activeFile ? <LargeFileViewer file={activeFile} /> : <EmptyState onOpen={handleOpenFile} />;
       case "markdown":
         return (
           <div className="h-full flex flex-col">

@@ -41,6 +41,31 @@ export async function openFile(path: string): Promise<FileResult> {
   return invoke<FileResult>("open_file", { path });
 }
 
+export interface TextFileStat {
+  total_lines: number;
+  byte_size: number;
+}
+
+export interface FileRange {
+  start_line: number;
+  lines: string[];
+  eof: boolean;
+}
+
+/** Stream file metadata without transferring the whole file over IPC. */
+export async function statTextFile(path: string): Promise<TextFileStat> {
+  return invoke<TextFileStat>("stat_text_file", { path });
+}
+
+/** Read one bounded line window for the virtualized large-file viewer. */
+export async function readFileRange(
+  path: string,
+  startLine: number,
+  maxLines: number,
+): Promise<FileRange> {
+  return invoke<FileRange>("read_file_range", { path, startLine, maxLines });
+}
+
 export async function saveFile(path: string, content: string): Promise<void> {
   return invoke<void>("save_file", { path, content });
 }

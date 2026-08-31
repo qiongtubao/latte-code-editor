@@ -503,60 +503,70 @@ pub struct FileRange {
     pub eof: bool,
 }
 
-/// 统计文本文件的行数与字节数，不把内容读进内存。
-///
-/// 按块读取并数 `\n`，峰值内存是固定的缓冲区大小，与文件大小无关。
-/// 这是让 >50MB 文件可查看的前提——`open_file` 对这类文件只回一句占位文本，
-/// 拿不到任何尺寸信息。
+const MAX_RANGE_LINES: usize = 4096;
+
+/// 复用有效索引，否则流式重建并写回已打开的 buffer。mtime 与尺寸都参与
+/// fingerprint，因此同尺寸的外部编辑也会让旧索引失效。
+async fn ensure_text_index(
+    buffers: &super::buffer::BufferManager,
+    resolved: &Path,
+) -> Result<super::buffer::TextFileIndex, String> {
+    let open_buffer = buffers.get_buffer(resolved).await;
+    if let Some(buffer) = &open_buffer {
+        let reader = buffer.read().await;
+        if !reader.line_index.is_empty() {
+            let metadata = std::fs::metadata(resolved)
+                .map_err(|e| format!("Cannot read metadata: {}", e))?;
+            if metadata.len() == reader.byte_size as u64
+                && metadata.modified().ok() == reader.indexed_modified
+            {
+                return Ok(super::buffer::TextFileIndex {
+                    total_lines: reader.line_count,
+                    byte_size: reader.byte_size as u64,
+                    offsets: reader.line_index.clone(),
+                    modified: reader.indexed_modified,
+                });
+            }
+        }
+    }
+
+    let path = resolved.to_path_buf();
+    let index = tokio::task::spawn_blocking(move || super::buffer::index_text_file(&path))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))??;
+    if let Some(buffer) = open_buffer {
+        let mut writer = buffer.write().await;
+        writer.line_count = index.total_lines;
+        writer.byte_size = usize::try_from(index.byte_size)
+            .map_err(|_| "File size exceeds this platform".to_string())?;
+        writer.line_index = index.offsets.clone();
+        writer.indexed_modified = index.modified;
+    }
+    Ok(index)
+}
+
+/// 统计文本文件并建立稀疏行索引。扫描使用固定 64KB 缓冲区；索引仅每
+/// 1024 行保存一个偏移，内存不会随文件内容等比例增长。
 #[tauri::command]
 pub async fn stat_text_file(
     path: String,
     window: Window,
     registry: State<'_, Arc<WorkspaceRegistry>>,
 ) -> Result<TextFileStat, String> {
+    let ws_id = resolve_workspace_id(&window, &registry).await?;
     let resolved = resolve_workspace_subpath(&window, &registry, &path).await?;
-    tokio::task::spawn_blocking(move || {
-        use std::io::Read;
-        let file = std::fs::File::open(&resolved)
-            .map_err(|e| format!("Cannot open file: {}", e))?;
-        let byte_size = file
-            .metadata()
-            .map_err(|e| format!("Cannot read metadata: {}", e))?
-            .len();
-        let mut reader = std::io::BufReader::new(file);
-        let mut buf = [0u8; 64 * 1024];
-        let mut newlines = 0usize;
-        let mut last_byte = None;
-        loop {
-            let n = reader
-                .read(&mut buf)
-                .map_err(|e| format!("Cannot read file: {}", e))?;
-            if n == 0 {
-                break;
-            }
-            newlines += buf[..n].iter().filter(|&&b| b == b'\n').count();
-            last_byte = Some(buf[n - 1]);
-        }
-        // 末行没有换行符时也算一行；空文件算 0 行
-        let total_lines = match last_byte {
-            None => 0,
-            Some(b'\n') => newlines,
-            Some(_) => newlines + 1,
-        };
-        Ok(TextFileStat {
-            total_lines,
-            byte_size,
-        })
+    let buffers = registry
+        .with_workspace(&ws_id, |ws| ws.buffers.clone())
+        .await?;
+    let index = ensure_text_index(&buffers, &resolved).await?;
+    Ok(TextFileStat {
+        total_lines: index.total_lines,
+        byte_size: index.byte_size,
     })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
 }
 
-/// 读取 `[start_line, start_line + max_lines)` 这段行区间。
-///
-/// 流式跳过前面的行，只把需要的那段留在内存里。这样 `LargeFileViewer` 的
-/// 虚拟滚动才名副其实——此前它虽然只渲染可见行，但整个文件字符串已经通过
-/// invoke 传过来并常驻内存，省的只有 DOM。
+/// 从最近的稀疏行锚点读取 `[start_line, start_line + max_lines)`。
+/// 任意跳转最多重扫 1023 行，而不是每个 page 都从文件头开始。
 #[tauri::command]
 pub async fn read_file_range(
     path: String,
@@ -565,34 +575,29 @@ pub async fn read_file_range(
     window: Window,
     registry: State<'_, Arc<WorkspaceRegistry>>,
 ) -> Result<FileRange, String> {
+    if max_lines > MAX_RANGE_LINES {
+        return Err(format!(
+            "Requested {} lines; maximum range is {}",
+            max_lines, MAX_RANGE_LINES
+        ));
+    }
+    let ws_id = resolve_workspace_id(&window, &registry).await?;
     let resolved = resolve_workspace_subpath(&window, &registry, &path).await?;
-    tokio::task::spawn_blocking(move || {
-        use std::io::BufRead;
-        let file = std::fs::File::open(&resolved)
-            .map_err(|e| format!("Cannot open file: {}", e))?;
-        let reader = std::io::BufReader::new(file);
-        let mut lines = Vec::with_capacity(max_lines.min(4096));
-        let mut eof = true;
-        for (idx, line) in reader.lines().enumerate() {
-            let line = line.map_err(|e| format!("Cannot read line {}: {}", idx, e))?;
-            if idx < start_line {
-                continue;
-            }
-            if lines.len() == max_lines {
-                // 还有后续内容，说明未到文件末尾
-                eof = false;
-                break;
-            }
-            lines.push(line);
-        }
-        Ok(FileRange {
-            start_line,
-            lines,
-            eof,
-        })
+    let buffers = registry
+        .with_workspace(&ws_id, |ws| ws.buffers.clone())
+        .await?;
+    let index = ensure_text_index(&buffers, &resolved).await?;
+    let read_path = resolved.clone();
+    let range = tokio::task::spawn_blocking(move || {
+        super::buffer::read_indexed_range(&read_path, start_line, max_lines, &index)
     })
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| format!("Task join error: {}", e))??;
+    Ok(FileRange {
+        start_line,
+        lines: range.lines,
+        eof: range.eof,
+    })
 }
 
 #[tauri::command]
@@ -962,110 +967,6 @@ mod tests {
             outside_dir.join("loot.txt").exists(),
             "被拒绝的路径不应受影响"
         );
-    }
-
-    // -----------------------------------------------------------------
-    // 按范围读取：把命令体内的纯逻辑抽出来测（命令本身需要 Window/State，
-    // 无法在单测里构造）。这两个 helper 与命令内的实现保持同一算法。
-    // -----------------------------------------------------------------
-
-    /// 与 stat_text_file 内的行数统计同算法
-    fn count_lines(path: &std::path::Path) -> (usize, u64) {
-        use std::io::Read;
-        let file = std::fs::File::open(path).unwrap();
-        let byte_size = file.metadata().unwrap().len();
-        let mut reader = std::io::BufReader::new(file);
-        let mut buf = [0u8; 64 * 1024];
-        let mut newlines = 0usize;
-        let mut last = None;
-        loop {
-            let n = reader.read(&mut buf).unwrap();
-            if n == 0 { break; }
-            newlines += buf[..n].iter().filter(|&&b| b == b'\n').count();
-            last = Some(buf[n - 1]);
-        }
-        let total = match last {
-            None => 0,
-            Some(b'\n') => newlines,
-            Some(_) => newlines + 1,
-        };
-        (total, byte_size)
-    }
-
-    /// 与 read_file_range 内的取段同算法
-    fn read_range(path: &std::path::Path, start: usize, max: usize) -> (Vec<String>, bool) {
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(std::fs::File::open(path).unwrap());
-        let mut lines = Vec::new();
-        let mut eof = true;
-        for (idx, line) in reader.lines().enumerate() {
-            let line = line.unwrap();
-            if idx < start { continue; }
-            if lines.len() == max { eof = false; break; }
-            lines.push(line);
-        }
-        (lines, eof)
-    }
-
-    #[test]
-    fn line_count_handles_trailing_newline_variants() {
-        let dir = tempfile::tempdir().unwrap();
-        let cases: &[(&str, usize)] = &[
-            ("", 0),                 // 空文件
-            ("a", 1),                // 末行无换行
-            ("a\n", 1),              // 末行有换行
-            ("a\nb", 2),
-            ("a\nb\n", 2),
-            ("\n", 1),               // 仅一个换行 = 一个空行
-            ("\n\n", 2),
-        ];
-        for (i, (content, expected)) in cases.iter().enumerate() {
-            let p = dir.path().join(format!("f{i}.txt"));
-            std::fs::write(&p, content).unwrap();
-            let (total, bytes) = count_lines(&p);
-            assert_eq!(total, *expected, "content {content:?}");
-            assert_eq!(bytes as usize, content.len());
-        }
-    }
-
-    #[test]
-    fn ranges_reassemble_into_the_whole_file() {
-        // 核心不变量：分段取出来拼接后必须等于逐行拆分的完整内容
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("big.txt");
-        let expected: Vec<String> = (0..1000).map(|i| format!("line {i}")).collect();
-        std::fs::write(&p, expected.join("\n")).unwrap();
-
-        let mut collected = Vec::new();
-        let mut start = 0;
-        loop {
-            let (lines, eof) = read_range(&p, start, 137); // 故意用非整除的块大小
-            collected.extend(lines.iter().cloned());
-            if eof { break; }
-            start += lines.len();
-            assert!(start < 10_000, "未在合理步数内到达 eof");
-        }
-        assert_eq!(collected, expected);
-    }
-
-    #[test]
-    fn range_past_end_returns_empty_and_eof() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("s.txt");
-        std::fs::write(&p, "a\nb\nc\n").unwrap();
-        let (lines, eof) = read_range(&p, 99, 10);
-        assert!(lines.is_empty());
-        assert!(eof, "越界读取应报 eof 而非报错");
-    }
-
-    #[test]
-    fn range_reports_not_eof_when_more_remains() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("s.txt");
-        std::fs::write(&p, "a\nb\nc\nd\n").unwrap();
-        let (lines, eof) = read_range(&p, 0, 2);
-        assert_eq!(lines, vec!["a", "b"]);
-        assert!(!eof, "后面还有内容时不能报 eof");
     }
 
     // -----------------------------------------------------------------
