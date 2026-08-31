@@ -7,7 +7,6 @@
  * 3. 始终有 fallback：Canvas2DRenderer
  */
 import { Canvas2DRenderer } from "./Canvas2DRenderer";
-import { WebGPURenderer } from "./WebGPURenderer";
 import { isWebGPUAvailable } from "../utils/webgpuDetect";
 import type { GraphRenderer } from "./graphRenderer";
 
@@ -23,8 +22,12 @@ export async function createRenderer(
   }
 
   if (useWebGPU) {
-    const r = new WebGPURenderer();
     try {
+      // 按需加载：WebGPURenderer 是最大的单个模块，而在不支持 WebGPU 的
+      // 环境（或用户选了 canvas2d）里它一次都不会被用到。工厂本就是 async，
+      // 动态导入不需要改调用方。
+      const { WebGPURenderer } = await import("./WebGPURenderer");
+      const r = new WebGPURenderer();
       await r.init(options);
       return r;
     } catch (e) {
@@ -40,5 +43,5 @@ export async function createRenderer(
 
 /** 当前实际使用的渲染器类型（用于状态栏显示） */
 export function rendererKindOf(renderer: GraphRenderer): "webgpu" | "canvas2d" {
-  return renderer instanceof WebGPURenderer ? "webgpu" : "canvas2d";
+  return renderer.kind;
 }

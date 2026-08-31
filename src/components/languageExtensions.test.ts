@@ -16,31 +16,30 @@
 import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { syntaxTree, StreamLanguage } from "@codemirror/language";
-import { languages, tcl } from "./languageExtensions";
+import { loadLanguage, tcl } from "./languageExtensions";
 
-describe("languageExtensions.languages()", () => {
-  it("对 .tcl 文件返回 tcl 语言扩展", () => {
-    const ext = languages("script.tcl");
-    expect(ext).toBeDefined();
+describe("languageExtensions.loadLanguage()", () => {
+  it("对 .tcl 文件返回 tcl 语言扩展（本地实现，无需动态导入）", async () => {
+    expect(await loadLanguage("script.tcl")).toBeDefined();
   });
 
-  it(".tcl 后缀大小写不敏感均识别", () => {
-    expect(languages("foo.tcl")).toBeDefined();
-    expect(languages("FOO.TCL")).toBeDefined();
+  it(".tcl 后缀大小写不敏感均识别", async () => {
+    expect(await loadLanguage("foo.tcl")).toBeDefined();
+    expect(await loadLanguage("FOO.TCL")).toBeDefined();
   });
 
-  it("对空文件路径返回空扩展数组", () => {
-    expect(languages(null)).toEqual([]);
+  it("对空文件路径返回空扩展数组", async () => {
+    expect(await loadLanguage(null)).toEqual([]);
   });
 
-  it("对未识别的扩展返回空扩展数组", () => {
-    expect(languages("archive.xyz")).toEqual([]);
+  it("对未识别的扩展返回空扩展数组", async () => {
+    expect(await loadLanguage("archive.xyz")).toEqual([]);
   });
 
-  it("已识别扩展（ts/md/json）仍能正常返回对应扩展", () => {
-    expect(languages("foo.ts")).toBeDefined();
-    expect(languages("foo.md")).toBeDefined();
-    expect(languages("foo.json")).toBeDefined();
+  it("动态导入的语言包（ts/md/json/rs/py/c）都能解析出扩展", async () => {
+    for (const f of ["foo.ts", "foo.tsx", "foo.md", "foo.json", "foo.rs", "foo.py", "foo.c", "foo.cpp"]) {
+      expect(await loadLanguage(f), f).toBeDefined();
+    }
   });
 });
 

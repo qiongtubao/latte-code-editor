@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap, Decoration, type DecorationSet } from "@codemirror/view";
-import { EditorState, StateEffect, StateField } from "@codemirror/state";
+import { EditorState, StateEffect, StateField, Compartment } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { basicSetup } from "codemirror";
-import { languages } from "./languageExtensions";
+import { loadLanguage } from "./languageExtensions";
 import { useSettingsStore } from "../hooks/useSettingsStore";
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
@@ -31,6 +31,9 @@ const flashLineField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 const FLASH_MS = 1600;
+
+/** 语言扩展的可重配置槽位。语言包异步到位后经它热替换，无需重建编辑器。 */
+const langCompartment = new Compartment();
 interface CodeMirrorProps {
   content: string;
   filePath: string | null;
@@ -56,7 +59,8 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
     const container = containerRef.current;
     if (!container) return;
 
-    const langExt = languages(filePath);
+    // 语言包按需异步加载。先用空的 compartment 占位把编辑器立刻建起来，
+    // 语言到位后再 reconfigure —— 不能为等语言包而阻塞首屏。
     const { theme, fontSize, lineNumbers, wordWrap } = useSettingsStore.getState();
 
     const state = EditorState.create({
@@ -71,7 +75,7 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
           ".cm-content": { whiteSpace: wordWrap ? "pre-wrap" : "pre" },
         }),
         keymap.of([...defaultKeymap, ...historyKeymap]),
-        langExt,
+        langCompartment.of([]),
         flashLineField,
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current?.(u.state.doc.toString());
@@ -92,7 +96,22 @@ useEffect(() => { onShowInGraphRef.current = onShowInGraph; }, [onShowInGraph]);
   // Initial build + rebuild on file change
   useEffect(() => {
     buildEditorRef.current();
-    return () => { viewRef.current?.destroy(); viewRef.current = null; };
+    // 异步装入该文件的语言包。cancelled 防止快速切文件时旧的加载结果
+    // 覆盖新文件的语言（await 之后 viewRef 可能已指向另一个文档）。
+    let cancelled = false;
+    loadLanguage(filePath)
+      .then((ext) => {
+        if (cancelled) return;
+        viewRef.current?.dispatch({
+          effects: langCompartment.reconfigure(ext),
+        });
+      })
+      .catch((e) => console.error("[CodeMirrorEditor] language load failed:", filePath, e));
+    return () => {
+      cancelled = true;
+      viewRef.current?.destroy();
+      viewRef.current = null;
+    };
   }, [filePath]);
 
   // 滚动到 targetLine（仅在 targetLine 变化时触发，不跟 content/filePath 耦合）

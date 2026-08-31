@@ -1,11 +1,5 @@
-import { cpp } from "@codemirror/lang-cpp";
 import type { Extension } from "@codemirror/state";
 import { StreamLanguage, LanguageSupport } from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
-import { rust } from "@codemirror/lang-rust";
-import { python } from "@codemirror/lang-python";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
 
 /**
  * TCL 语言扩展（基于 StreamLanguage）。
@@ -176,7 +170,19 @@ export function tcl(): LanguageSupport {
   return new LanguageSupport(tclLanguage);
 }
 
-export function languages(filePath: string | null): Extension {
+/**
+ * 按扩展名异步加载对应的语言扩展。
+ *
+ * 六个 `@codemirror/lang-*` 包连同其 Lezer 解析器合计约 466 kB（gzip 171 kB），
+ * 是打包产物里最大的一块，占近四成——而打开一个文件通常只用到其中一个。
+ * 改成动态导入后，只有实际打开该语言的文件时才付这份代价。
+ *
+ * TCL 例外：它是本项目手写的 StreamLanguage，没有外部依赖，同步返回即可。
+ *
+ * 返回 `[]` 表示无对应语言（纯文本），调用方无需特殊处理——CodeMirror 接受
+ * 空扩展数组。
+ */
+export async function loadLanguage(filePath: string | null): Promise<Extension> {
   if (!filePath) return [];
 
   const ext = filePath.split(".").pop()?.toLowerCase();
@@ -186,33 +192,45 @@ export function languages(filePath: string | null): Extension {
     case "tsx":
     case "js":
     case "jsx":
-    case "mjs":
+    case "mjs": {
+      const { javascript } = await import("@codemirror/lang-javascript");
       return javascript({
         typescript: ext === "ts" || ext === "tsx",
         jsx: ext === "tsx" || ext === "jsx",
       });
-    case "rs":
+    }
+    case "rs": {
+      const { rust } = await import("@codemirror/lang-rust");
       return rust();
-    case "py":
+    }
+    case "py": {
+      const { python } = await import("@codemirror/lang-python");
       return python();
+    }
     case "json":
-    case "jsonc":
+    case "jsonc": {
+      const { json } = await import("@codemirror/lang-json");
       return json();
+    }
     case "c":
     case "h":
-      return cpp();
     case "cpp":
     case "cxx":
     case "cc":
     case "hpp":
-    case "hxx":
+    case "hxx": {
+      const { cpp } = await import("@codemirror/lang-cpp");
       return cpp();
+    }
     case "md":
-    case "mdx":
+    case "mdx": {
+      const { markdown } = await import("@codemirror/lang-markdown");
       return markdown();
+    }
     case "tcl":
+      // 本地实现，无需动态导入
       return tcl();
-     default:
-       return [];
-   }
- }
+    default:
+      return [];
+  }
+}

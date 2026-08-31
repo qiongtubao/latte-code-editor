@@ -7,6 +7,7 @@ import { cssVar } from "../skins";
  * Node radius based on degree; edge thickness and color by kind.
  */
 export class Canvas2DRenderer implements GraphRenderer {
+  readonly kind = "canvas2d" as const;
   private ctx: CanvasRenderingContext2D | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private getNodeMap: (() => Map<string, SimRenderNode>) | null = null;

@@ -27,6 +27,10 @@ export interface SimRenderEdge {
 }
 
 export interface GraphRenderer {
+  /** 渲染器类型标识。
+   *  用它取代 `instanceof WebGPURenderer` 判定，才能把 WebGPURenderer 改成
+   *  动态导入 —— instanceof 需要类在模块作用域可见，会把它钉进主包。 */
+  readonly kind: "webgpu" | "canvas2d";
   /** Called once when the canvas is mounted. Set up context / GPU device here. */
   init(options: GraphRendererInitOptions): void;
   /** Called every frame after positions update. */

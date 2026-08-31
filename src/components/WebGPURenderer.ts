@@ -250,6 +250,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 `;
 
 export class WebGPURenderer implements GraphRenderer {
+  readonly kind = "webgpu" as const;
   private res: WebGPUResources | null = null;
   private getNodeMap: (() => Map<string, SimRenderNode>) | null = null;
   private initError: string | null = null;
