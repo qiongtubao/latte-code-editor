@@ -1,9 +1,12 @@
 import { useCallback, useEffect } from "react";
 import { useEditorStore } from "../hooks/useEditorStore";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
-import { LargeFileViewer } from "./LargeFileViewer";
+import {
+  LazyLargeFileMode,
+  LazyMarkdownPreview,
+  preloadMarkdownPreview,
+} from "./LazyEditorViewers";
 import { EmptyState } from "./EmptyState";
-import { DocViewer } from "./DocViewer";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { openFile, saveFile } from "../api/commands";
 import { isChord } from "../utils/keyboard";
@@ -132,12 +135,14 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
       case "empty":
         return <EmptyState onOpen={handleOpenFile} />;
       case "large-file":
-        return activeFile ? <LargeFileViewer file={activeFile} /> : <EmptyState onOpen={handleOpenFile} />;
+        return activeFile ? <LazyLargeFileMode file={activeFile} /> : <EmptyState onOpen={handleOpenFile} />;
       case "markdown":
         return (
           <div className="h-full flex flex-col">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-2 border-b border-edge text-xs">
               <button
+                onMouseEnter={() => void preloadMarkdownPreview().catch(() => undefined)}
+                onFocus={() => void preloadMarkdownPreview().catch(() => undefined)}
                 onClick={() => setMarkdownMode("preview")}
                 className={`px-2 py-0.5 rounded cursor-pointer ${markdownMode === "preview" ? "bg-accent text-white" : "bg-control text-fg hover:bg-control-hover"}`}
               >Preview</button>
@@ -149,7 +154,7 @@ export function EditorPanel({ onCtrlClick, onShowInGraph }: EditorPanelProps) {
             </div>
             <div className="flex-1 overflow-hidden">
               {markdownMode === "preview" ? (
-                <DocViewer content={currentContent} filePath={filePath || undefined} />
+                <LazyMarkdownPreview content={currentContent} filePath={filePath || undefined} />
               ) : (
                 <CodeMirrorEditor
                   onCtrlClick={onCtrlClick}

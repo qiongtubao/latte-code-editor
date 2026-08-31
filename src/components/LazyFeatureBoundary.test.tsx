@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   LazyFeatureBoundary,
   type ComponentLoader,
-} from "./LazyClosedPanels";
+} from "./LazyFeatureBoundary";
 
 interface DemoProps {
   value: string;
