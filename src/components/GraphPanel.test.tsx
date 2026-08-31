@@ -32,12 +32,11 @@ vi.mock("@tauri-apps/api/event", () => ({
 class FakeWorker {
   onmessage: ((e: MessageEvent) => void) | null = null;
   postMessage(msg: unknown) {
-    const data = msg as { nodes?: Array<{ id: string; group: number }>; edges?: Array<{ source: string; target: string; kind: string }> };
+    const data = msg as { nodes?: Array<{ id: string; group: number }> };
     if (this.onmessage) {
       this.onmessage({
         data: {
-          nodes: (data.nodes ?? []).map((n) => ({ id: n.id, x: 0, y: 0, vx: 0, vy: 0, group: n.group })),
-          edges: data.edges ?? [],
+          positions: new Float32Array((data.nodes ?? []).flatMap(() => [0, 0])),
         },
       } as MessageEvent);
     }
@@ -271,25 +270,20 @@ describe("GraphPanel 搜索结果点击", () => {
     expect(useGraphStore.getState().selectedNodeId).toBe("c:src/a.ts:Foo");
   });
   it("coalesces burst worker ticks and publishes only the latest result", async () => {
+    let postedNodeIds: string[] = [];
     class BurstWorker {
       onmessage: ((event: MessageEvent) => void) | null = null;
       postMessage(message: unknown) {
         const input = message as {
           nodes: Array<{ id: string; group: number }>;
-          edges: Array<{ source: string; target: string; kind: string }>;
         };
+        postedNodeIds = input.nodes.map((node) => node.id);
         for (const tick of [1, 2, 3]) {
           this.onmessage?.({
             data: {
-              nodes: input.nodes.map((node) => ({
-                id: node.id,
-                x: tick,
-                y: tick,
-                vx: 0,
-                vy: 0,
-                group: node.group,
-              })),
-              edges: input.edges,
+              positions: new Float32Array(
+                input.nodes.flatMap(() => [tick, tick]),
+              ),
             },
           } as MessageEvent);
         }
@@ -336,8 +330,14 @@ describe("GraphPanel 搜索结果点击", () => {
       act(() => flush(performance.now()));
 
       expect(simulationPublications).toBe(1);
-      expect(useGraphStore.getState().simNodes).toHaveLength(4);
-      expect(useGraphStore.getState().simNodes.every((node) => node.x === 3)).toBe(true);
+      const simulation = useGraphStore.getState();
+      expect(simulation.simNodes).toHaveLength(4);
+      expect(simulation.simNodes.every((node) => node.x === 3 && node.y === 3)).toBe(true);
+      expect(simulation.simNodes.map((node) => node.id)).toEqual(postedNodeIds);
+      expect(simulation.simNodes.every((node) => node.group === 1)).toBe(true);
+      expect(simulation.simEdges).toEqual(
+        burstGraph.edges.map(({ source, target, kind }) => ({ source, target, kind })),
+      );
     } finally {
       unsubscribe();
       view.unmount();

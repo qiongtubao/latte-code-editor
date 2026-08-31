@@ -22,6 +22,10 @@ import { nodeKindToGroup } from "../hooks/graphTypes";
 import { NODE_COLORS } from "./graphRenderer";
 import { toWorkspaceRel } from "../chatBridge";
 import { createAnimationFrameCoalescer } from "../utils/animationFrameCoalescer";
+import {
+  FORCE_POSITION_STRIDE,
+  type ForceLayoutOutputMessage,
+} from "./forceLayoutProtocol";
 
 export function GraphPanel({
   folderRoot = null,
@@ -234,15 +238,31 @@ export function GraphPanel({
 
     const w = new Worker(new URL("./forceLayout.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = w;
-    const tickPublisher = createAnimationFrameCoalescer<SimResult>((result) => {
+    const tickPublisher = createAnimationFrameCoalescer<Float32Array>((positions) => {
       // Recheck at flush time: the layout may have been replaced or unmounted
       // after this result was queued but before the animation frame ran.
       if (
-        layoutVersionRef.current === myVersion &&
-        workerRef.current === w
-      ) {
-        setSimResult(result);
-      }
+        layoutVersionRef.current !== myVersion ||
+        workerRef.current !== w ||
+        positions.length !== sNodes.length * FORCE_POSITION_STRIDE
+      ) return;
+
+      setSimResult({
+        nodes: sNodes.map((node, index) => {
+          const offset = index * FORCE_POSITION_STRIDE;
+          return {
+            id: node.id,
+            x: positions[offset],
+            y: positions[offset + 1],
+            // Renderers do not consume velocity; retain the public SimNode
+            // contract without transferring two unused floats per node.
+            vx: 0,
+            vy: 0,
+            group: node.group,
+          };
+        }),
+        edges: sEdges,
+      });
     });
     const t = setTimeout(() => {
       // 3s 还没收到任何 tick：worker 卡住了，直接用圆形兜底
@@ -250,15 +270,15 @@ export function GraphPanel({
         setSimResult(makeCircle());
       }
     }, 3000);
-    w.onmessage = (e: MessageEvent<SimResult & { type?: string }>) => {
-      if (e.data?.type === "ready") return;
+    w.onmessage = (e: MessageEvent<ForceLayoutOutputMessage>) => {
+      if ("type" in e.data) return;
       // 旧 worker 迟到的 tick：忽略，避免把已经重置的 sim 写回去
       if (
         layoutVersionRef.current !== myVersion ||
         workerRef.current !== w
       ) return;
       clearTimeout(t);
-      tickPublisher.schedule(e.data);
+      tickPublisher.schedule(e.data.positions);
     };
     w.postMessage({ nodes: sNodes, edges: sEdges, width: containerRef.current?.clientWidth || 800, height: containerRef.current?.clientHeight || 600 });
     return () => {

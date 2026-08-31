@@ -5,6 +5,10 @@ import {
   type SimulationLinkDatum, type SimulationNodeDatum,
   type Simulation,
 } from "d3-force";
+import {
+  FORCE_POSITION_STRIDE,
+  type ForceLayoutTickMessage,
+} from "./forceLayoutProtocol";
 
 export interface InputNode {
   id: string;
@@ -33,22 +37,6 @@ interface SimNodeDatum extends SimulationNodeDatum {
 }
 
 type SimLinkDatum = SimulationLinkDatum<SimNodeDatum> & { kind: string };
-
-interface SimResult {
-  nodes: Array<{
-    id: string;
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    group: number;
-  }>;
-  edges: Array<{
-    source: string;
-    target: string;
-    kind: string;
-  }>;
-}
 
 interface WorkerMessage {
   nodes: InputNode[];
@@ -136,21 +124,14 @@ self.onmessage = (e: MessageEvent<WorkerMessage | string>) => {
 
   simulation.on("tick", () => {
     if (!simulation) return;
-    const result: SimResult = {
-      nodes: simNodes.map((n) => ({
-        id: n.id,
-        x: n.x ?? 0,
-        y: n.y ?? 0,
-        vx: n.vx ?? 0,
-        vy: n.vy ?? 0,
-        group: n.group,
-      })),
-      edges: rawEdges.map((e) => ({
-        source: typeof e.source === "string" ? e.source : (e.source as unknown as { id: string }).id,
-        target: typeof e.target === "string" ? e.target : (e.target as unknown as { id: string }).id,
-        kind: e.kind,
-      })),
-    };
-    self.postMessage(result);
+    const positions = new Float32Array(simNodes.length * FORCE_POSITION_STRIDE);
+    for (let index = 0; index < simNodes.length; index += 1) {
+      const node = simNodes[index];
+      const offset = index * FORCE_POSITION_STRIDE;
+      positions[offset] = node.x ?? 0;
+      positions[offset + 1] = node.y ?? 0;
+    }
+    const result: ForceLayoutTickMessage = { positions };
+    self.postMessage(result, [positions.buffer]);
   });
 };
