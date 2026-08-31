@@ -171,6 +171,12 @@ export function CanvasGraph({
   }, [getRenderState]);
 
   useEffect(() => {
+    const handleSkinChange = () => invalidateRef.current();
+    window.addEventListener("latte-skin-changed", handleSkinChange);
+    return () => window.removeEventListener("latte-skin-changed", handleSkinChange);
+  }, []);
+
+  useEffect(() => {
     if (!subscribeRenderState) return;
     return subscribeRenderState(() => invalidateRef.current());
   }, [subscribeRenderState]);

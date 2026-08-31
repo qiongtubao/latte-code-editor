@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { SKINS, applySkin, type SkinId } from "./skins";
+import { describe, expect, it, vi } from "vitest";
+import { SKINS, applySkin, cssVar, type SkinId } from "./skins";
 import { cmThemes } from "./hooks/themes";
 
 const SKIN_IDS = Object.keys(SKINS) as SkinId[];
@@ -47,5 +47,37 @@ describe("applySkin", () => {
     expect(el.style.getPropertyValue("--surface")).toBe("#1e1e1e");
     expect(el.style.colorScheme).toBe("dark");
     expect(el.dataset.skin).toBe("vscode-dark");
+  });
+});
+
+describe("cssVar cache", () => {
+  it("reuses one computed style snapshot and invalidates after applySkin", () => {
+    applySkin("vscode-dark");
+    const values: Record<string, string> = {
+      "--fg": " #111111 ",
+      "--surface": "#222222",
+    };
+    const getPropertyValue = vi.fn((name: string) => values[name] ?? "");
+    const computedStyle = vi.spyOn(globalThis, "getComputedStyle").mockReturnValue({
+      getPropertyValue,
+    } as unknown as CSSStyleDeclaration);
+
+    expect(cssVar("--fg", "fallback")).toBe("#111111");
+    expect(cssVar("--fg", "other")).toBe("#111111");
+    expect(cssVar("--surface", "fallback")).toBe("#222222");
+    expect(cssVar("--missing", "first-fallback")).toBe("first-fallback");
+    expect(cssVar("--missing", "second-fallback")).toBe("second-fallback");
+    expect(computedStyle).toHaveBeenCalledTimes(1);
+    expect(getPropertyValue).toHaveBeenCalledTimes(3);
+
+    values["--fg"] = "#333333";
+    expect(cssVar("--fg", "fallback")).toBe("#111111");
+
+    applySkin("monokai");
+    expect(cssVar("--fg", "fallback")).toBe("#333333");
+    expect(computedStyle).toHaveBeenCalledTimes(2);
+    expect(getPropertyValue).toHaveBeenCalledTimes(4);
+
+    computedStyle.mockRestore();
   });
 });

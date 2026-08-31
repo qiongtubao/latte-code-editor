@@ -259,6 +259,14 @@ export const SKINS: Record<SkinId, SkinDef> = {
   },
 };
 
+let cachedRootStyle: CSSStyleDeclaration | null = null;
+const cachedCssVarValues = new Map<string, string>();
+
+function invalidateCssVarCache(): void {
+  cachedRootStyle = null;
+  cachedCssVarValues.clear();
+}
+
 export function getSkin(id: SkinId): SkinDef {
   return SKINS[id];
 }
@@ -276,6 +284,7 @@ export function applySkin(id: SkinId): void {
   }
   el.style.colorScheme = skin.colorScheme;
   el.dataset.skin = id;
+  invalidateCssVarCache();
   // canvas 渲染器（图谱）等监听此事件触发重绘。
   window.dispatchEvent(new Event("latte-skin-changed"));
 }
@@ -285,6 +294,11 @@ export function applySkin(id: SkinId): void {
  * 场景用）。name 含 `--` 前缀；变量未设置时返回 fallback。
  */
 export function cssVar(name: string, fallback: string): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
+  let value = cachedCssVarValues.get(name);
+  if (value === undefined) {
+    cachedRootStyle ??= getComputedStyle(document.documentElement);
+    value = cachedRootStyle.getPropertyValue(name).trim();
+    cachedCssVarValues.set(name, value);
+  }
+  return value || fallback;
 }

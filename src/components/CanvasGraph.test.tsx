@@ -81,6 +81,13 @@ describe("CanvasGraph dirty-frame rendering", () => {
     expect(renderer.render).toHaveBeenCalledTimes(1);
     expect(frames.size).toBe(0);
 
+    window.dispatchEvent(new Event("latte-skin-changed"));
+    window.dispatchEvent(new Event("latte-skin-changed"));
+    expect(frames.size).toBe(1);
+    runFrame();
+    expect(renderer.render).toHaveBeenCalledTimes(2);
+    expect(frames.size).toBe(0);
+
     invalidate();
     invalidate();
     invalidate();
@@ -95,12 +102,13 @@ describe("CanvasGraph dirty-frame rendering", () => {
     expect(frames.size).toBe(1);
 
     runFrame();
-    expect(renderer.render).toHaveBeenCalledTimes(2);
+    expect(renderer.render).toHaveBeenCalledTimes(3);
     expect(frames.size).toBe(0);
 
     invalidate();
     expect(frames.size).toBe(1);
     view.unmount();
+    window.dispatchEvent(new Event("latte-skin-changed"));
     expect(frames.size).toBe(0);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
