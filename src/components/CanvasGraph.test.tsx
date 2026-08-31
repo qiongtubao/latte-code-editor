@@ -104,4 +104,51 @@ describe("CanvasGraph dirty-frame rendering", () => {
     expect(frames.size).toBe(0);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
+
+  it("reports hover only when the hit node changes", () => {
+    const renderer = makeRenderer();
+    vi.mocked(renderer.hitTest)
+      .mockReturnValueOnce("n1")
+      .mockReturnValueOnce("n1")
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce("n1");
+    const onNodeHover = vi.fn();
+    let currentHoveredNodeId: string | null = null;
+    onNodeHover.mockImplementation((nodeId: string | null) => {
+      currentHoveredNodeId = nodeId;
+    });
+    const view = render(
+      <CanvasGraph
+        simNodes={nodes}
+        simEdges={edges}
+        selectedNodeId={null}
+        hoveredNodeId={null}
+        highlightedNodeIds={highlights}
+        onNodeClick={vi.fn()}
+        onNodeHover={onNodeHover}
+        getHoveredNodeId={() => currentHoveredNodeId}
+        renderer={renderer}
+      />,
+    );
+    const canvas = view.container.querySelector("canvas");
+    expect(canvas).toBeTruthy();
+    if (!canvas) return;
+
+    fireEvent.mouseMove(canvas, { clientX: 1, clientY: 1 });
+    fireEvent.mouseMove(canvas, { clientX: 2, clientY: 2 });
+    expect(onNodeHover.mock.calls).toEqual([["n1"]]);
+
+    // An external store update can clear hover without rerendering this canvas.
+    // Null is a real current value and must not fall back to the local n1 cache.
+    currentHoveredNodeId = null;
+    fireEvent.mouseMove(canvas, { clientX: 3, clientY: 3 });
+    fireEvent.mouseMove(canvas, { clientX: 4, clientY: 4 });
+    expect(onNodeHover.mock.calls).toEqual([["n1"]]);
+
+    fireEvent.mouseMove(canvas, { clientX: 5, clientY: 5 });
+    fireEvent.mouseLeave(canvas);
+    fireEvent.mouseLeave(canvas);
+    expect(onNodeHover.mock.calls).toEqual([["n1"], ["n1"], [null]]);
+  });
 });

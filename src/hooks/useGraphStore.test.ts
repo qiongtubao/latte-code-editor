@@ -73,6 +73,60 @@ describe("useGraphStore 多 workspace 隔离", () => {
     expect(useGraphStore.getState().byWorkspace["ws-a"]?.simNodes[0]?.id).toBe("n1");
   });
 
+  it("does not publish or allocate workspace state for repeated setter values", () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-a" });
+    const graphData = sampleGraph("a");
+    const simNodes = [{ id: "a", x: 1, y: 2, vx: 0, vy: 0, group: 1 }];
+    const simEdges: Array<{ source: string; target: string; kind: string }> = [];
+    const listener = vi.fn();
+    const unsubscribe = useGraphStore.subscribe(listener);
+
+    const expectOnlyFirstUpdateToPublish = (first: () => void, repeat: () => void) => {
+      const callsBefore = listener.mock.calls.length;
+      first();
+      expect(listener).toHaveBeenCalledTimes(callsBefore + 1);
+      const stateAfterFirstUpdate = useGraphStore.getState();
+      const workspaceAfterFirstUpdate = stateAfterFirstUpdate.byWorkspace["ws-a"];
+
+      repeat();
+
+      expect(listener).toHaveBeenCalledTimes(callsBefore + 1);
+      expect(useGraphStore.getState()).toBe(stateAfterFirstUpdate);
+      expect(useGraphStore.getState().byWorkspace["ws-a"]).toBe(workspaceAfterFirstUpdate);
+    };
+
+    expectOnlyFirstUpdateToPublish(
+      () => useGraphStore.getState().setGraphData(graphData),
+      () => useGraphStore.getState().setGraphData(graphData),
+    );
+    expectOnlyFirstUpdateToPublish(
+      () => useGraphStore.getState().setLoading(true),
+      () => useGraphStore.getState().setLoading(true),
+    );
+    expectOnlyFirstUpdateToPublish(
+      () => useGraphStore.getState().setError("failed"),
+      () => useGraphStore.getState().setError("failed"),
+    );
+    expectOnlyFirstUpdateToPublish(
+      () => useGraphStore.getState().setSimResult({ nodes: simNodes, edges: simEdges }),
+      () => useGraphStore.getState().setSimResult({ nodes: simNodes, edges: simEdges }),
+    );
+    expectOnlyFirstUpdateToPublish(
+      () => useGraphStore.getState().setSelectedNode("a"),
+      () => useGraphStore.getState().setSelectedNode("a"),
+    );
+    expectOnlyFirstUpdateToPublish(
+      () => useGraphStore.getState().setHoveredNode("a"),
+      () => useGraphStore.getState().setHoveredNode("a"),
+    );
+    expectOnlyFirstUpdateToPublish(
+      () => useGraphStore.getState().setHighlightedNodes(new Set(["a"])),
+      () => useGraphStore.getState().setHighlightedNodes(new Set(["a"])),
+    );
+
+    unsubscribe();
+  });
+
   it("切到另一个 workspace，旧的 graphData 还在 byWorkspace 里", () => {
     useWorkspaceStore.setState({ activeWorkspaceId: "ws-a" });
     useGraphStore.getState().setGraphData(sampleGraph("a"));

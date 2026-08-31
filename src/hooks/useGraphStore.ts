@@ -39,6 +39,15 @@ function emptyGraph(): WorkspaceGraph {
   };
 }
 
+function setsEqual(left: Set<string>, right: Set<string>): boolean {
+  if (left === right) return true;
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+}
+
 interface GraphStore {
   byWorkspace: Record<string, WorkspaceGraph>;
 
@@ -124,6 +133,7 @@ export const useGraphStore = create<GraphStore>((set) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
+        if (ws.graphData === data && ws.error === null) return s;
         const newWs: WorkspaceGraph = { ...ws, graphData: data, error: null };
         return mutateByWs(s, wsId, newWs);
       });
@@ -133,6 +143,7 @@ export const useGraphStore = create<GraphStore>((set) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
+        if (ws.loading === loading) return s;
         return mutateByWs(s, wsId, { ...ws, loading });
       });
     },
@@ -142,6 +153,7 @@ export const useGraphStore = create<GraphStore>((set) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
+        if (ws.error === error) return s;
         return mutateByWs(s, wsId, { ...ws, error });
       });
     },
@@ -151,6 +163,7 @@ export const useGraphStore = create<GraphStore>((set) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
+        if (ws.simNodes === result.nodes && ws.simEdges === result.edges) return s;
         return mutateByWs(s, wsId, {
           ...ws,
           simNodes: result.nodes,
@@ -164,6 +177,7 @@ export const useGraphStore = create<GraphStore>((set) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
+        if (ws.selectedNodeId === id) return s;
         return mutateByWs(s, wsId, { ...ws, selectedNodeId: id });
       });
     },
@@ -173,6 +187,7 @@ export const useGraphStore = create<GraphStore>((set) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
+        if (ws.hoveredNodeId === id) return s;
         return mutateByWs(s, wsId, { ...ws, hoveredNodeId: id });
       });
     },
@@ -182,6 +197,7 @@ export const useGraphStore = create<GraphStore>((set) => {
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
+        if (setsEqual(ws.highlightedNodeIds, ids)) return s;
         return mutateByWs(s, wsId, { ...ws, highlightedNodeIds: ids });
       });
     },

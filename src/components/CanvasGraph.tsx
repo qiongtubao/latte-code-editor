@@ -17,6 +17,8 @@ interface CanvasGraphProps {
   getRenderState?: () => CanvasRenderState;
   /** Pull the latest hit-test map without rebuilding it during React commits. */
   getNodeMap?: () => Map<string, SimRenderNode>;
+  /** Pull only the current hover ID for mousemove transition deduplication. */
+  getHoveredNodeId?: () => string | null;
   /** Subscribe to imperative state changes that should schedule one redraw. */
   subscribeRenderState?: (invalidate: () => void) => () => void;
   /** 外部传入的渲染器（测试或自定义场景）。优先级高于 rendererKind */
@@ -38,6 +40,7 @@ export function CanvasGraph({
   onNodeContextMenu,
   getRenderState,
   getNodeMap: externalGetNodeMap,
+  getHoveredNodeId,
   subscribeRenderState,
   renderer: externalRenderer,
   rendererKind = "auto",
@@ -50,6 +53,10 @@ export function CanvasGraph({
   const zoomRef = useRef(1);
   const isDragging = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
+  const lastReportedHoveredNodeRef = useRef(hoveredNodeId);
+  if (!getHoveredNodeId) {
+    lastReportedHoveredNodeRef.current = hoveredNodeId;
+  }
   const rendererRef = useRef<GraphRenderer | null>(null);
   const nodeMapRef = useRef<Map<string, SimRenderNode>>(new Map());
   const renderStateRef = useRef<CanvasRenderState>({
@@ -182,6 +189,15 @@ export function CanvasGraph({
     [],
   );
 
+  const reportNodeHover = useCallback((nodeId: string | null) => {
+    const currentNodeId = getHoveredNodeId
+      ? getHoveredNodeId()
+      : lastReportedHoveredNodeRef.current;
+    if (currentNodeId === nodeId) return;
+    lastReportedHoveredNodeRef.current = nodeId;
+    onNodeHover(nodeId);
+  }, [getHoveredNodeId, onNodeHover]);
+
   // Mouse handlers
   const mouseDownPos = useRef({ x: 0, y: 0 });
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -211,10 +227,13 @@ export function CanvasGraph({
       }
 
       const hit = hitTest(cx, cy);
-      onNodeHover(hit);
-      canvas.style.cursor = hit ? "pointer" : "default";
+      reportNodeHover(hit);
+      const cursor = hit ? "pointer" : "default";
+      if (canvas.style.cursor !== cursor) {
+        canvas.style.cursor = cursor;
+      }
     },
-    [hitTest, onNodeHover],
+    [hitTest, reportNodeHover],
   );
   const handleMouseUp = useCallback(
     (e: React.MouseEvent) => {
@@ -280,7 +299,7 @@ export function CanvasGraph({
       onWheel={handleWheel}
       onMouseLeave={() => {
         isDragging.current = false;
-        onNodeHover(null);
+        reportNodeHover(null);
       }}
     />
   );

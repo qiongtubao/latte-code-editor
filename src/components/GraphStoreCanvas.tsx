@@ -48,6 +48,11 @@ function GraphStoreCanvasComponent({
     return nodeMapCache.current.map;
   }, []);
 
+  const getHoveredNodeId = useCallback(
+    () => useGraphStore.getState().hoveredNodeId,
+    [],
+  );
+
   const subscribeRenderState = useCallback((invalidate: () => void) =>
     useGraphStore.subscribe((state, previousState) => {
       if (
@@ -71,6 +76,7 @@ function GraphStoreCanvasComponent({
       highlightedNodeIds={initialState.highlightedNodeIds}
       getRenderState={getRenderState}
       getNodeMap={getNodeMap}
+      getHoveredNodeId={getHoveredNodeId}
       subscribeRenderState={subscribeRenderState}
       onNodeClick={onNodeClick}
       onNodeHover={handleNodeHover}
