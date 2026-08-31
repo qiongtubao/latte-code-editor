@@ -3,6 +3,7 @@ import { useGraphStore } from "../hooks/useGraphStore";
 import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useSettingsStore } from "../hooks/useSettingsStore";
+import { useGraphAnalysis } from "../hooks/useGraphAnalysis";
 import { CanvasGraph } from "./CanvasGraph";
 import { GraphStoreCanvas } from "./GraphStoreCanvas";
 import type { SimRenderNode } from "./graphRenderer";
@@ -10,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { graphGetData, graphSearch } from "../api/graphCommands";
 import { openFile, listDirectory, buildCodeGraph, searchInFiles, type SearchMatch } from "../api/commands";
 import {
-  getDefaultSubgraph, detectCommunities, extractFocusSubgraph,
+  getDefaultSubgraph, extractFocusSubgraph,
   type RawNode, type RawEdge,
 } from "../hooks/graphUtils";
 import type {
@@ -200,18 +201,7 @@ export function GraphPanel({
     return graphData;
   }, [graphData, displayMode, focusedNodeId, setSelectedNode]);
 
-  const communityMap = useMemo(() => {
-    if (!graphData) return new Map<string, number>();
-    const map = new Map<string, number>();
-    detectCommunities(graphData.nodes, graphData.edges).forEach((c) => { for (const id of c.nodeIds) map.set(id, c.rank); });
-    return map;
-  }, [graphData]);
-
-  const totalStats = useMemo(() => {
-    if (!graphData) return { nodes: 0, edges: 0, communities: 0 };
-    const c = detectCommunities(graphData.nodes, graphData.edges);
-    return { nodes: graphData.nodes.length, edges: graphData.edges.length, communities: c.length };
-  }, [graphData]);
+  const { communityMap, totalStats } = useGraphAnalysis(graphData);
 
   // 布局 effect。
   //
