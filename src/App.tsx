@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorPanel } from "./components/EditorPanel";
 import { LazyGraphPanel, preloadGraphPanel } from "./components/LazyGraphPanel";
+import {
+  LazyChatPanel,
+  LazyDebugInjectModal,
+  LazyQuickOpenModal,
+  LazySettingsPanel,
+  preloadChatPanel,
+  preloadQuickOpen,
+} from "./components/LazyClosedPanels";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { OutlinePanel } from "./components/OutlinePanel";
 import { ResizeDivider } from "./components/ResizeDivider";
 import { StatusBar } from "./components/StatusBar";
 import { DefinitionPopup } from "./components/DefinitionPopup";
-import { SettingsPanel } from "./components/SettingsPanel";
 import { WorkspaceTabs } from "./components/WorkspaceTabs";
-import { QuickOpenModal } from "./components/QuickOpenModal";
-import { ChatAgentPanel } from "./components/ChatAgentPanel";
 import { openFile } from "./api/commands";
 import { graphSearch, graphResolveCall } from "./api/graphCommands";
 import { screenshotWindow, copyScreenshotToClipboard } from "./api/screenshot";
@@ -27,7 +32,6 @@ import { useLspStore } from "./hooks/useLspStore";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { LspManagerPanel } from "./components/LspManagerPanel";
 import { DebugBar } from "./components/DebugBar";
-import { DebugEventInjectModal } from "./components/DebugEventInjectModal";
 import { useDebugStore } from "./utils/debug/store";
 import { replayLastAction } from "./utils/debug/inject";
 import { invoke } from "./api/ipcDebug";
@@ -65,6 +69,7 @@ function App() {
   const hydrate = useWorkspaceStore((s) => s.hydrate);
   const activeId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const openQuickOpen = useQuickOpenStore((s) => s.openModal);
+  const quickOpenVisible = useQuickOpenStore((s) => s.open);
   const [defPopup, setDefPopup] = useState<{ word: string; x: number; y: number; filePath?: string } | null>(
     null,
   );
@@ -186,6 +191,7 @@ function App() {
         setSidebarOpen((v) => !v);
       } else if (isChord(e, "p")) {
         e.preventDefault();
+        void preloadQuickOpen().catch(() => undefined);
         openQuickOpen();
       } else if (isChord(e, "f", { shift: true })) {
         e.preventDefault();
@@ -256,6 +262,7 @@ function App() {
           .catch((err) => setToast(`Screenshot failed: ${String(err)}`));
       } else if (isChord(e, "l", { shift: true })) {
         e.preventDefault();
+        void preloadChatPanel().catch(() => undefined);
         setChatOpen((v) => !v);
       }
     };
@@ -297,6 +304,8 @@ function App() {
           Split
         </button>
         <button
+          onMouseEnter={() => void preloadChatPanel().catch(() => undefined)}
+          onFocus={() => void preloadChatPanel().catch(() => undefined)}
           onClick={() => setChatOpen((v) => !v)}
           className={`px-3 py-1.5 border-l border-edge cursor-pointer transition-colors ${chatOpen ? "bg-surface text-fg" : "text-fg-2 hover:text-fg"}`}
           title="Toggle Chat Panel (Ctrl+Shift+L)"
@@ -407,7 +416,7 @@ function App() {
               /* chat 占满中间行剩余宽度（整行 − 左侧 − 编辑器），
                  边界由上方 editorFlex 分隔条控制，与 GraphPanel 同机制 */
               <div className="flex-1 overflow-hidden border-l border-edge">
-                <ChatAgentPanel
+                <LazyChatPanel
                   onClose={() => setChatOpen(false)}
                   onShowGraph={revealGraphNode}
                 />
@@ -422,7 +431,7 @@ function App() {
       <StatusBar onToggleSettings={() => setSettingsOpen((v) => !v)} />
       {settingsOpen && (
         <div className="fixed inset-y-0 right-0 z-40 w-[360px] border-l border-edge shadow-lg">
-          <SettingsPanel onClose={() => setSettingsOpen(false)} />
+          <LazySettingsPanel onClose={() => setSettingsOpen(false)} />
         </div>
       )}
       <DebugBar
@@ -437,9 +446,9 @@ function App() {
         }}
       />
       {injectOpen && (
-        <DebugEventInjectModal onClose={() => setInjectOpen(false)} />
+        <LazyDebugInjectModal onClose={() => setInjectOpen(false)} />
       )}
-      <QuickOpenModal />
+      {quickOpenVisible && <LazyQuickOpenModal />}
       {toast && (
         <div
           onClick={() => setToast(null)}
