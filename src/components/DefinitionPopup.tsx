@@ -149,7 +149,6 @@ export function DefinitionPopup({ word, callerFile, position, onClose }: Definit
           </div>
         )}
         {results.map((node) => {
-          const fileName = node.file_path.split("/").pop() || node.file_path;
           return (
             <div
               key={node.id}

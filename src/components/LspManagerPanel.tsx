@@ -3,7 +3,7 @@
  * 列出所有 LSP 状态，提供详细控制
  */
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useLspStore } from "../hooks/useLspStore";
 
 export function LspManagerPanel({ onClose }: { onClose: () => void }) {
@@ -18,7 +18,6 @@ export function LspManagerPanel({ onClose }: { onClose: () => void }) {
     getTotalMemory,
   } = useLspStore();
 
-  const [autoStart, setAutoStart] = useState(false);
 
   useEffect(() => {
     void refreshStatus();

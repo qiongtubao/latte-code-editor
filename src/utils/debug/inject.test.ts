@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   registerDebugEvent,
   debugEmit,
-  replayLastAction,
   getLastActions,
   clearRegisteredEvents,
 } from "./inject";

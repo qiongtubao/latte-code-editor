@@ -41,7 +41,6 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [focusMeta, setFocusMeta] = useState<{ total: number; callers: number; callees: number; truncated: boolean } | null>(null);
   const [docSimRender, setDocSimRender] = useState<{ nodes: SimRenderNode[]; edges: { source: string; target: string; kind: string; weight: number }[] } | null>(null);
-  const [docRefreshKey, setDocRefreshKey] = useState(0);
   const [docSearchQuery, setDocSearchQuery] = useState("");
 
 
@@ -49,7 +48,6 @@ export function GraphPanel({ folderRoot = null }: { folderRoot?: string | null }
   useEffect(() => {
     if (graphMode === "docs") {
       setDocSimRender(null);
-      setDocRefreshKey((k) => k + 1);
     }
   }, [graphMode]);
 

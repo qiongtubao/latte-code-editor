@@ -97,7 +97,7 @@ function mutateByWs(
   return { byWorkspace, ...project({ ...state, byWorkspace }) };
 }
 
-export const useGraphStore = create<GraphStore>((set, get) => {
+export const useGraphStore = create<GraphStore>((set) => {
   // 订阅 workspace 切换
   useWorkspaceStore.subscribe(() => {
     set((s) => project(s));

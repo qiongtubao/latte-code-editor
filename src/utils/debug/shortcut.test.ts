@@ -6,7 +6,7 @@
  * computed `next` but forgot to actually toggle the store, so pressing
  * the shortcut appeared to do nothing.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { useDebugStore } from "./store";
 
 describe("debug mode shortcut regression", () => {

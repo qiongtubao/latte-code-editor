@@ -202,18 +202,3 @@ export function QuickOpenModal() {
     </div>
   );
 }
-
-/** 轻量 inline 解析（避免 import 循环） */
-function parseInline(path: string): { cleanPath: string; line: number | null; col: number | null } {
-  if (!path.includes(":")) return { cleanPath: path, line: null, col: null };
-  // 移除尾部的 :line 或 :line:col
-  const m = path.match(/^(.*):(\d+)(?::(\d+))?$/);
-  if (m) {
-    return {
-      cleanPath: m[1],
-      line: parseInt(m[2], 10),
-      col: m[3] ? parseInt(m[3], 10) : null,
-    };
-  }
-  return { cleanPath: path, line: null, col: null };
-}

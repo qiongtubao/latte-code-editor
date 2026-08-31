@@ -1,7 +1,6 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import type { SimRenderNode } from "./graphRenderer";
 import type { GraphRenderer } from "./graphRenderer";
-import { Canvas2DRenderer } from "./Canvas2DRenderer";
 import { createRenderer, rendererKindOf, type RendererKind } from "./rendererFactory";
 
 interface CanvasGraphProps {
@@ -42,7 +41,6 @@ export function CanvasGraph({
   const lastMouse = useRef({ x: 0, y: 0 });
   const rendererRef = useRef<GraphRenderer | null>(null);
   const nodeMapRef = useRef<Map<string, SimRenderNode>>(new Map());
-  const [activeKind, setActiveKind] = useState<"webgpu" | "canvas2d" | null>(null);
 
   // Build node lookup from simNodes (used by hitTest via getNodeMap)
   useEffect(() => {
@@ -66,7 +64,6 @@ export function CanvasGraph({
     if (externalRenderer) {
       // 外部传入：假设已 init 完毕（同步 init）
       rendererRef.current = externalRenderer;
-      setActiveKind(rendererKindOf(externalRenderer));
       onRendererReady?.(rendererKindOf(externalRenderer));
     } else {
       // 自动 / 显式选择
@@ -77,7 +74,6 @@ export function CanvasGraph({
         }
         rendererRef.current = r;
         const k = rendererKindOf(r);
-        setActiveKind(k);
         onRendererReady?.(k);
       }).catch((e) => {
         console.error("[CanvasGraph] renderer init failed:", e);

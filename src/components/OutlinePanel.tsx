@@ -99,6 +99,9 @@ export function OutlinePanel() {
             className="w-2 h-2 rounded-full flex-shrink-0"
             style={{ background: nodeColor(node.kind) }}
           />
+          <span className="text-fg-3 w-8 flex-shrink-0 font-mono">
+            {KIND_LABELS[node.kind] ?? node.kind}
+          </span>
           <span className="text-fg-2 w-8 flex-shrink-0 text-right font-mono">
             {node.start_line}
           </span>

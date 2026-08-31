@@ -12,7 +12,7 @@ import { useLspStore, detectFileLanguage } from "../hooks/useLspStore";
 import { useEditorStore } from "../hooks/useEditorStore";
 
 export function LspStatusBar() {
-  const { status, refreshStatus, isRunning, startLsp, stopLsp, hibernateLsp, getTotalMemory } = useLspStore();
+  const { status, refreshStatus, startLsp, stopLsp, hibernateLsp, getTotalMemory } = useLspStore();
   const { filePath } = useEditorStore();
   const [showMenu, setShowMenu] = useState(false);
 

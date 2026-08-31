@@ -105,7 +105,6 @@ mod tests {
     use super::*;
     use std::env;
     use std::io::Write;
-    use std::os::unix::fs::MetadataExt;
 
     fn touch_with_age(dir: &Path, name: &str, age_secs: u64, bytes: usize) {
         let p = dir.join(name);
