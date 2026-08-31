@@ -62,10 +62,10 @@ interface GraphStore {
   highlightedNodeIds: Set<string>;
   loadVersion: number;
 
-  // actions（按当前 active workspace 写）
-  setGraphData: (data: GraphData) => void;
-  setLoading: (loading: boolean) => void;
-  setError: (error: string | null) => void;
+  // actions（默认写当前 active workspace；异步加载可显式传请求所属 workspace）
+  setGraphData: (data: GraphData, workspaceId?: string) => void;
+  setLoading: (loading: boolean, workspaceId?: string) => void;
+  setError: (error: string | null, workspaceId?: string) => void;
   setSimResult: (result: SimResult) => void;
   setSelectedNode: (id: string | null) => void;
   setHoveredNode: (id: string | null) => void;
@@ -128,8 +128,8 @@ export const useGraphStore = create<GraphStore>((set) => {
     // project() 会读到旧的 byWorkspace，把 projected 字段全部清空（之前是个隐性 bug：
     // 只要 workspace 那边有一次重新 setState，graphData/simNodes 立刻被擦成默认值，
     // 图谱看上去就"消失了")。mutate() 复用 useEditorStore 的写法，写 byWorkspace + 派生字段。
-    setGraphData: (data) => {
-      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+    setGraphData: (data, workspaceId) => {
+      const wsId = workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
@@ -138,8 +138,8 @@ export const useGraphStore = create<GraphStore>((set) => {
         return mutateByWs(s, wsId, newWs);
       });
     },
-    setLoading: (loading) => {
-      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+    setLoading: (loading, workspaceId) => {
+      const wsId = workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();
@@ -148,8 +148,8 @@ export const useGraphStore = create<GraphStore>((set) => {
       });
     },
 
-    setError: (error) => {
-      const wsId = useWorkspaceStore.getState().activeWorkspaceId;
+    setError: (error, workspaceId) => {
+      const wsId = workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId;
       if (!wsId) return;
       set((s) => {
         const ws = s.byWorkspace[wsId] ?? emptyGraph();

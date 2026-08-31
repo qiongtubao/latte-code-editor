@@ -395,3 +395,56 @@ describe("GraphPanel 搜索结果点击", () => {
   });
 
 });
+
+describe("GraphPanel workspace-scoped loading", () => {
+  it("does not write a previous workspace response into the newly active workspace", async () => {
+    const firstLoad = Promise.withResolvers<{ data: GraphData }>();
+    const secondLoad = Promise.withResolvers<{ data: GraphData }>();
+    let graphLoadCalls = 0;
+    invokeMock.mockImplementation((command: string) => {
+      if (command !== "graph_get_data") return Promise.resolve(null);
+      graphLoadCalls += 1;
+      return graphLoadCalls === 1 ? firstLoad.promise : secondLoad.promise;
+    });
+
+    const firstWorkspace = useWorkspaceStore.getState().workspaces["ws-1"];
+    useWorkspaceStore.setState({
+      workspaces: {
+        "ws-1": firstWorkspace,
+        "ws-2": {
+          ...firstWorkspace,
+          name: "other",
+          project_root: "/repo-other",
+        },
+      },
+      activeWorkspaceId: "ws-1",
+    });
+
+    render(<GraphPanel />);
+    await waitFor(() => {
+      expect(graphLoadCalls).toBe(1);
+      expect(useGraphStore.getState().byWorkspace["ws-1"]?.loading).toBe(true);
+    });
+
+    await act(async () => {
+      useWorkspaceStore.setState({ activeWorkspaceId: "ws-2" });
+      firstLoad.resolve({ data: fakeGraph });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(graphLoadCalls).toBe(2);
+    });
+    expect(useGraphStore.getState().byWorkspace["ws-1"]?.loading).toBe(false);
+    expect(useGraphStore.getState().byWorkspace["ws-2"]?.graphData).toBeNull();
+    expect(useGraphStore.getState().byWorkspace["ws-2"]?.loading).toBe(true);
+
+    secondLoad.resolve({ data: burstGraph });
+    await waitFor(() => {
+      const state = useGraphStore.getState();
+      expect(state.byWorkspace["ws-2"]?.graphData).toBe(burstGraph);
+      expect(state.byWorkspace["ws-2"]?.loading).toBe(false);
+      expect(state.graphData).toBe(burstGraph);
+    });
+  });
+});

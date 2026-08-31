@@ -183,4 +183,25 @@ describe("useGraphStore 多 workspace 隔离", () => {
     useGraphStore.getState().evictWorkspace("ws-a");
     expect(useGraphStore.getState().byWorkspace["ws-a"]).toBeUndefined();
   });
+
+  it("explicit load targets update only the requested workspace", () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-b" });
+    const graph = sampleGraph("a");
+    const store = useGraphStore.getState();
+
+    store.setLoading(true, "ws-a");
+    store.setGraphData(graph, "ws-a");
+    store.setError("failed", "ws-a");
+
+    const state = useGraphStore.getState();
+    expect(state.byWorkspace["ws-a"]).toMatchObject({
+      graphData: graph,
+      loading: true,
+      error: "failed",
+    });
+    expect(state.byWorkspace["ws-b"]).toBeUndefined();
+    expect(state.graphData).toBeNull();
+    expect(state.loading).toBe(false);
+    expect(state.error).toBeNull();
+  });
 });

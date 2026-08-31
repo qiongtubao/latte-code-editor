@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useGraphStore } from "../hooks/useGraphStore";
+import { useWorkspaceStore } from "../hooks/useWorkspaceStore";
 import { useEditorStore } from "../hooks/useEditorStore";
 import { useSettingsStore } from "../hooks/useSettingsStore";
 import { CanvasGraph } from "./CanvasGraph";
@@ -42,6 +43,7 @@ export function GraphPanel({
   const loading = useGraphStore((state) => state.loading);
   const error = useGraphStore((state) => state.error);
   const loadVersion = useGraphStore((state) => state.loadVersion);
+  const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
   const hasWorker = useGraphStore((state) => state.simNodes.length > 0);
   const setGraphData = useGraphStore((state) => state.setGraphData);
   const setLoading = useGraphStore((state) => state.setLoading);
@@ -106,23 +108,43 @@ export function GraphPanel({
     };
   }, [docSimRender, docSearchQuery]);
   useEffect(() => {
+    if (!activeWorkspaceId) return;
+    const requestedWorkspaceId = activeWorkspaceId;
+    const requestedLoadVersion = loadVersion;
     let cancelled = false;
+
+    const requestIsCurrent = () => {
+      if (cancelled) return false;
+      const workspace = useGraphStore.getState().byWorkspace[requestedWorkspaceId];
+      return workspace?.loadVersion === requestedLoadVersion;
+    };
+    const clearRequestLoading = () => {
+      const workspace = useGraphStore.getState().byWorkspace[requestedWorkspaceId];
+      if (workspace?.loading && workspace.loadVersion === requestedLoadVersion) {
+        setLoading(false, requestedWorkspaceId);
+      }
+    };
+
     async function load() {
-      setLoading(true);
+      setLoading(true, requestedWorkspaceId);
       try {
         const response = await graphGetData();
-        if (cancelled) return;
-        setGraphData(response.data);
+        if (!requestIsCurrent()) return;
+        setGraphData(response.data, requestedWorkspaceId);
       } catch (e) {
+        if (!requestIsCurrent()) return;
         console.error("[GP] graphGetData FAILED:", e);
-        if (!cancelled) setError(String(e));
+        setError(String(e), requestedWorkspaceId);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (requestIsCurrent()) clearRequestLoading();
       }
     }
     void load();
-    return () => { cancelled = true; };
-  }, [loadVersion, setGraphData, setLoading, setError]);
+    return () => {
+      cancelled = true;
+      clearRequestLoading();
+    };
+  }, [activeWorkspaceId, loadVersion, setGraphData, setLoading, setError]);
   // A prop rather than a window event: requests made while this module is still
   // downloading remain present and are applied immediately after mount.
   useEffect(() => {
