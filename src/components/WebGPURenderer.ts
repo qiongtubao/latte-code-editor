@@ -27,6 +27,7 @@ import type {
 } from "./graphRenderer";
 import { NODE_COLORS } from "./graphRenderer";
 import {
+  GraphNodeIndexCache,
   GraphTopologyCache,
   isEdgeDimmed,
   type CachedGraphEdge,
@@ -259,6 +260,7 @@ export class WebGPURenderer implements GraphRenderer {
   private getNodeMap: (() => Map<string, SimRenderNode>) | null = null;
   private initError: string | null = null;
   private topologyCache = new GraphTopologyCache();
+  private nodeIndexCache = new GraphNodeIndexCache();
 
   /** 渲染器是否成功初始化（外部可读，用于状态显示） */
   get initialized(): boolean { return this.res !== null; }
@@ -459,6 +461,7 @@ export class WebGPURenderer implements GraphRenderer {
     this.res = null;
     this.getNodeMap = null;
     this.topologyCache.clear();
+    this.nodeIndexCache.clear();
   }
 
   // ============================================================================
@@ -681,9 +684,7 @@ export class WebGPURenderer implements GraphRenderer {
       });
     }
 
-    // 建节点 id → 索引 映射（边 vertex 用）
-    const idToIndex = new Map<string, number>();
-    for (let i = 0; i < nodes.length; i++) idToIndex.set(nodes[i].id, i);
+    const idToIndex = this.nodeIndexCache.get(nodes);
 
     const data = new ArrayBuffer(edges.length * EDGE_VERTEX_STRIDE);
     const f32 = new Float32Array(data);

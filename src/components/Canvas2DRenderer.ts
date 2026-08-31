@@ -1,6 +1,10 @@
 import type { GraphRenderer, GraphRendererInitOptions, RenderParams, SimRenderNode } from "./graphRenderer";
 import { NODE_COLORS } from "./graphRenderer";
-import { GraphTopologyCache, isEdgeDimmed } from "./graphTopologyCache";
+import {
+  GraphNodeIndexCache,
+  GraphTopologyCache,
+  isEdgeDimmed,
+} from "./graphTopologyCache";
 import { cssVar } from "../skins";
 
 /**
@@ -15,6 +19,7 @@ export class Canvas2DRenderer implements GraphRenderer {
   private dpr = 1;
   private nodeDegrees = new Map<string, number>();
   private topologyCache = new GraphTopologyCache();
+  private nodeIndexCache = new GraphNodeIndexCache();
 
   init(options: GraphRendererInitOptions): void {
     this.canvas = options.canvas;
@@ -78,8 +83,7 @@ export class Canvas2DRenderer implements GraphRenderer {
     // immutable until simEdges identity changes.
     const topology = this.topologyCache.get(simEdges);
     this.nodeDegrees = topology.nodeDegrees;
-    const nodeMap = new Map<string, SimRenderNode>();
-    for (const node of simNodes) nodeMap.set(node.id, node);
+    const nodeIndexes = this.nodeIndexCache.get(simNodes);
     const hoveredNodes = this.topologyCache.getHoveredNodes(topology, hoveredNodeId);
     const isDimmed = (id: string): boolean =>
       hoveredNodeId !== null && !hoveredNodes.has(id);
@@ -98,9 +102,11 @@ export class Canvas2DRenderer implements GraphRenderer {
         color,
         directed,
       } = cachedEdge;
-      const sourceNode = nodeMap.get(sourceId);
-      const targetNode = nodeMap.get(targetId);
-      if (!sourceNode || !targetNode) continue;
+      const sourceIndex = nodeIndexes.get(sourceId);
+      const targetIndex = nodeIndexes.get(targetId);
+      if (sourceIndex === undefined || targetIndex === undefined) continue;
+      const sourceNode = simNodes[sourceIndex];
+      const targetNode = simNodes[targetIndex];
 
       const isHighlighted =
         (selectedNodeId !== null && (sourceId === selectedNodeId || targetId === selectedNodeId)) ||
@@ -218,6 +224,7 @@ export class Canvas2DRenderer implements GraphRenderer {
     this.canvas = null;
     this.getNodeMap = null;
     this.topologyCache.clear();
+    this.nodeIndexCache.clear();
     this.nodeDegrees = new Map();
   }
 }

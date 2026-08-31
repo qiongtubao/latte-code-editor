@@ -1,4 +1,4 @@
-import type { SimRenderEdge } from "./graphRenderer";
+import type { SimRenderEdge, SimRenderNode } from "./graphRenderer";
 import { EDGE_COLORS } from "./graphRenderer";
 
 export interface CachedGraphEdge {
@@ -124,4 +124,41 @@ export function isEdgeDimmed(
 ): boolean {
   return hoveredNodeId !== null
     && (!hoveredNodes.has(sourceId) || !hoveredNodes.has(targetId));
+}
+
+export class GraphNodeIndexCache {
+  private nodeIds: string[] = [];
+  private indexById = new Map<string, number>();
+  private initialized = false;
+
+  get(nodes: readonly SimRenderNode[]): Map<string, number> {
+    if (this.initialized && this.nodeIds.length === nodes.length) {
+      let matches = true;
+      for (let index = 0; index < nodes.length; index++) {
+        if (this.nodeIds[index] !== nodes[index].id) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) return this.indexById;
+    }
+
+    const nodeIds = new Array<string>(nodes.length);
+    const indexById = new Map<string, number>();
+    for (let index = 0; index < nodes.length; index++) {
+      const id = nodes[index].id;
+      nodeIds[index] = id;
+      indexById.set(id, index);
+    }
+    this.nodeIds = nodeIds;
+    this.indexById = indexById;
+    this.initialized = true;
+    return indexById;
+  }
+
+  clear(): void {
+    this.nodeIds = [];
+    this.indexById = new Map();
+    this.initialized = false;
+  }
 }

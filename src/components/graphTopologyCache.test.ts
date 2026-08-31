@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { SimRenderEdge } from "./graphRenderer";
-import { GraphTopologyCache, isEdgeDimmed } from "./graphTopologyCache";
+import type { SimRenderEdge, SimRenderNode } from "./graphRenderer";
+import {
+  GraphNodeIndexCache,
+  GraphTopologyCache,
+  isEdgeDimmed,
+} from "./graphTopologyCache";
 
 describe("GraphTopologyCache", () => {
   it("reuses immutable topology and invalidates on edge identity or limit changes", () => {
@@ -68,5 +72,31 @@ describe("GraphTopologyCache", () => {
     expect(cache.getHoveredNodes(topology, null)).toBe(noHover);
     expect(noHover.size).toBe(0);
     expect(isEdgeDimmed(null, noHover, "a", "b")).toBe(false);
+  });
+});
+
+function node(id: string, x: number): SimRenderNode {
+  return { id, x, y: 0, vx: 0, vy: 0, group: 1 };
+}
+
+describe("GraphNodeIndexCache", () => {
+  it("reuses indexes for position-only frames and rebuilds for ID sequence changes", () => {
+    const cache = new GraphNodeIndexCache();
+    const first = cache.get([node("a", 1), node("b", 2)]);
+    expect(first).toEqual(new Map([["a", 0], ["b", 1]]));
+
+    const moved = cache.get([node("a", 10), node("b", 20)]);
+    expect(moved).toBe(first);
+
+    const reordered = cache.get([node("b", 20), node("a", 10)]);
+    expect(reordered).not.toBe(first);
+    expect(reordered).toEqual(new Map([["b", 0], ["a", 1]]));
+
+    const replaced = cache.get([node("b", 20), node("c", 30)]);
+    expect(replaced).not.toBe(reordered);
+    expect(replaced).toEqual(new Map([["b", 0], ["c", 1]]));
+
+    cache.clear();
+    expect(cache.get([node("b", 200), node("c", 300)])).not.toBe(replaced);
   });
 });
