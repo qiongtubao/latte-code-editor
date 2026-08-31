@@ -68,7 +68,8 @@ interface WebGPUResources {
   edgeVertexBuffer: GPUBuffer;       // 每条边一个 storage record
   edgeCapacity: number;              // 当前 edge record 容量
 
-  // 通用 uniform（view matrix + 视口尺寸）
+  // 通用 uniform + storage bind group
+  bindGroupLayout: GPUBindGroupLayout;
   uniformBuffer: GPUBuffer;
   uniformBindGroup: GPUBindGroup;
 
@@ -295,10 +296,6 @@ export class WebGPURenderer implements GraphRenderer {
       if (!adapter) throw new Error("No WebGPU adapter available");
 
       const device = await adapter.requestDevice();
-      void device.lost.then((info) => {
-        console.error("[WebGPU] device lost:", info.message);
-        this.res = null;
-      });
 
       // 2. 配置 canvas context
       const ctx = options.canvas.getContext("webgpu");
@@ -313,9 +310,13 @@ export class WebGPURenderer implements GraphRenderer {
       const textCanvas = this.createTextOverlay(options.canvas);
       const textCtx = textCanvas.getContext("2d");
 
-      // 4. 编译 shader / 创建管线
-      const nodePipeline = this.createNodePipeline(device, format);
-      const edgePipeline = this.createEdgePipeline(device, format);
+      // 4. 两条管线共享同一 layout，保证同一个 bind group 可合法绑定。
+      const bindGroupLayout = this.createBindGroupLayout(device);
+      const pipelineLayout = device.createPipelineLayout({
+        bindGroupLayouts: [bindGroupLayout],
+      });
+      const nodePipeline = this.createNodePipeline(device, format, pipelineLayout);
+      const edgePipeline = this.createEdgePipeline(device, format, pipelineLayout);
 
       // 5. 创建缓冲
       const nodeVertexBuffer = this.createQuadBuffer(device);
@@ -324,7 +325,7 @@ export class WebGPURenderer implements GraphRenderer {
       const uniformBuffer = this.createUniformBuffer(device);
 
       const uniformBindGroup = device.createBindGroup({
-        layout: edgePipeline.getBindGroupLayout(0),
+        layout: bindGroupLayout,
         entries: [
           { binding: 0, resource: { buffer: uniformBuffer } },
           { binding: 1, resource: { buffer: nodeInstanceBuffer } },
@@ -334,7 +335,6 @@ export class WebGPURenderer implements GraphRenderer {
 
       const dpr = window.devicePixelRatio || 1;
       const rect = options.canvas.getBoundingClientRect();
-      this.resize(rect.width, rect.height, dpr);
 
       this.res = {
         device,
@@ -347,6 +347,7 @@ export class WebGPURenderer implements GraphRenderer {
         edgePipeline,
         edgeVertexBuffer,
         edgeCapacity: 2048,
+        bindGroupLayout,
         uniformBuffer,
         uniformBindGroup,
         textCtx,
@@ -355,6 +356,19 @@ export class WebGPURenderer implements GraphRenderer {
         canvas: options.canvas,
         dpr,
       };
+      this.resize(rect.width, rect.height, dpr);
+
+      void device.lost.then((info) => {
+        const current = this.res;
+        if (current?.device !== device) return;
+        console.error("[WebGPU] device lost:", info.message);
+        const overlay = current.canvas.parentElement?.querySelector<HTMLCanvasElement>(
+          "canvas[data-webgpu-text-overlay]",
+        );
+        overlay?.remove();
+        this.initError = `WebGPU device lost: ${info.message}`;
+        this.res = null;
+      });
     } catch (e) {
       this.initError = e instanceof Error ? e.message : String(e);
       console.error("[WebGPURenderer] init failed:", this.initError);
@@ -485,9 +499,23 @@ export class WebGPURenderer implements GraphRenderer {
   // Private: 资源创建
   // ============================================================================
 
-  private createNodePipeline(device: GPUDevice, format: GPUTextureFormat): GPURenderPipeline {
+  private createBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
+    return device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
+      ],
+    });
+  }
+
+  private createNodePipeline(
+    device: GPUDevice,
+    format: GPUTextureFormat,
+    pipelineLayout: GPUPipelineLayout,
+  ): GPURenderPipeline {
     return device.createRenderPipeline({
-      layout: "auto",
+      layout: pipelineLayout,
       vertex: {
         module: device.createShaderModule({ code: NODE_SHADER }),
         entryPoint: "vs_main",
@@ -520,19 +548,13 @@ export class WebGPURenderer implements GraphRenderer {
     });
   }
 
-  private createEdgePipeline(device: GPUDevice, format: GPUTextureFormat): GPURenderPipeline {
+  private createEdgePipeline(
+    device: GPUDevice,
+    format: GPUTextureFormat,
+    pipelineLayout: GPUPipelineLayout,
+  ): GPURenderPipeline {
     return device.createRenderPipeline({
-      layout: device.createPipelineLayout({
-        bindGroupLayouts: [
-          device.createBindGroupLayout({
-            entries: [
-              { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
-              { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
-              { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
-            ],
-          }),
-        ],
-      }),
+      layout: pipelineLayout,
       vertex: {
         module: device.createShaderModule({ code: EDGE_SHADER }),
         entryPoint: "vs_main",
@@ -632,7 +654,7 @@ export class WebGPURenderer implements GraphRenderer {
       r.nodeInstanceCapacity = newCapacity;
       // 重建 bind group
       r.uniformBindGroup = r.device.createBindGroup({
-        layout: r.edgePipeline.getBindGroupLayout(0),
+        layout: r.bindGroupLayout,
         entries: [
           { binding: 0, resource: { buffer: r.uniformBuffer } },
           { binding: 1, resource: { buffer: r.nodeInstanceBuffer } },
@@ -701,7 +723,7 @@ export class WebGPURenderer implements GraphRenderer {
       r.edgeVertexBuffer = this.createEdgeVertexBuffer(r.device, newCapacity);
       r.edgeCapacity = newCapacity;
       r.uniformBindGroup = r.device.createBindGroup({
-        layout: r.edgePipeline.getBindGroupLayout(0),
+        layout: r.bindGroupLayout,
         entries: [
           { binding: 0, resource: { buffer: r.uniformBuffer } },
           { binding: 1, resource: { buffer: r.nodeInstanceBuffer } },
